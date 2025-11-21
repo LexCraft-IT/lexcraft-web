@@ -5,18 +5,34 @@ import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import type { AppSettings, Bookmark, Dossier, Annotation, Highlight, NormaVisitata, ArticleData } from '../types';
 
-interface FloatingPanel {
+// Content types for WorkspaceTab
+interface NormaBlock {
+    type: 'norma';
     id: string;
+    norma: any;
+    articles: ArticleData[];
+    isCollapsed: boolean;
+}
+
+interface LooseArticle {
+    type: 'loose-article';
+    id: string;
+    article: ArticleData;
+    sourceNorma: any;
+}
+
+type TabContent = NormaBlock | LooseArticle;
+
+// Renamed from FloatingPanel to WorkspaceTab
+interface WorkspaceTab {
+    id: string;
+    label: string;
     position: { x: number; y: number };
     size: { width: number; height: number };
     zIndex: number;
-    isMinimized: boolean;
     isPinned: boolean;
-    normaKey: string;
-    norma: any;
-    articles: ArticleData[];
-    activeArticleId: string | null;
-    label?: string; // Custom label for the panel
+    isMinimized: boolean;
+    content: TabContent[]; // Mixed norme and loose articles
 }
 
 interface SearchPanelState {
@@ -35,7 +51,7 @@ interface AppState {
     // UI State
     sidebarVisible: boolean;
     searchPanelState: SearchPanelState;
-    floatingPanels: FloatingPanel[];
+    workspaceTabs: WorkspaceTab[];
     highestZIndex: number;
 
     // Actions
@@ -47,15 +63,23 @@ interface AppState {
     toggleSearchPanel: () => void;
     setSearchPanelPosition: (position: { x: number; y: number }) => void;
 
-    // Floating Panel Actions
-    addFloatingPanel: (norma: any, articles: ArticleData[], normaKey: string) => void;
-    updateFloatingPanel: (id: string, updates: Partial<FloatingPanel>) => void;
-    removeFloatingPanel: (id: string) => void;
-    bringPanelToFront: (id: string) => void;
-    togglePanelPin: (id: string) => void;
-    togglePanelMinimize: (id: string) => void;
-    setPanelLabel: (id: string, label: string) => void;
-    popOutArticle: (panelId: string, articleId: string) => void;
+    // Workspace Tab Actions
+    addWorkspaceTab: (label: string, norma?: any, articles?: ArticleData[]) => string;
+    addNormaToTab: (tabId: string, norma: any, articles: ArticleData[]) => void;
+    addLooseArticleToTab: (tabId: string, article: ArticleData, sourceNorma: any) => void;
+    updateTab: (id: string, updates: Partial<WorkspaceTab>) => void;
+    removeTab: (id: string) => void;
+    bringTabToFront: (id: string) => void;
+    toggleTabPin: (id: string) => void;
+    toggleTabMinimize: (id: string) => void;
+    toggleNormaCollapse: (tabId: string, normaId: string) => void;
+    setTabLabel: (id: string, label: string) => void;
+
+    // Drag & Drop Actions
+    moveNormaBetweenTabs: (normaId: string, sourceTabId: string, targetTabId: string) => void;
+    extractArticleFromNorma: (tabId: string, normaId: string, articleId: string) => void;
+    moveLooseArticleBetweenTabs: (articleId: string, sourceTabId: string, targetTabId: string) => void;
+    removeArticleFromNorma: (tabId: string, normaId: string, articleId: string) => void;
     
     addBookmark: (norma: NormaVisitata, tags?: string[]) => void;
     updateBookmarkTags: (normaKey: string, tags: string[]) => void;
@@ -112,7 +136,7 @@ const appStore = createStore<AppState>()(
                 isCollapsed: false,
                 position: { x: window.innerWidth - 420, y: 20 }
             },
-            floatingPanels: [],
+            workspaceTabs: [],
             highestZIndex: 100,
 
             updateSettings: (newSettings) => set((state) => {
@@ -136,140 +160,226 @@ const appStore = createStore<AppState>()(
                 state.searchPanelState.position = position;
             }),
 
-            // Floating Panel Actions
-            addFloatingPanel: (norma, articles, normaKey) => set((state) => {
-                const existingPanel = state.floatingPanels.find(p => p.normaKey === normaKey);
+            // Workspace Tab Actions - Complete refactor
+            addWorkspaceTab: (label, norma, articles) => {
+                let tabId = '';
+                set((state) => {
+                    const tabCount = state.workspaceTabs.length;
+                    const cascade = (tabCount % 5) * 40;
 
-                if (existingPanel) {
-                    // Merge new articles with existing ones
-                    const existingArticleIds = new Set(
-                        existingPanel.articles.map(a => a.norma_data.numero_articolo)
-                    );
+                    const newTab: WorkspaceTab = {
+                        id: uuidv4(),
+                        label,
+                        position: { x: 100 + cascade, y: 100 + cascade },
+                        size: { width: 800, height: 650 },
+                        zIndex: ++state.highestZIndex,
+                        isPinned: false,
+                        isMinimized: false,
+                        content: []
+                    };
 
-                    // Add only new articles that don't exist yet
-                    const newArticles = articles.filter(
-                        a => !existingArticleIds.has(a.norma_data.numero_articolo)
-                    );
-
-                    if (newArticles.length > 0) {
-                        existingPanel.articles = [...existingPanel.articles, ...newArticles];
-
-                        // Sort articles by numero_articolo
-                        existingPanel.articles.sort((a, b) => {
+                    if (norma && articles) {
+                        const sortedArticles = [...articles].sort((a, b) => {
                             const numA = parseInt(a.norma_data.numero_articolo) || 0;
                             const numB = parseInt(b.norma_data.numero_articolo) || 0;
                             return numA - numB;
                         });
 
-                        // Set active article to the first new article
-                        existingPanel.activeArticleId = newArticles[0].norma_data.numero_articolo;
+                        newTab.content.push({
+                            type: 'norma',
+                            id: uuidv4(),
+                            norma,
+                            articles: sortedArticles,
+                            isCollapsed: false
+                        });
                     }
 
-                    // Bring to front
-                    existingPanel.zIndex = ++state.highestZIndex;
-                } else {
-                    // Create new panel with cascade positioning
-                    const panelCount = state.floatingPanels.length;
-                    const cascade = (panelCount % 5) * 40;
+                    state.workspaceTabs.push(newTab);
+                    tabId = newTab.id;
+                });
+                return tabId;
+            },
 
-                    // Sort initial articles
+            addNormaToTab: (tabId, norma, articles) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === tabId);
+                if (!tab) return;
+
+                const existingNorma = tab.content.find(
+                    c => c.type === 'norma' &&
+                    c.norma.tipo_atto === norma.tipo_atto &&
+                    c.norma.numero_atto === norma.numero_atto &&
+                    c.norma.data === norma.data
+                ) as NormaBlock | undefined;
+
+                if (existingNorma) {
+                    const existingArticleIds = new Set(
+                        existingNorma.articles.map(a => a.norma_data.numero_articolo)
+                    );
+
+                    const newArticles = articles.filter(
+                        a => !existingArticleIds.has(a.norma_data.numero_articolo)
+                    );
+
+                    if (newArticles.length > 0) {
+                        existingNorma.articles = [...existingNorma.articles, ...newArticles];
+                        existingNorma.articles.sort((a, b) => {
+                            const numA = parseInt(a.norma_data.numero_articolo) || 0;
+                            const numB = parseInt(b.norma_data.numero_articolo) || 0;
+                            return numA - numB;
+                        });
+                    }
+                } else {
                     const sortedArticles = [...articles].sort((a, b) => {
                         const numA = parseInt(a.norma_data.numero_articolo) || 0;
                         const numB = parseInt(b.norma_data.numero_articolo) || 0;
                         return numA - numB;
                     });
 
-                    state.floatingPanels.push({
+                    tab.content.push({
+                        type: 'norma',
                         id: uuidv4(),
-                        normaKey,
                         norma,
                         articles: sortedArticles,
-                        position: { x: 100 + cascade, y: 100 + cascade },
-                        size: { width: 700, height: 600 },
-                        zIndex: ++state.highestZIndex,
-                        isMinimized: false,
-                        isPinned: false,
-                        activeArticleId: sortedArticles[0]?.norma_data?.numero_articolo || null
+                        isCollapsed: false
                     });
                 }
+
+                tab.zIndex = ++state.highestZIndex;
             }),
 
-            updateFloatingPanel: (id, updates) => set((state) => {
-                const panel = state.floatingPanels.find(p => p.id === id);
-                if (panel) {
-                    Object.assign(panel, updates);
+            addLooseArticleToTab: (tabId, article, sourceNorma) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === tabId);
+                if (!tab) return;
+
+                tab.content.push({
+                    type: 'loose-article',
+                    id: uuidv4(),
+                    article,
+                    sourceNorma
+                });
+
+                tab.zIndex = ++state.highestZIndex;
+            }),
+
+            updateTab: (id, updates) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === id);
+                if (tab) {
+                    Object.assign(tab, updates);
                 }
             }),
 
-            removeFloatingPanel: (id) => set((state) => {
-                state.floatingPanels = state.floatingPanels.filter(p => p.id !== id);
+            removeTab: (id) => set((state) => {
+                state.workspaceTabs = state.workspaceTabs.filter(t => t.id !== id);
             }),
 
-            bringPanelToFront: (id) => set((state) => {
-                const panel = state.floatingPanels.find(p => p.id === id);
-                if (panel && !panel.isPinned) {
-                    panel.zIndex = ++state.highestZIndex;
+            bringTabToFront: (id) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === id);
+                if (tab && !tab.isPinned) {
+                    tab.zIndex = ++state.highestZIndex;
                 }
             }),
 
-            togglePanelPin: (id) => set((state) => {
-                const panel = state.floatingPanels.find(p => p.id === id);
-                if (panel) {
-                    panel.isPinned = !panel.isPinned;
+            toggleTabPin: (id) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === id);
+                if (tab) {
+                    tab.isPinned = !tab.isPinned;
                 }
             }),
 
-            togglePanelMinimize: (id) => set((state) => {
-                const panel = state.floatingPanels.find(p => p.id === id);
-                if (panel) {
-                    panel.isMinimized = !panel.isMinimized;
+            toggleTabMinimize: (id) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === id);
+                if (tab) {
+                    tab.isMinimized = !tab.isMinimized;
                 }
             }),
 
-            setPanelLabel: (id, label) => set((state) => {
-                const panel = state.floatingPanels.find(p => p.id === id);
-                if (panel) {
-                    panel.label = label;
+            toggleNormaCollapse: (tabId, normaId) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === tabId);
+                if (!tab) return;
+
+                const norma = tab.content.find(c => c.type === 'norma' && c.id === normaId) as NormaBlock | undefined;
+                if (norma) {
+                    norma.isCollapsed = !norma.isCollapsed;
                 }
             }),
 
-            popOutArticle: (panelId, articleId) => set((state) => {
-                const sourcePanel = state.floatingPanels.find(p => p.id === panelId);
-                if (!sourcePanel) return;
+            setTabLabel: (id, label) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === id);
+                if (tab) {
+                    tab.label = label;
+                }
+            }),
 
-                const article = sourcePanel.articles.find(a => a.norma_data.numero_articolo === articleId);
+            moveNormaBetweenTabs: (normaId, sourceTabId, targetTabId) => set((state) => {
+                const sourceTab = state.workspaceTabs.find(t => t.id === sourceTabId);
+                const targetTab = state.workspaceTabs.find(t => t.id === targetTabId);
+                if (!sourceTab || !targetTab) return;
+
+                const normaIndex = sourceTab.content.findIndex(c => c.type === 'norma' && c.id === normaId);
+                if (normaIndex === -1) return;
+
+                const norma = sourceTab.content[normaIndex];
+                sourceTab.content.splice(normaIndex, 1);
+                targetTab.content.push(norma);
+
+                targetTab.zIndex = ++state.highestZIndex;
+            }),
+
+            extractArticleFromNorma: (tabId, normaId, articleId) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === tabId);
+                if (!tab) return;
+
+                const norma = tab.content.find(c => c.type === 'norma' && c.id === normaId) as NormaBlock | undefined;
+                if (!norma) return;
+
+                const article = norma.articles.find(a => a.norma_data.numero_articolo === articleId);
                 if (!article) return;
 
-                // Remove article from source panel
-                sourcePanel.articles = sourcePanel.articles.filter(
-                    a => a.norma_data.numero_articolo !== articleId
-                );
+                norma.articles = norma.articles.filter(a => a.norma_data.numero_articolo !== articleId);
 
-                // If source panel is now empty, remove it
-                if (sourcePanel.articles.length === 0) {
-                    state.floatingPanels = state.floatingPanels.filter(p => p.id !== panelId);
-                } else {
-                    // Update active article in source panel
-                    sourcePanel.activeArticleId = sourcePanel.articles[0]?.norma_data?.numero_articolo || null;
+                if (norma.articles.length === 0) {
+                    tab.content = tab.content.filter(c => c.id !== normaId);
                 }
 
-                // Create new panel with just this article
-                const panelCount = state.floatingPanels.length;
-                const cascade = (panelCount % 5) * 40;
-
-                state.floatingPanels.push({
+                tab.content.push({
+                    type: 'loose-article',
                     id: uuidv4(),
-                    normaKey: `${sourcePanel.normaKey}-art${articleId}`,
-                    norma: sourcePanel.norma,
-                    articles: [article],
-                    position: { x: 140 + cascade, y: 140 + cascade },
-                    size: { width: 700, height: 600 },
-                    zIndex: ++state.highestZIndex,
-                    isMinimized: false,
-                    isPinned: false,
-                    activeArticleId: articleId,
-                    label: `Art. ${articleId}`
+                    article,
+                    sourceNorma: norma.norma
                 });
+            }),
+
+            moveLooseArticleBetweenTabs: (articleId, sourceTabId, targetTabId) => set((state) => {
+                const sourceTab = state.workspaceTabs.find(t => t.id === sourceTabId);
+                const targetTab = state.workspaceTabs.find(t => t.id === targetTabId);
+                if (!sourceTab || !targetTab) return;
+
+                const articleIndex = sourceTab.content.findIndex(c => c.type === 'loose-article' && c.id === articleId);
+                if (articleIndex === -1) return;
+
+                const looseArticle = sourceTab.content[articleIndex];
+                sourceTab.content.splice(articleIndex, 1);
+                targetTab.content.push(looseArticle);
+
+                targetTab.zIndex = ++state.highestZIndex;
+            }),
+
+            removeArticleFromNorma: (tabId, normaId, articleId) => set((state) => {
+                const tab = state.workspaceTabs.find(t => t.id === tabId);
+                if (!tab) return;
+
+                const norma = tab.content.find(c => c.type === 'norma' && c.id === normaId) as NormaBlock | undefined;
+                if (!norma) return;
+
+                norma.articles = norma.articles.filter(a => a.norma_data.numero_articolo !== articleId);
+
+                if (norma.articles.length === 0) {
+                    tab.content = tab.content.filter(c => c.id !== normaId);
+                }
+
+                if (tab.content.length === 0) {
+                    state.workspaceTabs = state.workspaceTabs.filter(t => t.id !== tabId);
+                }
             }),
 
             addBookmark: (norma, tags = []) => set((state) => {
@@ -390,5 +500,5 @@ export function useAppStore<T>(selector?: (state: AppState) => T) {
 }
 
 // Export types
-export type { FloatingPanel, SearchPanelState };
+export type { WorkspaceTab, NormaBlock, LooseArticle, TabContent, SearchPanelState };
 
