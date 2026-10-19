@@ -12,6 +12,9 @@ import type { NormaVisitata, SearchParams } from '../../../types';
 import { useTour } from '../../../hooks/useTour';
 import { getHistory, deleteHistoryItem, clearHistory, type SearchHistoryItem } from '../../../services/historyService';
 import { NormaChangesSection } from './NormaChangesSection';
+import { labelFromParams } from '../../../utils/sources';
+import { DecisionHistoryRow } from './DecisionHistoryRow';
+import { decisionHistoryLabel, identityFromKey } from '../../../utils/decisionLinks';
 
 // Stripe color per act_type — keyed on lowercased exact match. Codes get
 // distinct colors so the user can scan the timeline visually; everything
@@ -69,26 +72,9 @@ function historyToSearchParams(item: SearchHistoryItem): SearchParams {
     };
 }
 
-// Genera una label per QuickNorm
+// A quick norm is suggested with the norm's short label, the act's with no article (source convention).
 function generateQuickNormLabel(item: SearchHistoryItem): string {
-    const parts = [`Art. ${item.article}`];
-    if (item.act_type) {
-        // Abbrevia il tipo atto
-        const abbrev = item.act_type
-            .replace('codice civile', 'CC')
-            .replace('codice penale', 'CP')
-            .replace('codice di procedura civile', 'CPC')
-            .replace('codice di procedura penale', 'CPP')
-            .replace('costituzione', 'Cost.')
-            .replace(/^decreto legislativo$/i, 'D.Lgs.')
-            .replace(/^decreto legge$/i, 'D.L.')
-            .replace(/^legge$/i, 'L.');
-        parts.push(abbrev);
-    }
-    if (item.act_number) {
-        parts.push(`n. ${item.act_number}`);
-    }
-    return parts.join(' ');
+    return labelFromParams({ act_type: item.act_type ?? '', act_number: item.act_number, date: item.date, article: item.article?.toString() });
 }
 
 export function HistoryView() {
@@ -270,11 +256,14 @@ export function HistoryView() {
 
     const handleDeleteItem = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
+        const previous = history;
+        setHistory(prev => prev.filter(item => item.id !== id));
         try {
             await deleteHistoryItem(id);
-            setHistory(prev => prev.filter(item => item.id !== id));
         } catch (err) {
             console.error(err);
+            setHistory(previous);
+            showFeedback('Impossibile eliminare la voce dalla cronologia', 'error');
         }
     };
 
@@ -287,7 +276,7 @@ export function HistoryView() {
         // Navigate to search page and trigger search
         navigate('/');
         triggerSearch({
-            act_type: item.act_type,
+            act_type: item.act_type ?? '',
             act_number: item.act_number || '',
             date: item.date || '',
             article: item.article?.toString() || '',
@@ -300,6 +289,12 @@ export function HistoryView() {
     useEffect(() => {
         getHistory()
             .then(data => {
+                // once per row here, not in the row: the mobile and desktop lists both mount it
+                data.forEach((item) => {
+                    if (item.decision_key && !identityFromKey(item.decision_key)) {
+                        console.error('history: unreadable decision key', { id: item.id, decision_key: item.decision_key });
+                    }
+                });
                 setHistory(data);
                 setLoading(false);
             })
@@ -323,7 +318,7 @@ export function HistoryView() {
                 item.article?.toString() ?? '',
                 item.date ?? '',
                 item.version ?? '',
-                generateQuickNormLabel(item),
+                item.decision_key ? decisionHistoryLabel(item.decision_key) : generateQuickNormLabel(item),
             ].join(' ').toLowerCase();
             return tokens.every(t => haystack.includes(t));
         });
@@ -482,7 +477,9 @@ export function HistoryView() {
                                     {/* Timeline items */}
                                     {/* Mobile: simpler timeline */}
                                     <div className="md:hidden space-y-2">
-                                        {items.map((item, idx) => (
+                                        {items.map((item, idx) => item.decision_key ? (
+                                            <DecisionHistoryRow key={item.id} item={item} variant="mobile" onDelete={handleDeleteItem} />
+                                        ) : (
                                             <div key={idx} className="relative">
                                                 {/* Mobile Item card - compact, tap-friendly */}
                                                 <div
@@ -532,7 +529,10 @@ export function HistoryView() {
 
                                     {/* Desktop: full timeline with dots */}
                                     <div className="hidden md:block space-y-3 pl-6 border-l-2 border-blue-100 dark:border-blue-900 relative">
-                                        {items.map((item, idx) => (
+                                        {items.map((item, idx) => item.decision_key ? (
+                                            <DecisionHistoryRow key={item.id} item={item} variant="desktop" onDelete={handleDeleteItem}
+                                                id={idx === 0 ? 'tour-history-item' : undefined} />
+                                        ) : (
                                             <div key={idx} id={idx === 0 ? 'tour-history-item' : undefined} className="relative group">
                                                 {/* Timeline dot */}
                                                 <div className="absolute -left-[27px] top-3 w-3 h-3 bg-blue-500 rounded-full ring-4 ring-white dark:ring-slate-800 group-hover:scale-125 transition-transform" />

@@ -10,6 +10,11 @@ import type { AdminUserResponse } from '../types/api';
 import type { AdminFeedback, FeedbackStats, FeedbackStatus, FeedbackType, AdminSharedEnvironment } from '../services/adminService';
 import type { SharedEnvironmentReport, ReportStatus } from '../types';
 import { getErrorMessage } from '../utils/errors';
+import { isMerltEnabled } from '../features/merlt/featureFlag';
+import { isStudiaEnabled } from '../features/studia/featureFlag';
+import { IngestionAdminPanel } from '../features/merlt/ops/ingestion/IngestionAdminPanel';
+import { StudiaSoglieAdmin } from '../components/features/admin/StudiaSoglieAdmin';
+import { StudiaTextsAdmin } from '../components/features/admin/StudiaTextsAdmin';
 import {
   Users,
   UserPlus,
@@ -37,14 +42,23 @@ import {
   Download,
   Heart,
   Flag,
+  Database,
+  GraduationCap,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-type AdminTab = 'users' | 'feedback' | 'environments' | 'reports';
+type AdminTab = 'users' | 'feedback' | 'environments' | 'reports' | 'studia' | 'ingestion';
 
 export function AdminPage() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
+  // opsVisible mirrors useMerltFeatures().opsVisible (merltEnabled && isAdmin) but is
+  // derived here WITHOUT useConsent: AdminPage renders OUTSIDE the ConsentProvider
+  // (App.tsx wraps only <Layout> with it), so calling useMerltFeatures — which calls
+  // useConsent — would throw "useConsent must be used within a ConsentProvider".
+  const opsVisible = isMerltEnabled() && isAdmin;
+  // VisuaLex Studia's admin parts (the texts tab, the validator checkbox) follow its flag, as its pages do.
+  const studiaVisible = isStudiaEnabled();
 
   // Tab state
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
@@ -92,7 +106,7 @@ export function AdminPage() {
       const data = await adminService.listUsers();
       setUsers(data);
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nel caricamento degli utenti');
+      setError(getErrorMessage(err) || 'Errore nel caricamento degli utenti');
     } finally {
       setLoading(false);
     }
@@ -108,7 +122,7 @@ export function AdminPage() {
       setFeedbacks(data);
       setFeedbackStats(stats);
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nel caricamento dei feedback');
+      setError(getErrorMessage(err) || 'Errore nel caricamento dei feedback');
     } finally {
       setFeedbackLoading(false);
     }
@@ -130,7 +144,7 @@ export function AdminPage() {
         total: response.pagination.total,
       });
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nel caricamento degli ambienti');
+      setError(getErrorMessage(err) || 'Errore nel caricamento dei dossier pubblicati');
     } finally {
       setEnvLoading(false);
     }
@@ -190,7 +204,7 @@ export function AdminPage() {
       await adminService.withdrawSharedEnvironment(id);
       setEnvironments(prev => prev.map(e => e.id === id ? { ...e, isActive: false } : e));
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nel ritirare l\'ambiente');
+      setError(getErrorMessage(err) || 'Errore nel ritirare il dossier pubblicato');
     } finally {
       setActionLoading(false);
     }
@@ -202,7 +216,7 @@ export function AdminPage() {
       await adminService.republishSharedEnvironment(id);
       setEnvironments(prev => prev.map(e => e.id === id ? { ...e, isActive: true } : e));
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nel ripubblicare l\'ambiente');
+      setError(getErrorMessage(err) || 'Errore nel ripubblicare il dossier pubblicato');
     } finally {
       setActionLoading(false);
     }
@@ -216,7 +230,7 @@ export function AdminPage() {
       setEnvironments(prev => prev.filter(e => e.id !== showDeleteEnvConfirm));
       setShowDeleteEnvConfirm(null);
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nell\'eliminazione dell\'ambiente');
+      setError(getErrorMessage(err) || 'Errore nell\'eliminazione del dossier pubblicato');
     } finally {
       setActionLoading(false);
     }
@@ -266,7 +280,7 @@ export function AdminPage() {
       await adminService.updateFeedbackStatus(id, status);
       await loadFeedbacks();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nell\'aggiornamento');
+      setError(getErrorMessage(err) || 'Errore nell\'aggiornamento');
     } finally {
       setActionLoading(false);
     }
@@ -280,7 +294,7 @@ export function AdminPage() {
       setShowDeleteFeedbackConfirm(null);
       await loadFeedbacks();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nell\'eliminazione');
+      setError(getErrorMessage(err) || 'Errore nell\'eliminazione');
     } finally {
       setActionLoading(false);
     }
@@ -319,7 +333,7 @@ export function AdminPage() {
       setShowCreateModal(false);
       await loadUsers();
     } catch (err) {
-      setActionError(err instanceof Error && err.message ? err.message : 'Errore nella creazione utente');
+      setActionError(getErrorMessage(err) || 'Errore nella creazione utente');
     } finally {
       setActionLoading(false);
     }
@@ -331,7 +345,31 @@ export function AdminPage() {
       await adminService.updateUser(userId, { isAdmin: !currentIsAdmin });
       await loadUsers();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nell\'aggiornamento');
+      setError(getErrorMessage(err) || 'Errore nell\'aggiornamento');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleToggleValidator = async (userId: string, currentIsValidator: boolean) => {
+    try {
+      setActionLoading(true);
+      await adminService.updateUser(userId, { lingoValidatore: !currentIsValidator });
+      await loadUsers();
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Errore nell\'aggiornamento');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleToggleDevModeAllowed = async (userId: string, current: boolean) => {
+    try {
+      setActionLoading(true);
+      await adminService.updateUser(userId, { devModeAllowed: !current });
+      await loadUsers();
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Errore nell\'aggiornamento');
     } finally {
       setActionLoading(false);
     }
@@ -343,7 +381,7 @@ export function AdminPage() {
       await adminService.updateUser(userId, { isActive: !currentIsActive });
       await loadUsers();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nell\'aggiornamento');
+      setError(getErrorMessage(err) || 'Errore nell\'aggiornamento');
     } finally {
       setActionLoading(false);
     }
@@ -358,7 +396,7 @@ export function AdminPage() {
       setNewPassword('');
       setShowResetPasswordModal(null);
     } catch (err) {
-      setActionError(err instanceof Error && err.message ? err.message : 'Errore nel reset password');
+      setActionError(getErrorMessage(err) || 'Errore nel reset password');
     } finally {
       setActionLoading(false);
     }
@@ -372,7 +410,7 @@ export function AdminPage() {
       setShowDeleteConfirm(null);
       await loadUsers();
     } catch (err) {
-      setError(err instanceof Error && err.message ? err.message : 'Errore nell\'eliminazione');
+      setError(getErrorMessage(err) || 'Errore nell\'eliminazione');
     } finally {
       setActionLoading(false);
     }
@@ -384,8 +422,8 @@ export function AdminPage() {
       <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-6">
+              <div className="flex shrink-0 items-center gap-3">
                 <div className="w-10 h-10 bg-amber-100 dark:bg-amber-900/30 text-amber-600 rounded-lg flex items-center justify-center">
                   <Shield size={20} />
                 </div>
@@ -396,7 +434,7 @@ export function AdminPage() {
               </div>
 
               {/* Tabs */}
-              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700/50 rounded-lg p-1">
+              <div className="flex min-w-0 items-center gap-1 overflow-x-auto bg-gray-100 dark:bg-gray-700/50 rounded-lg p-1 [&>button]:shrink-0">
                 <button
                   onClick={() => setActiveTab('users')}
                   className={cn(
@@ -436,7 +474,7 @@ export function AdminPage() {
                   )}
                 >
                   <Package size={16} />
-                  Ambienti
+                  Forum
                 </button>
                 <button
                   onClick={() => setActiveTab('reports')}
@@ -450,10 +488,38 @@ export function AdminPage() {
                   <Flag size={16} />
                   Segnalazioni
                 </button>
+                {studiaVisible && (
+                  <button
+                    onClick={() => setActiveTab('studia')}
+                    className={cn(
+                      'flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
+                      activeTab === 'studia'
+                        ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    )}
+                  >
+                    <GraduationCap size={16} />
+                    Testi di VisuaLex Gymnasium
+                  </button>
+                )}
+                {opsVisible && (
+                  <button
+                    onClick={() => setActiveTab('ingestion')}
+                    className={cn(
+                      'flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
+                      activeTab === 'ingestion'
+                        ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    )}
+                  >
+                    <Database size={16} />
+                    Ingestione
+                  </button>
+                )}
               </div>
             </div>
-            <div className="flex items-center gap-3 relative z-50">
-              <span className="text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex shrink-0 items-center gap-1 sm:gap-3 relative z-50">
+              <span className="hidden min-w-0 truncate text-sm text-gray-500 dark:text-gray-400 sm:block sm:max-w-xs">
                 {user?.email}
               </span>
               <button
@@ -603,6 +669,30 @@ export function AdminPage() {
                               {u.is_admin ? <Shield size={12} /> : <ShieldOff size={12} />}
                               {u.is_admin ? 'Admin' : 'Utente'}
                             </button>
+                            {studiaVisible && (
+                              <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                                <input
+                                  type="checkbox"
+                                  checked={u.lingo_validatore}
+                                  onChange={() => handleToggleValidator(u.id, u.lingo_validatore)}
+                                  disabled={actionLoading}
+                                  aria-label={`Validatore di VisuaLex Gymnasium: ${u.username}`}
+                                  className="h-4 w-4 rounded border-gray-300"
+                                />
+                                Validatore di VisuaLex Gymnasium
+                              </label>
+                            )}
+                            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                              <input
+                                type="checkbox"
+                                checked={u.dev_mode_allowed ?? false}
+                                onChange={() => handleToggleDevModeAllowed(u.id, u.dev_mode_allowed ?? false)}
+                                disabled={actionLoading}
+                                aria-label={`Modalità sviluppo consentita: ${u.username}`}
+                                className="h-4 w-4 rounded border-gray-300"
+                              />
+                              Modalità sviluppo consentita
+                            </label>
                           </td>
                           <td className="px-6 py-4">
                             <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
@@ -613,7 +703,7 @@ export function AdminPage() {
                                 <p>Ultimo: {new Date(u.last_login_at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
                               )}
                               {u.stats && (
-                                <p className="text-gray-400">{u.stats.bookmarks} bookmarks</p>
+                                <p className="text-gray-400">{u.stats.bookmarks} segnalibri</p>
                               )}
                             </div>
                           </td>
@@ -625,7 +715,7 @@ export function AdminPage() {
                               <button
                                 onClick={() => setShowResetPasswordModal(u.id)}
                                 className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
-                                title="Reset password"
+                                title="Reimposta password"
                               >
                                 <Key size={16} />
                               </button>
@@ -811,7 +901,7 @@ export function AdminPage() {
                 <div className="flex items-center gap-2">
                   <Package size={20} className="text-gray-500" />
                   <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                    Ambienti Pubblicati ({envPagination.total})
+                    Dossier pubblicati ({envPagination.total})
                   </h2>
                 </div>
               </div>
@@ -824,7 +914,7 @@ export function AdminPage() {
                       type="text"
                       value={envSearch}
                       onChange={(e) => setEnvSearch(e.target.value)}
-                      placeholder="Cerca ambiente..."
+                      placeholder="Cerca un dossier pubblicato…"
                       className="pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64"
                     />
                   </div>
@@ -861,12 +951,12 @@ export function AdminPage() {
               {envLoading && environments.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <RefreshCw size={24} className="animate-spin mx-auto mb-2" />
-                  Caricamento ambienti...
+                  Caricamento dei dossier pubblicati…
                 </div>
               ) : environments.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <Package size={32} className="mx-auto mb-2 opacity-50" />
-                  Nessun ambiente trovato
+                  Nessun dossier pubblicato trovato
                 </div>
               ) : (
                 <>
@@ -875,7 +965,7 @@ export function AdminPage() {
                       <thead className="bg-gray-50 dark:bg-gray-700/50">
                         <tr>
                           <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                            Ambiente
+                            Dossier
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                             Autore
@@ -989,7 +1079,7 @@ export function AdminPage() {
                   {envPagination.pages > 1 && (
                     <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-gray-700">
                       <p className="text-sm text-gray-500">
-                        Pagina {envPagination.page} di {envPagination.pages} ({envPagination.total} ambienti)
+                        Pagina {envPagination.page} di {envPagination.pages} ({envPagination.total} dossier pubblicati)
                       </p>
                       <div className="flex items-center gap-2">
                         <button
@@ -1086,7 +1176,7 @@ export function AdminPage() {
                           </span>
                         </div>
                         <p className="text-sm text-gray-700 dark:text-gray-300">
-                          Ambiente: <span className="font-medium">{r.environment.title}</span>
+                          Dossier pubblicato: <span className="font-medium">{r.environment.title}</span>
                         </p>
                         {r.details && (
                           <p className="mt-2 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
@@ -1136,6 +1226,17 @@ export function AdminPage() {
             </div>
           </>
         )}
+
+        {/* ==================== VISUALEX STUDIA TAB ==================== */}
+        {studiaVisible && activeTab === 'studia' && (
+          <div className="space-y-5">
+            <StudiaSoglieAdmin />
+            <StudiaTextsAdmin />
+          </div>
+        )}
+
+        {/* ==================== INGESTION TAB ==================== */}
+        {activeTab === 'ingestion' && opsVisible && <IngestionAdminPanel />}
       </main>
 
       {/* Create User Modal */}
@@ -1353,10 +1454,10 @@ export function AdminPage() {
                 <Trash2 size={24} />
               </div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                Elimina Ambiente
+                Elimina dal Forum
               </h3>
               <p className="text-gray-500 dark:text-gray-400 mb-6">
-                Sei sicuro di voler eliminare questo ambiente? L'azione eliminerà permanentemente l'ambiente e tutte le sue versioni.
+                La copia pubblicata e tutte le sue versioni vengono eliminate dal Forum per sempre. Il dossier del suo autore resta com'è.
               </p>
               <div className="flex justify-center gap-3">
                 <button

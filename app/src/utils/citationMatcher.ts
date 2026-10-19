@@ -13,6 +13,7 @@ import { EU_ACT_TYPES, EU_PAIR_SOURCE, buildEuHeadSource, euKindOf, hasEuMarker,
 import { expandTwoDigitYear } from './dateUtils';
 import { FULL_ACT_NAMES, toApiArticleNumber } from './citationParser';
 import { ARTICLE_SUFFIX_ALTERNATION } from './articleSuffixes';
+import { labelFromParams } from './sources';
 
 // Minimal interface for norma context (subset of NormaVisitata)
 interface NormaContext {
@@ -76,6 +77,9 @@ const SUFFIX_TO_ACT_TYPE: Record<string, string> = {
   'c.p': 'codice penale',
   'cp': 'codice penale',
   'cod. pen.': 'codice penale',
+  'c.p.a.': 'codice del processo amministrativo',
+  'c.p.a': 'codice del processo amministrativo',
+  'cpa': 'codice del processo amministrativo',
   'c.p.c.': 'codice di procedura civile',
   'c.p.c': 'codice di procedura civile',
   'cpc': 'codice di procedura civile',
@@ -95,6 +99,26 @@ const SUFFIX_TO_ACT_TYPE: Record<string, string> = {
   'tfue': 'TFUE',
   'cdfue': 'CDFUE',
 };
+
+// L'abbreviazione di un atto dopo "art. N" (c.c., c.p.c., c.p.a., ...), una sola
+// copia per i pattern 2 e 3. Le alternative vanno dalla più lunga alla più
+// corta (in JS vince la prima che combacia: "c.p." davanti a "c.p.c." leggeva
+// il codice penale), e il lookahead `(?!\.?[a-zà-ÿ'’])` impedisce a un'abbreviazione
+// di essere letta dentro una più lunga o dentro una parola: "c.p.a." non è
+// "c.p.", "c.c.i." non è "c.c.", "costituzionale" non è "cost", "c.p. c'è" non
+// è "c.p.c". Un apostrofo blocca solo se segue una lettera: «art. 2043 c.c.’» (virgolette
+// che si chiudono) resta un link. Un punto finale seguito da spazio resta valido ("art. 110 c.p.
+// Il ricorso"). Le forme di tre lettere si scrivono attaccate ("c.p.c.", "cpc")
+// o del tutto spaziate con tutti i punti ("c. p. c."): una lettera dopo uno
+// spazio senza la sua serie di punti è la parola seguente ("c.p. c) la frode",
+// "c.p. p."), mai parte dell'abbreviazione. Stesso lookahead di
+// `_ACT_ABBREV_PATTERN` in citation_linker.py (che non ammette spazi interni).
+const ACT_SUFFIX_PATTERN =
+  '(' +
+  '(?:c\\.?p\\.?c|c\\.\\s+p\\.\\s+c(?=\\.)|c\\.?p\\.?p|c\\.\\s+p\\.\\s+p(?=\\.)|c\\.?p\\.?a|' +
+  'c\\.?\\s*c|c\\.?\\s*p|' +
+  'cost|c\\.?\\s*d\\.?\\s*s|c\\.?\\s*n|prel|cod\\.?\\s*civ|cod\\.?\\s*pen)' +
+  "(?!\\.?[a-zà-ÿ])(?!\\.?['’][a-zà-ÿ])\\.?)";
 
 // Suffissi articolo (bis, ter, ... terdecies, sexiesdecies): la tabella sta in
 // articleSuffixes.ts, ed è la sola copia. Il \b è obbligatorio: senza, il
@@ -180,13 +204,20 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
   const cleanText = text.replace(/<[^>]+>/g, (match) => ' '.repeat(match.length));
 
   const matches: CitationMatch[] = [];
-  const usedRanges: Array<[number, number]> = [];
+  // Un carattere per posizione, 1 se una citazione (o un intervallo rinunciato) lo copre: il
+  // controllo costa quanto l'intervallo, non quante citazioni ci sono già (con migliaia di
+  // citazioni la scansione di tutte era quadratica).
+  const used = new Uint8Array(cleanText.length);
+  const markUsed = (start: number, end: number): void => {
+    used.fill(1, start, end);
+  };
 
   // Helper per verificare se una posizione è già usata
   const isOverlapping = (start: number, end: number): boolean => {
-    return usedRanges.some(([s, e]) =>
-      (start >= s && start < e) || (end > s && end <= e) || (start <= s && end >= e)
-    );
+    for (let i = Math.max(0, start); i < end && i < used.length; i++) {
+      if (used[i]) return true;
+    }
+    return false;
   };
 
   // Helper per aggiungere un match
@@ -205,7 +236,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
       parsed,
       cacheKey: generateCacheKey(parsed),
     });
-    usedRanges.push([startIndex, endIndex]);
+    markUsed(startIndex, endIndex);
   };
 
   // ============================================
@@ -227,8 +258,8 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
   // "comma 1", "commi 1 e 2", "co. 3", "comma 1, lett. b)": qualifica
   // l'articolo, mai l'atto; la virgola di chiusura è punteggiatura normale
   const commaClause =
-    '(?:\\s*,?\\s*(?:comm[ai]|co\\.)\\s*\\d+(?:\\s*(?:,|\\be\\b)\\s*\\d+)*)?' +
-    '(?:\\s*,?\\s*(?:lett\\.?|lettera)\\s*[a-z]\\)?)?\\s*,?';
+    '(?:\\s*(?:,\\s*)?(?:comm[ai]|co\\.)\\s*\\d+(?:\\s*(?:,|\\be\\b)\\s*\\d+)*)?' +
+    '(?:\\s*(?:,\\s*)?(?:lett\\.?|lettera)\\s*[a-z]\\)?)?';
   // Parole d'atto che la prosa lega a un articolo con "del/della": se seguono
   // un articolo che nessun pattern ha saputo agganciare, quell'articolo NON è
   // della norma in lettura, e un link sbagliato è peggio di nessun link.
@@ -241,6 +272,10 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
     "(?:legge|l\\.|decreto|d\\.?\\s*lgs|dlgs|d\\.?\\s*p\\.?\\s*r|dpr|regolamento|reg\\.|direttiva|dir\\.|r\\.?\\s*d\\.|rd\\b|dl\\b|codice|costituzione|trattato|tue\\b|tfue\\b|cdfue\\b)",
     'i'
   ).test(tail);
+
+  // La virgola prima dell'atto e almeno uno spazio, in un solo modo (`\\s*,?\\s+` darebbe
+  // un tempo quadratico su una lunga fila di spazi).
+  const commaGap = '(?:\\s*,)?\\s+';
 
   const addArticleList = (
     whole: string, wholeStart: number, listText: string, listStart: number,
@@ -281,7 +316,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
   // 0a: "art. 5 del regolamento (UE) 2016/679", "articoli 8 e 9 del …"
   // Gruppi: 1 prefisso articolo, 2 elenco, 3-5 testa/coppia UE, 6 marcatore finale.
   const euArticleFirstRegex = new RegExp(
-    `(${ARTICLE_WORD_PATTERN}\\s*)(${articleList})${commaClause}\\s+${preposition}` +
+    `(${ARTICLE_WORD_PATTERN}\\s*)(${articleList})${commaClause}${commaGap}${preposition}` +
     `${euHead}${EU_PAIR_SOURCE}`,
     'gi'
   );
@@ -297,7 +332,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
   // 0b: "regolamento (UE) 2016/679, art. 5", "regolamento (UE) 2016/679, articoli 8 e 9"
   const euCitationRegex = new RegExp(
     `\\b${euHead}${EU_PAIR_SOURCE}` +
-    `(?:\\s*,?\\s*${ARTICLE_WORD_PATTERN}\\s*(${articleList}))?`,
+    `(?:\\s*(?:,\\s*)?${ARTICLE_WORD_PATTERN}\\s*(${articleList}))?`,
     'gi'
   );
 
@@ -322,7 +357,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
   // Gruppi: 1 prefisso, 2 elenco, 3 tipo atto, 4 numero, 5 anno.
   // ============================================
   const nationalArticleFirstRegex = new RegExp(
-    `(${ARTICLE_WORD_PATTERN}\\s*)(${articleList})${commaClause}\\s+${preposition}` +
+    `(${ARTICLE_WORD_PATTERN}\\s*)(${articleList})${commaClause}${commaGap}${preposition}` +
     `(${NATIONAL_ACT_SOURCE})\\s+(?:n\\.?\\s*)?(\\d+)\\s*[/\\\\]\\s*(\\d{4}|\\d{2})\\b`,
     'gi'
   );
@@ -346,7 +381,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
   const namedActRegex = new RegExp(
     // Un nome non è il prefisso di uno più lungo: "codice penale militare di
     // pace" non è il codice penale.
-    `(${ARTICLE_WORD_PATTERN}\\s*)(${articleList})${commaClause}\\s+${preposition}(${FULL_ACT_NAME_SOURCE})(?![a-zà-ù])(?!\\s+milita(?:re|ri)\\b)`,
+    `(${ARTICLE_WORD_PATTERN}\\s*)(${articleList})${commaClause}${commaGap}${preposition}(${FULL_ACT_NAME_SOURCE})(?![a-zà-ù])(?!\\s+milita(?:re|ri)\\b)`,
     'gi'
   );
 
@@ -368,7 +403,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
     // Spazio e numero/anno (l'anno ha due o quattro cifre)
     '\\s+(?:n\\.?\\s*)?(\\d+)\\s*[/\\\\]\\s*(\\d{4}|\\d{2})\\b' +
     // Articolo opzionale
-    `(?:\\s*,?\\s*${ARTICLE_WORD_PATTERN}\\s*(\\d+${ARTICLE_SUFFIX_PATTERN}))?`,
+    `(?:\\s*(?:,\\s*)?${ARTICLE_WORD_PATTERN}\\s*(\\d+${ARTICLE_SUFFIX_PATTERN}))?`,
     'gi'
   );
 
@@ -400,9 +435,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
     '(?:\\s*[,e]\\s*\\d+' + ARTICLE_SUFFIX_PATTERN + ')*' +  // Altri articoli
     '\\s+' +
     // Suffisso tipo atto
-    '(c\\.?\\s*c\\.?|c\\.?\\s*p\\.?|c\\.?\\s*p\\.?\\s*c\\.?|c\\.?\\s*p\\.?\\s*p\\.?|' +
-    'cost\\.?|c\\.?\\s*d\\.?\\s*s\\.?|c\\.?\\s*n\\.?|prel\\.?|' +
-    'cod\\.?\\s*civ\\.?|cod\\.?\\s*pen\\.?)',
+    ACT_SUFFIX_PATTERN,
     'gi'
   );
 
@@ -429,12 +462,10 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
     `${ARTICLE_WORD_PATTERN}\\s+` +
     '(\\d+' + ARTICLE_SUFFIX_PATTERN + ')' +
     // Ignora comma/lettera opzionali
-    '(?:\\s*,?\\s*(?:comma|co\\.|lett\\.?)\\s*[\\d\\w]+)*' +
+    '(?:\\s*(?:,\\s*)?(?:comma|co\\.|lett\\.?)\\s*[\\d\\w]+)*' +
     // Separatore e suffisso tipo atto
-    '\\s*,?\\s*' +
-    '(c\\.?\\s*c\\.?|c\\.?\\s*p\\.?|c\\.?\\s*p\\.?\\s*c\\.?|c\\.?\\s*p\\.?\\s*p\\.?|' +
-    'cost\\.?|c\\.?\\s*d\\.?\\s*s\\.?|c\\.?\\s*n\\.?|prel\\.?|' +
-    'cod\\.?\\s*civ\\.?|cod\\.?\\s*pen\\.?)',
+    '\\s*(?:,\\s*)?' +
+    ACT_SUFFIX_PATTERN,
     'gi'
   );
 
@@ -462,7 +493,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
       // Cattura tutto il gruppo di numeri: "8 e 9" o "1, 2 e 3"
       '(\\d+' + ARTICLE_SUFFIX_PATTERN + '(?:\\s*[,e]\\s*\\d+' + ARTICLE_SUFFIX_PATTERN + ')+)' +  // Gruppo 2: numeri
       // Negative lookahead per non matchare se c'è un suffisso tipo atto dopo
-      '(?!\\s*,?\\s*(?:c\\.?\\s*c|c\\.?\\s*p|cost|prel|cod))',
+      '(?!\\s*(?:,\\s*)?(?:c\\.?\\s*c|c\\.?\\s*p|cost|prel|cod))',
       'gi'
     );
 
@@ -475,7 +506,7 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
       if (namesAnotherAct(cleanText.slice(fullMatchEnd, fullMatchEnd + 120))) {
         // Rinunciato: l'intervallo va marcato, o il PATTERN 5 riprende il
         // primo articolo dell'elenco e lo dà alla norma in lettura.
-        usedRanges.push([fullMatchStart, fullMatchEnd]);
+        markUsed(fullMatchStart, fullMatchEnd);
         continue;
       }
 
@@ -521,9 +552,9 @@ export function extractCitations(text: string, defaultNorma?: NormaContext): Cit
       `${ARTICLE_WORD_PATTERN}\\s+` +
       '(\\d+' + ARTICLE_SUFFIX_PATTERN + ')' +
       // Ignora comma/lettera opzionali (ma non catturare suffisso tipo atto)
-      '(?:\\s*,?\\s*(?:comma|co\\.|lett\\.?)\\s*[\\d\\w]+)*' +
+      '(?:\\s*(?:,\\s*)?(?:comma|co\\.|lett\\.?)\\s*[\\d\\w]+)*' +
       // Negative lookahead per non matchare se c'è un suffisso tipo atto dopo
-      '(?!\\s*,?\\s*(?:c\\.?\\s*c|c\\.?\\s*p|cost|prel|cod))',
+      '(?!\\s*(?:,\\s*)?(?:c\\.?\\s*c|c\\.?\\s*p|cost|prel|cod))',
       'gi'
     );
 
@@ -581,37 +612,9 @@ export function deserializeCitation(data: string): ParsedCitationData | null {
   }
 }
 
-/**
- * Formatta una citazione per la visualizzazione
- */
+/** A detected citation, as its link names it: the short label of the source convention. */
 export function formatCitationLabel(parsed: ParsedCitationData): string {
-  const shortNames: Record<string, string> = {
-    'legge': 'L.',
-    'decreto legge': 'D.L.',
-    'decreto legislativo': 'D.Lgs.',
-    'decreto del presidente della repubblica': 'D.P.R.',
-    'regio decreto': 'R.D.',
-    'codice civile': 'C.C.',
-    'codice penale': 'C.P.',
-    'codice di procedura civile': 'C.P.C.',
-    'codice di procedura penale': 'C.P.P.',
-    'costituzione': 'Cost.',
-    'codice della strada': 'C.d.S.',
-    'codice della navigazione': 'C.N.',
-    'preleggi': 'Prel.',
-    'TUE': 'TUE',
-    'TFUE': 'TFUE',
-    'CDFUE': 'CDFUE',
-  };
-
-  const parts: string[] = [`Art. ${parsed.article}`];
-  parts.push(shortNames[parsed.act_type] || parsed.act_type);
-
-  if (parsed.act_number && parsed.date) {
-    parts.push(`${parsed.act_number}/${parsed.date}`);
-  }
-
-  return parts.join(' ');
+  return labelFromParams(parsed);
 }
 
 /**

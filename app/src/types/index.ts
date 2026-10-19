@@ -1,3 +1,6 @@
+import type { DossierSentenzaData } from './decisions';
+export type { DossierSentenzaData } from './decisions';
+
 export interface Norma {
     tipo_atto: string;
     data: string;
@@ -117,13 +120,42 @@ export interface ArticleData {
     url?: string;
     norma_data: NormaVisitata;
     brocardi_info?: BrocardiInfo | null;
+    /** Set by the server when Brocardi was asked and did not answer (no `brocardi_info` then). */
+    brocardi_error?: string;
     error?: string;
     queue_position?: number;
+    /** What the source's own page says about the text it served; absent when it cannot be read. */
+    validity?: ArticleValidity;
+    /**
+     * What was ASKED for, not what came back: `isHistorical` is true for a date or for the
+     * original text, even when the answer turns out to be the text in force. What came back is
+     * `validity`.
+     */
     versionInfo?: {
         isHistorical: boolean;
         requestedDate?: string;
-        effectiveDate?: string;
     };
+}
+
+export type ValidityState = 'current' | 'historical' | 'not_yet' | 'abrogated';
+
+/**
+ * The window of days a Normattiva page states for the text it served (dates in
+ * ISO form). The source's own statement of which version came back — never an
+ * echo of the date the reader typed. It says which text was in force, not which
+ * discipline governs a fact.
+ */
+export interface ArticleValidity {
+    state: ValidityState;
+    /** First day in force; null for an article that did not exist yet. */
+    valid_from: string | null;
+    /** Last day in force; null while the text is still in force. */
+    valid_to: string | null;
+    version_number: number | null;
+    /** The day the act's consolidated text was last updated. */
+    act_updated: string | null;
+    /** Whether the window contains the requested day; null when no day was requested. */
+    request_in_window: boolean | null;
 }
 
 export interface SearchFilters {
@@ -144,11 +176,14 @@ export interface SearchParams {
     show_brocardi_info: boolean;
     filters?: SearchFilters;
     annex?: string; // Optional annex number/letter (e.g., "1", "2", "A", "B")
-    tabLabel?: string; // Optional custom label for the workspace tab
-    // Optional pre-existing tab id to merge into (used by dossier "apri tutto" so
-    // multiple queued searches all land in the same pre-created tab without
+    tabLabel?: string; // Optional custom label for the practice a search creates
+    // Optional pre-existing practice id to land in (used by dossier "apri tutto" so
+    // multiple queued searches all land in the same pre-created practice without
     // relying on label-matching timing in processResult).
-    targetTabId?: string;
+    targetPracticeId?: string;
+    // The place the search was started from (a practice, one of its windows or the phone's reader):
+    // the norm it opens is placed beside it (a norm cited in a decision opens next to the decision).
+    besideId?: string;
 }
 
 // Annex metadata returned by tree endpoint
@@ -156,7 +191,7 @@ export interface AnnexMetadata {
     number: string | null;  // null for main text, "1"/"2"/"A" for annexes
     label: string;          // Display label (e.g., "Allegato A", "Legge di Emanazione")
     article_count: number;  // Number of articles in this annex
-    article_numbers: string[];  // List of article numbers (limited to first 50)
+    article_numbers: string[];  // The annex's article numbers
 }
 
 export interface TreeMetadata {
@@ -188,6 +223,8 @@ export interface AppSettings {
     fontFamily: 'sans' | 'serif' | 'mono';
     focusMode: boolean;
     splitView: boolean;
+    /** A decision's key passages are drawn (`utils/decisionKeyPassages.ts`); on by default (the owner, 13 Oct 2026). */
+    showKeyPassages: boolean;
     /**
      * Study Mode reading preferences, persisted across sessions. Without
      * this slice the user had to re-pick the font size, line height, and
@@ -244,6 +281,17 @@ export interface Highlight {
     originalAuthor?: OriginalAuthor | null;
 }
 
+/** A dossier di lavoro holds a practice (it may carry a client's data); a dossier di studio a topic studied. */
+export type DossierKind = 'lavoro' | 'studio';
+
+/** The dossier's copy in the Forum, seen by its owner only. */
+export interface DossierPublication {
+    sharedEnvironmentId: string;
+    version: number;
+    isActive: boolean;
+    updatedAt: string;
+}
+
 export interface Dossier {
     id: string;
     title: string;
@@ -252,22 +300,37 @@ export interface Dossier {
     items: DossierItem[];
     tags?: string[];
     isPinned?: boolean;
+    /** Absent before the server answered: read as `lavoro`, the cautious kind. */
+    kind?: DossierKind;
+    published?: DossierPublication | null;
+    /** The admin withdrew its copy from the Forum: it cannot be published again until the admin allows it. */
+    forumBlocked?: boolean;
     sourceSuggestionId?: string | null;
     originalAuthor?: OriginalAuthor | null;
 }
 
-export interface DossierItem {
+// Norma payload stored in a dossier item. It is a NormaVisitata that may also
+// carry the fetched article text when the item was filed from a loaded article.
+export type DossierNormaData = NormaVisitata & { article_text?: string };
+
+interface DossierItemBase {
     id: string;
-    type: 'norma' | 'note';
-    // TODO: make DossierItem a discriminated union on `type` so this becomes
-    // `NormaVisitata` for 'norma' and `string` for 'note'. That is a change to a
-    // core type with call sites across the dossier feature, so it is not done
-    // inside the CI round that first surfaced this lint error.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    data: any; // NormaVisitata or Note content
     addedAt: string;
     status?: 'unread' | 'reading' | 'important' | 'done';
+    // How the server names the item and its act (`citation`, `act_citation`), in the
+    // app's citation style; null for anything but a norm, absent before the server answered.
+    citation?: string | null;
+    actCitation?: string | null;
+    // A note about one article of the dossier as a whole (MCP second round): its id.
+    aboutItemId?: string | null;
+    // The connected application that wrote it (through MCP); null for the user.
+    createdBy?: { clientName: string | null } | null;
 }
+
+export type DossierItem =
+    | (DossierItemBase & { type: 'norma'; data: DossierNormaData })
+    | (DossierItemBase & { type: 'sentenza'; data: DossierSentenzaData })
+    | (DossierItemBase & { type: 'note'; data: string });
 
 export interface Bookmark {
     id: string;
@@ -409,6 +472,17 @@ export interface SharedEnvironmentListResponse {
     };
 }
 
+/** What becoming study dossiers did (a Forum download, a pack, an archived environment): the server's report. */
+export interface StudyImportReport {
+    dossiers: Array<{ id: string; name: string; entries: number }>;
+    notes: { added: number; skipped: number };
+    highlights: { added: number; skipped: number };
+    quickNorms: { added: number; skipped: number };
+    aliases: { added: number; skipped: number };
+    /** Rows of the content that could not be read. */
+    refused: number;
+}
+
 export interface PublishEnvironmentPayload {
     title: string;
     description?: string;
@@ -417,6 +491,8 @@ export interface PublishEnvironmentPayload {
     tags?: string[];
     includeNotes?: boolean;
     includeHighlights?: boolean;
+    /** The dossier it is published from (once per dossier; the link is the owner's alone). */
+    sourceDossierId?: string;
 }
 
 export interface SharedEnvironmentReport {
@@ -510,6 +586,15 @@ export interface UpdateEnvironmentWithVersionPayload {
     versionMode?: 'replace' | 'coexist';
 }
 
+/** A passage of an article a discussion is attached to: the quotation, its
+ *  plain-text offset when the discussion was opened, 32 chars of context each side. */
+export interface ThreadPassage {
+    quote: string;
+    start: number;
+    prefix: string;
+    suffix: string;
+}
+
 export interface ArticleDiscussionComment {
     id: string;
     threadId: string;
@@ -530,8 +615,15 @@ export interface ArticleDiscussionThread {
     articleId: string;
     articleLabel?: string | null;
     version?: string | null;
+    /** What the thread hangs on, derived by the server from `normaKey` (always sent). */
+    target: { kind: 'article' } | { kind: 'decision'; key: string };
+    /** A decision thread's withdrawn-word quotation was released by an admin. */
+    passageReleased: boolean;
     title: string;
     body: string;
+    passage: ThreadPassage | null;
+    articleUrn: string | null;
+    textHash: string | null;
     user: { id: string; username: string };
     createdAt: string;
     updatedAt: string;
@@ -539,6 +631,17 @@ export interface ArticleDiscussionThread {
     userVoted: boolean;
     isOwner: boolean;
     comments: ArticleDiscussionComment[];
+}
+
+export interface ArticleDiscussionPassageSummary {
+    id: string;
+    title: string;
+    passage: ThreadPassage;
+    articleUrn: string | null;
+    textHash: string | null;
+    commentCount: number;
+    createdAt: string;
+    user: { id: string; username: string };
 }
 
 export interface ArticleDiscussionResponse {

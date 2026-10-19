@@ -2,7 +2,7 @@
  * Tour Configuration
  *
  * Configurazione centralizzata per il sistema di onboarding/tour.
- * 12 tour totali: 5 per pagina + 7 contestuali per feature.
+ * 12 tour totali: 6 per pagina + 6 contestuali per feature.
  */
 import type { DriveStep } from 'driver.js';
 
@@ -21,15 +21,13 @@ export const TOUR_KEYS = {
     search: 'search',
     dossier: 'dossier',
     history: 'history',
-    environments: 'environments',
     forum: 'forum',
     // Feature tours
     commandPalette: 'commandPalette',
     studyMode: 'studyMode',
     treeView: 'treeView',
-    citationPreview: 'citationPreview',
-    workspaceTab: 'workspaceTab',
-    normaBlock: 'normaBlock',
+    practice: 'practice',
+    practiceAct: 'practiceAct',
     quickNorms: 'quickNorms',
 } as const;
 
@@ -50,79 +48,56 @@ export const WELCOME_STEPS: DriveStep[] = [
         }
     },
     {
+        element: '#tour-section-switcher',
+        popover: {
+            title: 'Le sezioni',
+            description: 'Da questa icona passi da una sezione all\'altra: Opus per il lavoro, Gymnasium per lo studio, il Forum per la comunità. La barra laterale cambia con la sezione.',
+            side: 'right',
+            align: 'start',
+        }
+    },
+    {
         element: '#tour-sidebar',
         popover: {
             title: 'Navigazione Principale',
-            description: 'Da qui accedi a tutte le sezioni: Ricerca, Dossier per organizzare le tue raccolte, Cronologia e Ambienti di lavoro.',
+            description: 'In ogni sezione trovi in cima la Ricerca e l\'analisi di un documento; sotto, gli strumenti della sezione, come i Dossier in Opus o il Ripasso in Gymnasium. La Cronologia è nel menu del tuo profilo, in basso.',
             side: 'right',
             align: 'center',
         }
     },
     {
-        element: '#tour-quick-search',
+        element: '#tour-nav-search',
         popover: {
             title: 'Inizia a Cercare',
-            description: 'Premi Cmd+K (Mac) o Ctrl+K (Windows) per aprire la ricerca veloce. Prova subito!',
-            side: 'bottom',
+            description: 'Ricerca ti porta al campo di ricerca, sempre in cima alla pagina. Da qualsiasi pagina, Cmd+K (Mac) o Ctrl+K (Windows) apre la ricerca veloce. Prova subito!',
+            side: 'right',
             align: 'start',
         }
     }
 ];
 
 /**
- * Search Page Tour - Panoramica ricerca (10 step)
+ * Search Page Tour - Panoramica ricerca (4 step)
+ *
+ * Parte sulla pagina di ricerca, che alla prima visita è vuota: i passi puntano a ciò che la
+ * pagina mostra allora (il campo di ricerca in cima, la voce Ricerca, le norme preferite). Il tavolo di
+ * lavoro ha i suoi tour (`practice`, `practiceAct`).
  */
 export const SEARCH_STEPS: DriveStep[] = [
     {
-        element: '#tour-search-form',
+        element: '#tour-search-field',
         popover: {
-            title: 'Pannello di Ricerca',
-            description: 'Da qui puoi cercare qualsiasi norma italiana o europea. Compila i campi e premi Cerca.',
-            side: 'right',
-            align: 'start',
-        }
-    },
-    {
-        element: '#tour-act-type',
-        popover: {
-            title: 'Tipo di Atto',
-            description: 'Seleziona il tipo: Codice Civile, Costituzione, Legge, Decreto Legislativo, norme UE e molto altro.',
-            side: 'bottom',
-            align: 'start',
-        }
-    },
-    {
-        element: '#tour-article-input',
-        popover: {
-            title: 'Numero Articolo',
-            description: 'Inserisci l\'articolo. Supporta formati multipli: "1", "1,2,3", "1-5" oppure "1 bis".',
-            side: 'bottom',
-            align: 'start',
-        }
-    },
-    {
-        element: '#tour-version-select',
-        popover: {
-            title: 'Versione della Norma',
-            description: 'Scegli "Vigente" per il testo attuale o seleziona una data per versioni storiche.',
-            side: 'bottom',
-            align: 'start',
-        }
-    },
-    {
-        element: '#tour-brocardi-toggle',
-        popover: {
-            title: 'Informazioni Brocardi',
-            description: 'Attiva per ottenere spiegazioni, ratio legis e massime giurisprudenziali insieme al testo.',
+            title: 'Cerca una Norma',
+            description: 'Scrivi qui una citazione naturale, come "art. 2043 cc" o "Cass. civ. 10787/2024", e premi Invio: non serve compilare dei campi. Il campo resta sempre in cima alla pagina, e ogni risultato finisce sul tavolo di una pratica.',
             side: 'bottom',
             align: 'center',
         }
     },
     {
-        element: '#tour-quick-search',
+        element: '#tour-nav-search',
         popover: {
-            title: 'Ricerca Veloce (Cmd+K)',
-            description: 'Preferisci digitare? Usa la ricerca veloce per inserire citazioni naturali come "art. 2043 cc".',
+            title: 'Ricerca e Cmd+K',
+            description: 'Ricerca riporta al campo. Preferisci la tastiera? Cmd+K (Ctrl+K) apre la ricerca veloce da qualsiasi pagina, con filtri, alias e tutti gli atti.',
             side: 'right',
             align: 'start',
         }
@@ -131,26 +106,8 @@ export const SEARCH_STEPS: DriveStep[] = [
         element: '#tour-quick-norms',
         popover: {
             title: 'Norme Preferite',
-            description: 'Le norme che consulti spesso vengono salvate qui per un accesso rapido con un solo click.',
+            description: 'Le ricerche che ripeti spesso vengono salvate qui per un accesso rapido con un solo click.',
             side: 'top',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-results-area',
-        popover: {
-            title: 'Area Risultati',
-            description: 'I risultati della ricerca appaiono qui. Ogni norma diventa una scheda che puoi spostare e ridimensionare.',
-            side: 'left',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-tree-view-btn',
-        popover: {
-            title: 'Struttura Documento',
-            description: 'Visualizza l\'indice completo della norma con titoli, capi e sezioni. Clicca un articolo per caricarlo.',
-            side: 'left',
             align: 'center',
         }
     },
@@ -296,79 +253,20 @@ export const HISTORY_STEPS: DriveStep[] = [
 ];
 
 /**
- * Environments Page Tour - Ambienti di lavoro (6 step)
- */
-export const ENVIRONMENTS_STEPS: DriveStep[] = [
-    {
-        popover: {
-            title: 'Ambienti di Lavoro',
-            description: 'Gli ambienti salvano configurazioni complete: dossier, norme rapide, annotazioni. Perfetti per passare tra progetti diversi. Scorciatoie: <kbd>n</kbd> nuovo, <kbd>/</kbd> cerca, <kbd>i</kbd> importa.',
-            side: 'over',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-env-create',
-        popover: {
-            title: 'Crea Ambiente',
-            description: 'Salva lo stato attuale del tuo workspace. Puoi includere dossier, norme rapide e annotazioni — con selezione granulare. Scorciatoia: <kbd>n</kbd>.',
-            side: 'bottom',
-            align: 'start',
-        }
-    },
-    {
-        element: '#tour-env-categories',
-        popover: {
-            title: 'Categorie',
-            description: 'Filtra per categoria: Compliance, Civile, Penale, Amministrativo, UE. Il colore a sinistra di ogni card corrisponde alla categoria.',
-            side: 'bottom',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-env-card',
-        popover: {
-            title: 'Card Ambiente',
-            description: 'Stripe di categoria a sinistra, statistiche, primi dossier e norme in anteprima, e quando l\'hai aggiornato l\'ultima volta. Clicca per aprire il dettaglio completo.',
-            side: 'right',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-env-apply',
-        popover: {
-            title: 'Unisci rapido',
-            description: 'Un click unisce l\'ambiente al tuo stato attuale, saltando i duplicati. Per sostituire tutto (azione distruttiva) usa la voce nel menu ···.',
-            side: 'left',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-env-menu',
-        popover: {
-            title: 'Altre azioni',
-            description: 'Modifica, esporta in JSON, copia link di condivisione, aggiorna dallo stato corrente, sostituisci tutto o elimina. Il menu si apre passando col mouse sulla card.',
-            side: 'left',
-            align: 'center',
-        }
-    }
-];
-
-/**
- * Forum Page Tour - Forum ambienti community (6 step)
+ * Forum Page Tour - the community's dossiers di studio (6 step)
  *
  * Introduced ex novo when the page was renamed from Bacheca to Forum.
  * List-view-only: steps anchor on the Publish CTA, the tab nav, the
  * explore filters, the first card, and the card's 3-dot menu. The
  * `isFirst` prop on SharedEnvironmentCard marks the first card in the
  * grid with `#tour-forum-card` + `#tour-forum-actions` to avoid
- * duplicate DOM ids (same trick as `tour-env-card`).
+ * duplicate DOM ids.
  */
 export const FORUM_STEPS: DriveStep[] = [
     {
         popover: {
-            title: 'Forum Ambienti',
-            description: 'Esplora ambienti pubblicati dalla community, condividi i tuoi e suggerisci contenuti agli altri.',
+            title: 'Forum',
+            description: 'I dossier di studio pubblicati dalla comunità: aggiungili ai tuoi dossier, pubblica i tuoi e suggerisci contenuti agli altri. In cima trovi i dossier di studio pronti di VisuaLex.',
             side: 'over',
             align: 'center',
         }
@@ -376,8 +274,8 @@ export const FORUM_STEPS: DriveStep[] = [
     {
         element: '#tour-forum-publish',
         popover: {
-            title: 'Condividi un ambiente',
-            description: 'Pubblica un tuo ambiente (dossier, norme rapide, alias) rendendolo disponibile alla community.',
+            title: 'Pubblica un dossier',
+            description: 'Scegli uno dei tuoi dossier: vedi l\'anteprima di ciò che diventa pubblico, togli le note che vuoi tenere per te e conferma di aver controllato che non contenga dati personali.',
             side: 'bottom',
             align: 'end',
         }
@@ -386,7 +284,7 @@ export const FORUM_STEPS: DriveStep[] = [
         element: '#tour-forum-tabs',
         popover: {
             title: 'Tre sezioni',
-            description: 'Esplora la community, gestisci gli ambienti che hai pubblicato (I Miei) e rivedi i suggerimenti ricevuti o inviati.',
+            description: 'Esplora la comunità, gestisci i dossier che hai pubblicato (I miei pubblicati, con l\'archivio dei vecchi ambienti) e rivedi i suggerimenti ricevuti o inviati.',
             side: 'bottom',
             align: 'center',
         }
@@ -395,7 +293,7 @@ export const FORUM_STEPS: DriveStep[] = [
         element: '#tour-forum-filters',
         popover: {
             title: 'Cerca e filtra',
-            description: 'Cerca per titolo o descrizione, filtra per categoria (la stripe a sinistra delle card riflette la categoria) e ordina per data, popolarità o download.',
+            description: 'Cerca per titolo o descrizione, filtra per categoria (la stripe a sinistra delle card riflette la categoria) e ordina per data, popolarità o aggiunte.',
             side: 'bottom',
             align: 'start',
         }
@@ -403,8 +301,8 @@ export const FORUM_STEPS: DriveStep[] = [
     {
         element: '#tour-forum-card',
         popover: {
-            title: 'Card Ambiente',
-            description: 'Stripe di categoria, versione, statistiche (like, download, visualizzazioni), autore e data di aggiornamento. Passa il mouse sulla data per la versione completa.',
+            title: 'Un dossier pubblicato',
+            description: 'Categoria, versione, statistiche («Mi piace», aggiunte, visualizzazioni), autore e data di aggiornamento. «Ai miei dossier» lo aggiunge ai tuoi come dossier di studio.',
             side: 'right',
             align: 'center',
         }
@@ -413,7 +311,7 @@ export const FORUM_STEPS: DriveStep[] = [
         element: '#tour-forum-actions',
         popover: {
             title: 'Altre azioni',
-            description: 'Dal menu ··· suggerisci contenuti all\'autore o segnala l\'ambiente. Sugli ambienti tuoi trovi modifica, versioni, ritira e elimina.',
+            description: 'Dal menu ··· suggerisci contenuti all\'autore o segnala il dossier. Sui tuoi trovi modifica, versioni, ritira ed elimina.',
             side: 'left',
             align: 'center',
         }
@@ -447,7 +345,7 @@ export const COMMAND_PALETTE_STEPS: DriveStep[] = [
     {
         element: '#command-palette-brocardi-toggle',
         popover: {
-            title: 'Opzione Brocardi',
+            title: 'Opzione dottrina',
             description: 'Attiva per ottenere spiegazioni, ratio legis e massime giurisprudenziali insieme al testo.',
             side: 'top',
             align: 'center',
@@ -465,7 +363,7 @@ export const COMMAND_PALETTE_STEPS: DriveStep[] = [
 ];
 
 /**
- * Study Mode Tour - Lettura immersiva (8 step)
+ * Study Mode Tour - Lettura immersiva (7 step)
  */
 export const STUDY_MODE_STEPS: DriveStep[] = [
     {
@@ -504,7 +402,7 @@ export const STUDY_MODE_STEPS: DriveStep[] = [
         }
     },
     {
-        element: '#tour-study-content',
+        element: '#study-mode-article-body',
         popover: {
             title: 'Area di Lettura',
             description: 'Il testo dell\'articolo in formato ottimizzato. Seleziona per evidenziare o aggiungere note.',
@@ -516,16 +414,7 @@ export const STUDY_MODE_STEPS: DriveStep[] = [
         element: '#tour-study-notes',
         popover: {
             title: 'Pannello Note',
-            description: 'Aggiungi annotazioni personali che vengono salvate automaticamente. Le ritrovi anche fuori dalla modalità studio.',
-            side: 'left',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-study-highlights',
-        popover: {
-            title: 'Evidenziazioni',
-            description: 'Seleziona il testo e scegli un colore per evidenziare i passaggi importanti. 4 colori disponibili.',
+            description: 'Note ed evidenziazioni: seleziona il testo e scegli un colore, o aggiungi un\'annotazione personale. Vengono salvate automaticamente e le ritrovi anche fuori dalla modalità studio.',
             side: 'left',
             align: 'center',
         }
@@ -542,7 +431,7 @@ export const STUDY_MODE_STEPS: DriveStep[] = [
 ];
 
 /**
- * Tree View Tour - Struttura documento (4 step)
+ * Tree View Tour - Struttura documento (3 step)
  */
 export const TREE_VIEW_STEPS: DriveStep[] = [
     {
@@ -555,19 +444,10 @@ export const TREE_VIEW_STEPS: DriveStep[] = [
         }
     },
     {
-        element: '#tour-tree-content',
+        element: '#tour-tree-structure',
         popover: {
             title: 'Navigazione Gerarchica',
             description: 'Espandi le sezioni per vedere i contenuti. La struttura riflette l\'organizzazione ufficiale della norma.',
-            side: 'right',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-tree-article',
-        popover: {
-            title: 'Carica Articolo',
-            description: 'Clicca su un articolo per caricarlo direttamente. Puoi selezionarne più di uno.',
             side: 'right',
             align: 'center',
         }
@@ -584,122 +464,83 @@ export const TREE_VIEW_STEPS: DriveStep[] = [
 ];
 
 /**
- * Citation Preview Tour - Anteprima citazioni (3 step)
+ * Practice Tour - Il tavolo di lavoro (4 step)
+ *
+ * Parte la prima volta che una pratica è sul tavolo (PracticeTable); al termine parte quello
+ * dell'atto.
  */
-export const CITATION_PREVIEW_STEPS: DriveStep[] = [
+export const PRACTICE_STEPS: DriveStep[] = [
     {
-        element: '.citation-hover',
+        element: '#tour-practice-bar',
         popover: {
-            title: 'Citazioni nel Testo',
-            description: 'Le citazioni normative sono sottolineate. Passa il mouse sopra per un\'anteprima.',
+            title: 'Le Pratiche',
+            description: 'Ogni pratica è un tavolo di lavoro con le norme e le sentenze di una questione. Qui passi dall\'una all\'altra, ne apri una nuova e le riordini trascinando.',
             side: 'top',
             align: 'center',
         }
     },
     {
-        element: '.citation-preview-popup',
+        element: '#tour-practice-header',
         popover: {
-            title: 'Anteprima Articolo',
-            description: 'Leggi il contenuto dell\'articolo citato senza lasciare la pagina corrente.',
+            title: 'Il Tavolo',
+            description: 'Il nome della pratica (doppio clic per cambiarlo), quanto contiene e il menu delle azioni. Le ricerche e gli articoli che apri finiscono qui.',
             side: 'bottom',
-            align: 'center',
+            align: 'start',
         }
     },
     {
-        element: '.citation-preview-open',
+        element: '#tour-practice-save',
         popover: {
-            title: 'Apri in Nuova Tab',
-            description: 'Clicca il pulsante per caricare l\'articolo completo in una nuova scheda del workspace.',
+            title: 'Salva come Dossier',
+            description: 'Trasforma il tavolo in un dossier: gli articoli e le sentenze restano al loro posto, con il testo che stavi leggendo.',
             side: 'bottom',
-            align: 'center',
+            align: 'end',
+        }
+    },
+    {
+        element: '.practice-act',
+        popover: {
+            title: 'Un Atto sul Tavolo',
+            description: 'Le norme sono raggruppate per atto, con i suoi articoli in fila: aprine uno per leggerlo qui, sul posto.',
+            side: 'top',
+            align: 'start',
         }
     }
 ];
 
 /**
- * Workspace Tab Tour - Gestione schede (5 step)
+ * Practice Act Tour - Esplorazione di un atto (7 step)
  */
-export const WORKSPACE_TAB_STEPS: DriveStep[] = [
+export const PRACTICE_ACT_STEPS: DriveStep[] = [
     {
-        element: '#tour-workspace-dock',
+        element: '.practice-act-head',
         popover: {
-            title: 'Dock delle Schede',
-            description: 'Ogni norma aperta diventa una scheda nel dock. Clicca per passare da una all\'altra.',
-            side: 'top',
-            align: 'center',
+            title: 'Intestazione dell\'Atto',
+            description: 'Tipo, numero e data dell\'atto. Clicca per comprimerlo, trascina la maniglia per riordinare, usa il menu per spostarlo in un\'altra pratica o toglierlo.',
+            side: 'bottom',
+            align: 'start',
         }
     },
     {
-        element: '.workspace-tab-panel',
+        element: '.practice-act-index',
         popover: {
-            title: 'Pannello Norma',
-            description: 'Qui trovi il testo. Puoi ridimensionare trascinando i bordi, spostare trascinando l\'intestazione.',
+            title: 'Gli Articoli sul Tavolo',
+            description: 'Un chip per ogni articolo caricato: cliccalo per aprire e raggiungere la riga. Con le frecce scorri anche quelli non ancora caricati.',
+            side: 'bottom',
+            align: 'start',
+        }
+    },
+    {
+        element: '.practice-row-beside',
+        popover: {
+            title: 'Apri Accanto',
+            description: 'Leggi un articolo o una sentenza in una finestra accanto al tavolo, per confrontarli senza perdere il posto. Se ne aprono due alla volta.',
             side: 'left',
-            align: 'start',
-        }
-    },
-    {
-        element: '#tour-workspace-minimize',
-        popover: {
-            title: 'Minimizza',
-            description: 'Riduci a icona le schede che non stai consultando. Rimangono accessibili dal dock.',
-            side: 'bottom',
             align: 'center',
         }
     },
     {
-        element: '#tour-workspace-close',
-        popover: {
-            title: 'Chiudi Scheda',
-            description: 'Chiudi le schede che non ti servono più. Puoi sempre riaprirle dalla cronologia.',
-            side: 'bottom',
-            align: 'center',
-        }
-    },
-    {
-        element: '#tour-quicknorms',
-        popover: {
-            title: 'Norme Preferite',
-            description: 'Le norme che consulti spesso appaiono qui. Un click per aprirle direttamente.',
-            side: 'top',
-            align: 'center',
-        }
-    }
-];
-
-/**
- * Norma Block Tour - Esplorazione articolo (6 step)
- */
-export const NORMA_BLOCK_STEPS: DriveStep[] = [
-    {
-        element: '.norma-block-header',
-        popover: {
-            title: 'Intestazione Norma',
-            description: 'Tipo atto, numero e data. Clicca per espandere/comprimere, trascina per riordinare.',
-            side: 'bottom',
-            align: 'start',
-        }
-    },
-    {
-        element: '.norma-article-tabs',
-        popover: {
-            title: 'Schede Articoli',
-            description: 'Ogni articolo caricato ha la sua scheda. Passa rapidamente da uno all\'altro.',
-            side: 'bottom',
-            align: 'start',
-        }
-    },
-    {
-        element: '.glass-toolbar',
-        popover: {
-            title: 'Barra Strumenti',
-            description: 'Norme rapide, note personali, evidenziatore, copia, esportazione e altro.',
-            side: 'bottom',
-            align: 'center',
-        }
-    },
-    {
-        element: '.norma-study-mode-btn',
+        element: '.practice-act-study',
         popover: {
             title: 'Modalità Studio',
             description: 'Lettura immersiva a schermo intero con opzioni di tipografia e presa appunti.',
@@ -708,10 +549,19 @@ export const NORMA_BLOCK_STEPS: DriveStep[] = [
         }
     },
     {
-        element: '.norma-structure-btn',
+        element: '.practice-act-structure',
         popover: {
             title: 'Struttura Atto',
-            description: 'Visualizza l\'indice completo con titoli, capi e sezioni. Clicca per caricare altri articoli.',
+            description: 'Visualizza l\'indice completo con titoli, capi e sezioni. Clicca un articolo per caricarlo sul tavolo.',
+            side: 'bottom',
+            align: 'center',
+        }
+    },
+    {
+        element: '.glass-toolbar',
+        popover: {
+            title: 'Barra Strumenti',
+            description: 'In una riga aperta: note personali, evidenziatore, glosse, ricerca nel testo, copia, esportazione e altro.',
             side: 'bottom',
             align: 'center',
         }
@@ -719,8 +569,8 @@ export const NORMA_BLOCK_STEPS: DriveStep[] = [
     {
         element: '.brocardi-display',
         popover: {
-            title: 'Brocardi e Spiegazioni',
-            description: 'Ratio legis, massime giurisprudenziali e riferimenti. Attiva "Brocardi" nella ricerca.',
+            title: 'Dottrina e spiegazioni',
+            description: 'Ratio legis, massime giurisprudenziali e riferimenti. Attiva "Includi dottrina" nella ricerca.',
             side: 'top',
             align: 'center',
         }
@@ -728,7 +578,7 @@ export const NORMA_BLOCK_STEPS: DriveStep[] = [
 ];
 
 /**
- * Quick Norms Tour - Norme preferite (4 step)
+ * Quick Norms Tour - Norme preferite (3 step)
  */
 export const QUICK_NORMS_STEPS: DriveStep[] = [
     {
@@ -741,10 +591,10 @@ export const QUICK_NORMS_STEPS: DriveStep[] = [
         }
     },
     {
-        element: '#tour-quicknorms-add',
+        element: '#tour-qn-add',
         popover: {
             title: 'Aggiungi Norma',
-            description: 'Dalla barra strumenti di un articolo, clicca il fulmine per salvarlo qui.',
+            description: 'Parti da una ricerca o compila i campi a mano, dai un nome e salva: la ricerca resta a un click.',
             side: 'bottom',
             align: 'center',
         }
@@ -758,15 +608,6 @@ export const QUICK_NORMS_STEPS: DriveStep[] = [
             align: 'center',
         }
     },
-    {
-        element: '#tour-quicknorms-manage',
-        popover: {
-            title: 'Gestisci',
-            description: 'Apri il pannello di gestione per rinominare, riordinare o eliminare le norme salvate.',
-            side: 'left',
-            align: 'center',
-        }
-    }
 ];
 
 // ==================== STEPS MAP ====================
@@ -776,15 +617,13 @@ export const TOUR_STEPS_MAP: Record<TourType, DriveStep[]> = {
     search: SEARCH_STEPS,
     dossier: DOSSIER_STEPS,
     history: HISTORY_STEPS,
-    environments: ENVIRONMENTS_STEPS,
     forum: FORUM_STEPS,
     // Feature tours
     commandPalette: COMMAND_PALETTE_STEPS,
     studyMode: STUDY_MODE_STEPS,
     treeView: TREE_VIEW_STEPS,
-    citationPreview: CITATION_PREVIEW_STEPS,
-    workspaceTab: WORKSPACE_TAB_STEPS,
-    normaBlock: NORMA_BLOCK_STEPS,
+    practice: PRACTICE_STEPS,
+    practiceAct: PRACTICE_ACT_STEPS,
     quickNorms: QUICK_NORMS_STEPS,
 };
 

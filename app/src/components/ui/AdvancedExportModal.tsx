@@ -4,6 +4,9 @@ import { jsPDF } from 'jspdf';
 import { cn } from '../../lib/utils';
 import { Modal } from './Modal';
 import type { ArticleData, MassimaStructured } from '../../types';
+import { DOCTRINE_ATTRIBUTION, LATIN_MAXIMS_LABEL } from '../../utils/doctrineLabel';
+import { citeNorm, inForceCitation, shortNorm } from '../../utils/sources';
+import { todayInRome } from '../../utils/dateUtils';
 
 interface ExportSection {
   id: string;
@@ -40,7 +43,7 @@ export function AdvancedExportModal({
   const [sections, setSections] = useState<ExportSection[]>([
     { id: 'text', label: 'Testo Articolo', icon: <FileText size={16} />, enabled: true },
     { id: 'citation', label: 'Citazione', icon: <Scale size={16} />, enabled: true },
-    { id: 'brocardi', label: 'Brocardi', icon: <BookOpen size={16} />, enabled: false },
+    { id: 'brocardi', label: LATIN_MAXIMS_LABEL, icon: <BookOpen size={16} />, enabled: false },
     { id: 'ratio', label: 'Ratio Legis', icon: <BookOpen size={16} />, enabled: false },
     { id: 'spiegazione', label: 'Spiegazione', icon: <BookOpen size={16} />, enabled: false },
     { id: 'massime', label: 'Massime', icon: <Scale size={16} />, enabled: false },
@@ -102,7 +105,22 @@ export function AdvancedExportModal({
 
   const isSectionEnabled = (id: string) => sections.find(s => s.id === id)?.enabled ?? false;
 
+  /**
+   * The doctrine sections (Latin maxims, ratio, explanation, massime) all come
+   * from the same source: each export credits it once, under the heading of the
+   * first of them it writes. Returns a fresh one-shot per export.
+   */
+  const makeCreditOnce = () => {
+    let credited = false;
+    return (write: () => void) => {
+      if (credited) return;
+      credited = true;
+      write();
+    };
+  };
+
   const generateExportContent = () => {
+    const creditOnce = makeCreditOnce();
     const parts: string[] = [];
     const plainText = (txt: string) => txt.replace(/<[^>]*>/g, '').replace(/\n/g, ' ').trim();
 
@@ -114,12 +132,13 @@ export function AdvancedExportModal({
 
     if (isSectionEnabled('citation')) {
       parts.push('\n--- Citazione ---');
-      parts.push(`${norma_data.tipo_atto}${norma_data.numero_atto ? ` n. ${norma_data.numero_atto}` : ''}${norma_data.data ? ` del ${norma_data.data}` : ''}, Art. ${norma_data.numero_articolo}`);
+      parts.push(inForceCitation(norma_data, todayInRome()));
       parts.push('');
     }
 
     if (isSectionEnabled('brocardi') && brocardi_info?.Brocardi) {
-      parts.push('\n=== BROCARDI ===');
+      parts.push(`\n=== ${LATIN_MAXIMS_LABEL.toUpperCase()} ===`);
+      creditOnce(() => parts.push(DOCTRINE_ATTRIBUTION));
       if (Array.isArray(brocardi_info.Brocardi)) {
         brocardi_info.Brocardi.forEach(b => parts.push(`- ${plainText(b)}`));
       } else {
@@ -130,18 +149,21 @@ export function AdvancedExportModal({
 
     if (isSectionEnabled('ratio') && brocardi_info?.Ratio) {
       parts.push('\n=== RATIO LEGIS ===');
+      creditOnce(() => parts.push(DOCTRINE_ATTRIBUTION));
       parts.push(plainText(brocardi_info.Ratio));
       parts.push('');
     }
 
     if (isSectionEnabled('spiegazione') && brocardi_info?.Spiegazione) {
       parts.push('\n=== SPIEGAZIONE ===');
+      creditOnce(() => parts.push(DOCTRINE_ATTRIBUTION));
       parts.push(plainText(brocardi_info.Spiegazione));
       parts.push('');
     }
 
     if (isSectionEnabled('massime') && selectedMassime.size > 0) {
       parts.push('\n=== MASSIME SELEZIONATE ===');
+      creditOnce(() => parts.push(DOCTRINE_ATTRIBUTION));
       massimeList
         .filter(m => selectedMassime.has(m.id))
         .forEach((m, idx) => {
@@ -170,23 +192,25 @@ export function AdvancedExportModal({
   };
 
   const generateRtfContent = () => {
+    const creditOnce = makeCreditOnce();
     const escape = (text: string) => text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}');
     const plainText = (txt: string) => escape(txt.replace(/<[^>]*>/g, '').replace(/\n/g, '\\par ').trim());
 
     let rtf = '{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Arial;}{\\f1 Times New Roman;}}';
 
-    rtf += `\\f0\\fs28\\b ${escape(norma_data.tipo_atto)}${norma_data.numero_atto ? ` n. ${norma_data.numero_atto}` : ''} - Art. ${escape(norma_data.numero_articolo)}\\b0\\par\\par`;
+    rtf += `\\f0\\fs28\\b ${escape(citeNorm(norma_data))}\\b0\\par\\par`;
 
     if (isSectionEnabled('text') && article_text) {
       rtf += `\\f1\\fs22 ${plainText(article_text)}\\par\\par`;
     }
 
     if (isSectionEnabled('citation')) {
-      rtf += `\\f0\\fs18\\i Tratto da: ${escape(norma_data.tipo_atto)}${norma_data.numero_atto ? ` n. ${norma_data.numero_atto}` : ''}${norma_data.data ? ` del ${escape(norma_data.data)}` : ''}, Art. ${escape(norma_data.numero_articolo)}\\i0\\par\\par`;
+      rtf += `\\f0\\fs18\\i ${escape(inForceCitation(norma_data, todayInRome()))}\\i0\\par\\par`;
     }
 
     if (isSectionEnabled('brocardi') && brocardi_info?.Brocardi) {
-      rtf += `\\f0\\fs20\\b Brocardi:\\b0\\par`;
+      rtf += `\\f0\\fs20\\b ${LATIN_MAXIMS_LABEL}:\\b0\\par`;
+      creditOnce(() => { rtf += `\\f1\\fs16\\i ${DOCTRINE_ATTRIBUTION}\\i0\\par`; });
       if (Array.isArray(brocardi_info.Brocardi)) {
         brocardi_info.Brocardi.forEach(b => {
           rtf += `\\f1\\fs18 - ${plainText(b)}\\par`;
@@ -199,16 +223,20 @@ export function AdvancedExportModal({
 
     if (isSectionEnabled('ratio') && brocardi_info?.Ratio) {
       rtf += `\\f0\\fs20\\b Ratio Legis:\\b0\\par`;
+      creditOnce(() => { rtf += `\\f1\\fs16\\i ${DOCTRINE_ATTRIBUTION}\\i0\\par`; });
       rtf += `\\f1\\fs18 ${plainText(brocardi_info.Ratio)}\\par\\par`;
     }
 
     if (isSectionEnabled('spiegazione') && brocardi_info?.Spiegazione) {
       rtf += `\\f0\\fs20\\b Spiegazione:\\b0\\par`;
+      creditOnce(() => { rtf += `\\f1\\fs16\\i ${DOCTRINE_ATTRIBUTION}\\i0\\par`; });
       rtf += `\\f1\\fs18 ${plainText(brocardi_info.Spiegazione)}\\par\\par`;
     }
 
     if (isSectionEnabled('massime') && selectedMassime.size > 0) {
-      rtf += `\\f0\\fs20\\b Massime Selezionate (${selectedMassime.size}):\\b0\\par\\par`;
+      rtf += `\\f0\\fs20\\b Massime Selezionate (${selectedMassime.size}):\\b0\\par`;
+      creditOnce(() => { rtf += `\\f1\\fs16\\i ${DOCTRINE_ATTRIBUTION}\\i0\\par`; });
+      rtf += '\\par';
       massimeList
         .filter(m => selectedMassime.has(m.id))
         .forEach((m, idx) => {
@@ -245,11 +273,11 @@ export function AdvancedExportModal({
    * distinguishes them in a mono-color reader.
    */
   const generateMarkdownContent = () => {
+    const creditOnce = makeCreditOnce();
     const plainText = (txt: string) => txt.replace(/<[^>]*>/g, '').replace(/\n{3,}/g, '\n\n').trim();
     const lines: string[] = [];
 
-    const citation = `${norma_data.tipo_atto}${norma_data.numero_atto ? ` n. ${norma_data.numero_atto}` : ''}${norma_data.data ? ` del ${norma_data.data}` : ''}${norma_data.allegato ? ` (All. ${norma_data.allegato})` : ''}`;
-    lines.push(`# ${citation} — Art. ${norma_data.numero_articolo}`);
+    lines.push(`# ${citeNorm(norma_data)}`);
     lines.push('');
 
     if (isSectionEnabled('text') && article_text) {
@@ -262,13 +290,14 @@ export function AdvancedExportModal({
     }
 
     if (isSectionEnabled('citation')) {
-      lines.push(`> Tratto da: ${citation}, Art. ${norma_data.numero_articolo}`);
+      lines.push(`> ${inForceCitation(norma_data, todayInRome())}`);
       lines.push('');
     }
 
     if (isSectionEnabled('brocardi') && brocardi_info?.Brocardi) {
-      lines.push('## Brocardi');
+      lines.push(`## ${LATIN_MAXIMS_LABEL}`);
       lines.push('');
+      creditOnce(() => lines.push(`_${DOCTRINE_ATTRIBUTION}_`, ''));
       if (Array.isArray(brocardi_info.Brocardi)) {
         brocardi_info.Brocardi.forEach((b) => lines.push(`- ${plainText(b)}`));
       } else {
@@ -280,6 +309,7 @@ export function AdvancedExportModal({
     if (isSectionEnabled('ratio') && brocardi_info?.Ratio) {
       lines.push('## Ratio legis');
       lines.push('');
+      creditOnce(() => lines.push(`_${DOCTRINE_ATTRIBUTION}_`, ''));
       lines.push(plainText(brocardi_info.Ratio));
       lines.push('');
     }
@@ -287,6 +317,7 @@ export function AdvancedExportModal({
     if (isSectionEnabled('spiegazione') && brocardi_info?.Spiegazione) {
       lines.push('## Spiegazione');
       lines.push('');
+      creditOnce(() => lines.push(`_${DOCTRINE_ATTRIBUTION}_`, ''));
       lines.push(plainText(brocardi_info.Spiegazione));
       lines.push('');
     }
@@ -294,6 +325,7 @@ export function AdvancedExportModal({
     if (isSectionEnabled('massime') && selectedMassime.size > 0) {
       lines.push(`## Massime (${selectedMassime.size})`);
       lines.push('');
+      creditOnce(() => lines.push(`_${DOCTRINE_ATTRIBUTION}_`, ''));
       massimeList
         .filter((m) => selectedMassime.has(m.id))
         .forEach((m, idx) => {
@@ -347,6 +379,7 @@ export function AdvancedExportModal({
    * lists) — the goal is a readable printable, not a typeset document.
    */
   const buildPdf = (): jsPDF => {
+    const creditOnce = makeCreditOnce();
     const plainText = (txt: string) => txt.replace(/<[^>]*>/g, '').replace(/\n{3,}/g, '\n\n').trim();
     const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
     const margin = 48;
@@ -384,8 +417,7 @@ export function AdvancedExportModal({
     };
 
     // Title
-    const citation = `${norma_data.tipo_atto}${norma_data.numero_atto ? ` n. ${norma_data.numero_atto}` : ''}${norma_data.data ? ` del ${norma_data.data}` : ''}${norma_data.allegato ? ` (All. ${norma_data.allegato})` : ''}`;
-    writeParagraph(`${citation} — Art. ${norma_data.numero_articolo}`, { size: 18, bold: true, color: [15, 23, 42], gapAfter: 14 });
+    writeParagraph(citeNorm(norma_data), { size: 18, bold: true, color: [15, 23, 42], gapAfter: 14 });
 
     if (isSectionEnabled('text') && article_text) {
       writeHeading('Testo');
@@ -393,11 +425,12 @@ export function AdvancedExportModal({
     }
 
     if (isSectionEnabled('citation')) {
-      writeParagraph(`Tratto da: ${citation}, Art. ${norma_data.numero_articolo}`, { size: 10, italic: true, color: [82, 82, 91] });
+      writeParagraph(inForceCitation(norma_data, todayInRome()), { size: 10, italic: true, color: [82, 82, 91] });
     }
 
     if (isSectionEnabled('brocardi') && brocardi_info?.Brocardi) {
-      writeHeading('Brocardi');
+      writeHeading(LATIN_MAXIMS_LABEL);
+      creditOnce(() => writeParagraph(DOCTRINE_ATTRIBUTION, { size: 10, italic: true, color: [82, 82, 91], gapAfter: 4 }));
       if (Array.isArray(brocardi_info.Brocardi)) {
         brocardi_info.Brocardi.forEach((b) => writeParagraph(`• ${plainText(b)}`, { size: 11, gapAfter: 4 }));
         y += 4;
@@ -408,16 +441,19 @@ export function AdvancedExportModal({
 
     if (isSectionEnabled('ratio') && brocardi_info?.Ratio) {
       writeHeading('Ratio legis');
+      creditOnce(() => writeParagraph(DOCTRINE_ATTRIBUTION, { size: 10, italic: true, color: [82, 82, 91], gapAfter: 4 }));
       writeParagraph(plainText(brocardi_info.Ratio), { size: 11 });
     }
 
     if (isSectionEnabled('spiegazione') && brocardi_info?.Spiegazione) {
       writeHeading('Spiegazione');
+      creditOnce(() => writeParagraph(DOCTRINE_ATTRIBUTION, { size: 10, italic: true, color: [82, 82, 91], gapAfter: 4 }));
       writeParagraph(plainText(brocardi_info.Spiegazione), { size: 11 });
     }
 
     if (isSectionEnabled('massime') && selectedMassime.size > 0) {
       writeHeading(`Massime (${selectedMassime.size})`);
+      creditOnce(() => writeParagraph(DOCTRINE_ATTRIBUTION, { size: 10, italic: true, color: [82, 82, 91], gapAfter: 4 }));
       massimeList
         .filter((m) => selectedMassime.has(m.id))
         .forEach((m, idx) => {
@@ -515,7 +551,7 @@ export function AdvancedExportModal({
       onClose={onClose}
       size="lg"
       title="Esporta Articolo"
-      description={`Art. ${norma_data.numero_articolo} - ${norma_data.tipo_atto}`}
+      description={shortNorm(norma_data)}
       icon={<Download size={20} />}
       variant="info"
       footer={
@@ -580,7 +616,7 @@ export function AdvancedExportModal({
 
         {hasBrocardiContent && (
           <div>
-            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Approfondimenti Brocardi</h3>
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Approfondimenti e dottrina</h3>
             <div className="grid grid-cols-2 gap-2">
               {sections.filter(s => ['brocardi', 'ratio', 'spiegazione'].includes(s.id)).map(section => {
                 const hasContent =

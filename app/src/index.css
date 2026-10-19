@@ -17,6 +17,24 @@
   --color-popover-foreground: hsl(var(--popover-foreground));
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
+
+  /* Full primary scale. The semantic --color-primary above resolves to the
+     app primary (blue-600 hue in light, blue-500 in dark); numbered utilities
+     (bg-primary-600, ring-primary-500, text-primary-700, …) used across the
+     MERL-T surfaces only generate CSS if each step is declared in @theme.
+     Values are the Tailwind blue scale, which contains both theme primaries,
+     so the palette stays coherent. */
+  --color-primary-50: hsl(213.8 100% 96.9%);
+  --color-primary-100: hsl(214.3 94.6% 92.7%);
+  --color-primary-200: hsl(213.3 96.9% 87.3%);
+  --color-primary-300: hsl(211.7 96.4% 78.4%);
+  --color-primary-400: hsl(213.1 93.9% 67.8%);
+  --color-primary-500: hsl(217.2 91.2% 59.8%);
+  --color-primary-600: hsl(221.2 83.2% 53.3%);
+  --color-primary-700: hsl(224.3 76.3% 48%);
+  --color-primary-800: hsl(225.9 70.7% 40.2%);
+  --color-primary-900: hsl(224.4 64.3% 32.9%);
+  --color-primary-950: hsl(226.2 57% 21%);
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
   --color-muted: hsl(var(--muted));
@@ -61,6 +79,19 @@
   --color-primary-800: #1e40af;
   --color-primary-900: #1e3a8a;
   --color-primary-950: #172554;
+
+  /* The review card's reveal (VisuaLex Studia): the hairline draws, then the answer unfolds.
+     Used only as `motion-safe:animate-vlx-rule` / `motion-safe:animate-vlx-unfold`. */
+  --animate-vlx-rule: vlx-rule 90ms ease-out both;
+  --animate-vlx-unfold: vlx-unfold 90ms ease-out 90ms both;
+  @keyframes vlx-rule {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  @keyframes vlx-unfold {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+  }
 
   /* Radius */
   --radius-lg: var(--radius);
@@ -134,6 +165,12 @@
     --hl-red-fg: 0 70% 35%;
     --hl-blue-bg: 214 95% 93%;
     --hl-blue-fg: 226 71% 33%;
+
+    /* Find in text — violet, the one hue the highlights (yellow, green, red, blue) and the thread focus (primary) leave free */
+    --vlx-find-bg: 285 80% 88%;
+    --vlx-find-fg: 285 60% 15%;
+    --vlx-find-current-bg: 285 70% 40%;
+    --vlx-find-current-fg: 0 0% 100%;
   }
 
   /* ═══════════════════════════════════════════════════════════
@@ -156,12 +193,12 @@
     --secondary-foreground: 210 40% 98%;
 
     --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted-foreground: 215 20.2% 70%;
 
     --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;
 
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 0 70% 60%;
     --destructive-foreground: 210 40% 98%;
 
     --border: 217.2 32.6% 17.5%;
@@ -185,6 +222,12 @@
     --hl-red-fg: 0 93% 94%;
     --hl-blue-bg: 226 71% 33%;
     --hl-blue-fg: 214 95% 93%;
+
+    /* Find in text — dark: a muted violet for matches, a bright one for the current */
+    --vlx-find-bg: 285 45% 32%;
+    --vlx-find-fg: 285 40% 96%;
+    --vlx-find-current-bg: 285 85% 75%;
+    --vlx-find-current-fg: 285 60% 12%;
 
     /* Feature colors — dark (reduced intensity, higher opacity bg) */
     --brocardi: 270 60% 70%;
@@ -251,31 +294,6 @@
            focus:rounded-lg focus:shadow-lg focus:font-medium;
   }
 
-  /* Cmd+F search result highlight — subtler than user highlights so it
-     doesn't fight their colour picks, but distinctive enough (amber
-     underline, light fill) that matches pop on first scan. */
-  .search-match {
-    background-color: color-mix(in srgb, hsl(43 96% 56%) 25%, transparent);
-    color: inherit;
-    border-radius: 2px;
-    padding: 0 1px;
-    box-decoration-break: clone;
-    -webkit-box-decoration-break: clone;
-  }
-  .dark .search-match {
-    background-color: color-mix(in srgb, hsl(43 96% 56%) 18%, transparent);
-  }
-  .search-match.search-match-active {
-    background-color: hsl(43 96% 56%);
-    color: hsl(24 80% 14%);
-    box-shadow: 0 0 0 2px hsl(43 96% 56% / 0.4);
-  }
-  .dark .search-match.search-match-active {
-    background-color: hsl(43 96% 56%);
-    color: hsl(24 80% 14%);
-    box-shadow: 0 0 0 2px hsl(43 96% 56% / 0.5);
-  }
-
   /* Toggle from the Highlights actions picker. The highlight markup
      uses inline `style="background-color:hsl(var(--hl-*-bg)); color:
      hsl(var(--hl-*-fg))"`, so a class-level rule on .highlight-mark
@@ -318,6 +336,23 @@
   @apply bg-slate-400 dark:bg-slate-600;
 }
 
+/* The page's height: the dynamic viewport where it is supported (a phone browser's `100vh` is taller
+   than what is visible while its toolbars show, and `Layout` clips the document), `100vh` where it is
+   not. Two declarations on purpose: a browser drops the one it does not understand. */
+@utility h-app {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* A column of the practice's row beside its windows: the page's height less the content area's
+   padding above and below it (`p-8`, 2 rem each, in `Layout`) and less the search page's field
+   (`--search-bar-height`, set by `Layout` while the field is drawn), so the scroller's content is never
+   taller than the scroller and a `scrollIntoView` inside a window does not move the page. */
+@utility h-app-row {
+  height: calc(100vh - 4rem - var(--search-bar-height, 0px));
+  height: calc(100dvh - 4rem - var(--search-bar-height, 0px));
+}
+
 /* ═══════════════════════════════════════════════════════════
    READING SURFACE — the structured article text
    Markup from utils/articleRender.ts. Every label here comes from CSS
@@ -354,6 +389,18 @@
 .vlx-art--study .vlx-update-para,
 .vlx-art--study .vlx-heading {
   color: color-mix(in srgb, currentColor 62%, transparent);
+}
+
+/* Find in the text: painted through the CSS Custom Highlight API
+   (utils/findHighlights.ts), so the text nodes are never touched. The colour
+   tokens sit with the --hl-* ones, in a violet hue none of them uses. */
+::highlight(vlx-find) {
+  background-color: hsl(var(--vlx-find-bg));
+  color: hsl(var(--vlx-find-fg));
+}
+::highlight(vlx-find-current) {
+  background-color: hsl(var(--vlx-find-current-bg));
+  color: hsl(var(--vlx-find-current-fg));
 }
 
 /* Hidden, not removed: hidden text still counts in the offsets. */
@@ -467,7 +514,8 @@
 }
 
 .vlx-art .vlx-ref:focus-visible,
-.vlx-art .vlx-updates-toggle:focus-visible {
+.vlx-art .vlx-updates-toggle:focus-visible,
+.vlx-art .vlx-sign:focus-visible {
   outline: none;
   @apply ring-2 ring-primary-500;
 }
@@ -550,6 +598,235 @@
   @apply text-slate-600 dark:text-slate-300;
 }
 
+/* ── «Confronta articoli» ─────────────────────────────────────
+   The comparison draws each comma with the reader's own markup (a `.vlx-art` per
+   cell). Nothing here adds text: the double brackets are collapsed, not removed
+   (`font-size: 0` keeps them in the text nodes and in a copy), and the diff's marks
+   are elements around words that are already there (gotcha 23). */
+.vlx-art--compare {
+  max-width: none;
+  margin-inline: 0;
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+/* Normattiva's ((…)): a light highlight instead of the dashed line, brackets collapsed. */
+.vlx-compare .vlx-art .vlx-mod {
+  border-bottom: 0;
+  border-radius: 0.2em;
+  background-color: rgb(251 191 36 / 0.16);
+}
+
+.dark .vlx-compare .vlx-art .vlx-mod {
+  background-color: rgb(251 191 36 / 0.14);
+}
+
+.vlx-compare .vlx-art .vlx-mod .vlx-paren {
+  font-size: 0;
+}
+
+/* The word diff of a «modificato» comma. */
+.vlx-art .vlx-del {
+  text-decoration: line-through;
+  border-radius: 0.2em;
+  @apply bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200;
+}
+
+.vlx-art .vlx-ins {
+  border-radius: 0.2em;
+  @apply bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200;
+}
+
+/* The tails' fold: the class sits on the comparison's root, not on a `.vlx-art`. */
+.vlx-compare.vlx-updates-open .vlx-art .vlx-updates-body {
+  display: block;
+}
+
+.vlx-compare.vlx-updates-open .vlx-art .vlx-updates-toggle::before {
+  content: '▾';
+}
+
+/* ── Annotation signs (round B) ───────────────────────────────
+   One per block holding the reader's notes or highlights (articleRender,
+   `signs: true`). Empty elements: the icon, the count and the dots are
+   drawn here, never as text (gotcha 23). Inline at the end of the block by
+   default; in the right margin when the frame has room (container query
+   below). The frame is a size container, so its content no longer widens a
+   shrink-to-fit ancestor: keep it inside block-level parents. */
+.vlx-frame {
+  container: vlx-frame / inline-size;
+  /* The query measures in the column's own font: 68ch is the column. */
+  font-size: 1.125rem;
+  @apply font-serif;
+}
+
+.vlx-art {
+  --vlx-note-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z'/%3E%3Cpath d='M15 3v5a1 1 0 0 0 1 1h5'/%3E%3C/svg%3E");
+  --vlx-thread-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719'/%3E%3C/svg%3E");
+}
+
+.vlx-art .vlx-sign-threads {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.vlx-art .vlx-sign-threads::before {
+  content: '';
+  width: 0.8rem;
+  height: 0.8rem;
+  background-color: currentColor;
+  -webkit-mask: var(--vlx-thread-icon) center / contain no-repeat;
+  mask: var(--vlx-thread-icon) center / contain no-repeat;
+}
+
+.vlx-art .vlx-sign-threads::after {
+  content: attr(data-count);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The words of the discussion open in the panel. A tint and an underline,
+   not a new colour, so a highlight underneath stays readable. */
+.vlx-art .vlx-thread-focus {
+  border-radius: 2px;
+  background-color: hsl(var(--primary) / 0.14);
+  box-shadow: 0 2px 0 hsl(var(--primary) / 0.55);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.dark .vlx-art .vlx-thread-focus {
+  background-color: hsl(var(--primary) / 0.22);
+}
+
+.vlx-art .vlx-sign {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.45em;
+  min-height: 1.2rem; /* the same pill with or without the note icon */
+  padding: 0.2rem 0.45rem;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  text-indent: 0; /* inherited from hanging commi and items */
+  vertical-align: 0.1em;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  @apply font-sans bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100;
+}
+
+.vlx-art .vlx-sign-notes {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.vlx-art .vlx-sign-notes::before {
+  content: '';
+  width: 0.8rem;
+  height: 0.8rem;
+  background-color: currentColor;
+  -webkit-mask: var(--vlx-note-icon) center / contain no-repeat;
+  mask: var(--vlx-note-icon) center / contain no-repeat;
+}
+
+.vlx-art .vlx-sign-notes::after {
+  content: attr(data-count);
+  font-variant-numeric: tabular-nums;
+}
+
+.vlx-art .vlx-sign-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1px solid;
+  border-radius: 9999px;
+}
+
+.vlx-art .vlx-sign-dot[data-color="yellow"] {
+  background-color: hsl(var(--hl-yellow-bg));
+  border-color: hsl(var(--hl-yellow-fg) / 0.5);
+}
+
+.vlx-art .vlx-sign-dot[data-color="green"] {
+  background-color: hsl(var(--hl-green-bg));
+  border-color: hsl(var(--hl-green-fg) / 0.5);
+}
+
+.vlx-art .vlx-sign-dot[data-color="red"] {
+  background-color: hsl(var(--hl-red-bg));
+  border-color: hsl(var(--hl-red-fg) / 0.5);
+}
+
+.vlx-art .vlx-sign-dot[data-color="blue"] {
+  background-color: hsl(var(--hl-blue-bg));
+  border-color: hsl(var(--hl-blue-fg) / 0.5);
+}
+
+/* "Nascondi evidenziazioni" means the plain text: the dots go, and so does a
+   sign that holds only highlights. */
+.highlights-hidden .vlx-art .vlx-sign-dot,
+.highlights-hidden .vlx-art .vlx-sign[data-notes="0"][data-threads="0"] {
+  display: none;
+}
+
+/* "Vai al passo": the passage glows for 1.6 s (utils/revealAnnotation.ts).
+   A box-shadow, not a background, so the highlight's own colour stays. */
+.vlx-art .highlight-mark,
+.vlx-art .note-anchor,
+.vlx-art .vlx-thread-focus {
+  transition: box-shadow 0.4s ease;
+}
+
+.vlx-art .vlx-flash {
+  border-radius: 2px;
+  box-shadow: 0 0 0 3px hsl(43 96% 56% / 0.75);
+  transition: none; /* on at once; the fade is on the way out */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* A larger, invisible hit area on touch screens, as for the "(119)" chips.
+   Before the margin rule: there `position: absolute` must win. */
+@media (pointer: coarse) {
+  .vlx-art .vlx-sign {
+    position: relative;
+  }
+
+  .vlx-art .vlx-sign::after {
+    content: '';
+    position: absolute;
+    inset: -12px -8px;
+  }
+}
+
+/* Room for the 68ch column plus a sign on each side (with notes, four
+   dots and discussions a sign is ~7rem): every sign moves to the right margin, level with
+   its block's first line, all at the same x. */
+@container vlx-frame (min-width: calc(68ch + 14rem)) {
+  .vlx-art .vlx-b,
+  .vlx-decision .vlx-dec-para {
+    position: relative;
+  }
+
+  .vlx-art .vlx-sign {
+    position: absolute;
+    top: 0.3rem;
+    left: calc(100% + 0.75rem);
+    margin-left: 0;
+  }
+}
+
+@media print {
+  .vlx-art .vlx-sign {
+    display: none;
+  }
+}
+
 /* A phone column is narrow: nested items would leave the text a sliver. */
 @media (max-width: 639px) {
   .vlx-art {
@@ -580,10 +857,118 @@
   }
 }
 
+/* Court decisions (design 2026-10-01 §4): the received text, one span per line. The space
+   between two lines and each block's label come from CSS, never from a text node (S6). */
+.vlx-decision .vlx-dec-block {
+  margin-bottom: 1.5em;
+}
+
+.vlx-decision .vlx-dec-block::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: 0.4em;
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  @apply font-sans text-slate-500;
+}
+
+/* A rule of its own: a `dark:` utility inside a `::before` rule compiles to a selector that ends
+   `::before:where(.dark, .dark *)`, which is not valid, and the build drops it without a word
+   (src/theme.test.ts checks this rule is in the stylesheet). */
+.dark .vlx-decision .vlx-dec-block::before {
+  @apply text-slate-400;
+}
+
+.vlx-decision .vlx-dec-para {
+  margin-bottom: 0.75em;
+}
+
+.vlx-decision .vlx-dec-line + .vlx-dec-line::before {
+  content: " ";
+}
+
+/* A decision's key passages (utils/decisionKeyPassages.ts): computed, never the reader's. A dotted
+   underline in a teal no highlight uses, drawn as a background; the label at its start is generated content on an
+   empty-of-text head, so no character is added (root rule 23). `key-passages-hidden` on the
+   container switches them off, as `highlights-hidden` does the highlights. */
+.vlx-decision .vlx-key-passage {
+  --key-passage: 173 80% 30%;
+  cursor: pointer;
+  background-image: linear-gradient(to right, hsl(var(--key-passage)) 55%, transparent 0);
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+  background-size: 5px 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.dark .vlx-decision .vlx-key-passage {
+  --key-passage: 172 66% 52%;
+}
+
+.vlx-decision .vlx-key-head::before {
+  content: attr(data-key-label);
+  display: inline-block;
+  margin-right: 0.35em;
+  padding: 0 0.4em;
+  border-radius: 0.25rem;
+  font-size: 0.68em;
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: 0.15em;
+  color: hsl(173 80% 24%);
+  background-color: hsl(173 70% 92%);
+  @apply font-sans;
+}
+
+/* A rule of its own, as the block labels' (a `dark:` utility inside `::before` is dropped). */
+.dark .vlx-decision .vlx-key-head::before {
+  color: hsl(172 66% 75%);
+  background-color: hsl(173 60% 18%);
+}
+
+/* Made the reader's own («Fai tua»), or any highlight over the same words: the passage is nested
+   inside the highlight (`RANK`), and there it loses its underline and its label. */
+.vlx-decision .highlight-mark .vlx-key-passage {
+  cursor: auto;
+  background-image: none;
+}
+
+.vlx-decision .highlight-mark .vlx-key-head::before {
+  content: none;
+}
+
+/* With the highlights hidden, the passage under one shows again (more specific than the two rules above),
+   unless the passages are switched off too. */
+.highlights-hidden:not(.key-passages-hidden) .vlx-decision .highlight-mark .vlx-key-passage,
+.vlx-decision.highlights-hidden:not(.key-passages-hidden) .highlight-mark .vlx-key-passage {
+  cursor: pointer;
+  background-image: linear-gradient(to right, hsl(var(--key-passage)) 55%, transparent 0);
+}
+
+.highlights-hidden:not(.key-passages-hidden) .vlx-decision .highlight-mark .vlx-key-head::before,
+.vlx-decision.highlights-hidden:not(.key-passages-hidden) .highlight-mark .vlx-key-head::before {
+  content: attr(data-key-label);
+}
+
+.key-passages-hidden .vlx-key-passage {
+  cursor: auto;
+  background-image: none;
+}
+
+.key-passages-hidden .vlx-key-head::before {
+  content: none;
+}
+
 /* ═══════════════════════════════════════════════════════════
-   CITATION HOVER — Subtle recognition of norm references
+   CITATION HOVER — Subtle recognition of norm references and of the
+   decisions a text cites (.decision-cite, utils/decisionCitationMatcher.ts)
    ═══════════════════════════════════════════════════════════ */
-.citation-hover {
+.citation-hover,
+.decision-cite {
   cursor: default;
   text-decoration: none;
   transition: all 0.15s ease;
@@ -592,14 +977,16 @@
   margin: 0 -1px;
 }
 
-.citation-hover:hover {
+.citation-hover:hover,
+.decision-cite:hover {
   text-decoration: underline dotted;
   text-decoration-color: hsl(var(--primary));
   text-underline-offset: 3px;
   background-color: hsl(var(--primary) / 0.08);
 }
 
-.dark .citation-hover:hover {
+.dark .citation-hover:hover,
+.dark .decision-cite:hover {
   background-color: hsl(var(--primary) / 0.15);
 }
 

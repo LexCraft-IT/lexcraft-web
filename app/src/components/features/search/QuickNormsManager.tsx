@@ -14,7 +14,8 @@ import { AttributionChip } from '../bulletin/AttributionChip';
 interface QuickNormsManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  onSearch?: (params: SearchParams) => void; // Optional - QuickNorms use triggerSearch from store
+  /** Runs a quick norm used from the list (the host brings the reader to the search page); without it, the store's trigger. */
+  onSearch?: (params: SearchParams) => void;
 }
 
 type InputMode = 'url' | 'manual';
@@ -29,7 +30,7 @@ function formatLastUsed(iso?: string): string | null {
   return `ultima ${formatDistanceToNow(date, { addSuffix: true, locale: it })}`;
 }
 
-export function QuickNormsManager({ isOpen, onClose }: QuickNormsManagerProps) {
+export function QuickNormsManager({ isOpen, onClose, onSearch }: QuickNormsManagerProps) {
   const { quickNorms, addQuickNorm, removeQuickNorm, updateQuickNormLabel, selectQuickNorm, triggerSearch } = useAppStore();
   const { tryStartTour } = useTour();
 
@@ -114,9 +115,9 @@ export function QuickNormsManager({ isOpen, onClose }: QuickNormsManagerProps) {
 
   const handleUseQuickNorm = useCallback((qn: QuickNorm) => {
     selectQuickNorm(qn.id);
-    triggerSearch(qn.searchParams);
+    (onSearch ?? triggerSearch)(qn.searchParams);
     onClose();
-  }, [selectQuickNorm, triggerSearch, onClose]);
+  }, [selectQuickNorm, triggerSearch, onSearch, onClose]);
 
   const handleStartEdit = useCallback((qn: QuickNorm) => {
     setEditingId(qn.id);
@@ -139,7 +140,7 @@ export function QuickNormsManager({ isOpen, onClose }: QuickNormsManagerProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div id="tour-quicknorms-panel" className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       {/* Backdrop */}
       <motion.div
         initial={{ opacity: 0 }}
@@ -354,9 +355,10 @@ export function QuickNormsManager({ isOpen, onClose }: QuickNormsManagerProps) {
               </div>
             ) : (
               <div className="space-y-2">
-                {quickNorms.map((qn) => (
+                {quickNorms.map((qn, index) => (
                   <div
                     key={qn.id}
+                    id={index === 0 ? 'tour-quicknorms-item' : undefined}
                     className="group flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                   >
                     {editingId === qn.id ? (

@@ -1,3 +1,6 @@
+import { legalFetch } from './legalFetch';
+import { DOCTRINE_LABEL, DOCTRINE_SOURCE_NAME } from '../utils/doctrineLabel';
+
 export type ServiceHealthState = 'online' | 'degraded' | 'offline' | 'checking';
 
 export interface ServiceHealth {
@@ -13,10 +16,21 @@ export interface HealthSnapshot {
   checkedAt: string;
 }
 
+// The Python API names its sources by key; the reader sees their names.
+const SOURCE_LABELS: Record<string, string> = {
+  normattiva: 'Normattiva',
+  eurlex: 'EUR-Lex',
+  brocardi: `${DOCTRINE_LABEL} (${DOCTRINE_SOURCE_NAME})`,
+};
+
+function sourceLabel(key: string): string {
+  return SOURCE_LABELS[key.toLowerCase()] ?? key;
+}
+
 async function probe(url: string, name: string, signal: AbortSignal): Promise<ServiceHealth> {
   const started = performance.now();
   try {
-    const response = await fetch(url, { signal });
+    const response = await legalFetch(url, { signal });
     const payload = await response.json().catch(() => ({})) as { status?: string; services?: Record<string, { status?: string; latency_ms?: number }> };
     const latencyMs = Math.round(performance.now() - started);
     // A 503 that still carries the services map is the API saying "I am up,
@@ -24,7 +38,7 @@ async function probe(url: string, name: string, signal: AbortSignal): Promise<Se
     // is a dead service.
     if (payload.services) {
       const degraded = Object.entries(payload.services).filter(([, value]) => value.status !== 'ok');
-      return { name, state: degraded.length > 0 ? 'degraded' : 'online', latencyMs, detail: degraded.length ? `Non disponibili: ${degraded.map(([key]) => key).join(', ')}` : undefined };
+      return { name, state: degraded.length > 0 ? 'degraded' : 'online', latencyMs, detail: degraded.length ? `Non disponibili: ${degraded.map(([key]) => sourceLabel(key)).join(', ')}` : undefined };
     }
     if (!response.ok) return { name, state: 'offline', latencyMs, detail: `HTTP ${response.status}` };
     return { name, state: payload.status === 'ok' ? 'online' : 'degraded', latencyMs };

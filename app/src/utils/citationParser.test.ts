@@ -7,17 +7,17 @@ describe('formatParsedCitation — date shown in a citation', () => {
     // The server resolver returns "2012-06-28" for acts it knows by name; a
     // citation names the year. The full date stays in the search params.
     expect(formatParsedCitation({ article: '18', act_type: 'legge', act_number: '92', date: '2012-06-28', confidence: 1 }))
-      .toBe('Art. 18 L. 92/2012');
+      .toBe('art. 18 l. 92/2012');
   });
 
   it('leaves a year-only date alone', () => {
     expect(formatParsedCitation({ article: '5', act_type: 'regolamento ue', act_number: '679', date: '2016', confidence: 1 }))
-      .toBe('Art. 5 Reg. UE 679/2016');
+      .toBe('art. 5 reg. (UE) 2016/679');
   });
 
   it('keeps a codice without number or date unchanged', () => {
     expect(formatParsedCitation({ article: '2043', act_type: 'codice civile', confidence: 1 }))
-      .toBe('Art. 2043 C.C.');
+      .toBe('art. 2043 c.c.');
   });
 });
 
@@ -192,7 +192,7 @@ describe('parseLegalCitation — full dates and article lists', () => {
   });
 
   it('shows only the year of a full date in the preview', () => {
-    expect(formatParsedCitation(parse('art. 1 legge 7/8/1990 n. 241')!)).toBe('Art. 1 L. 241/1990');
+    expect(formatParsedCitation(parse('art. 1 legge 7/8/1990 n. 241')!)).toBe('art. 1 l. 241/1990');
   });
 
   it('collects an "e"-separated list of articles', () => {
@@ -300,10 +300,15 @@ describe('parseLegalCitation — article suffixes past decies', () => {
 
   it.each([
     'undecies', 'duodecies', 'terdecies', 'quaterdecies',
-    'quinquiesdecies', 'sexiesdecies', 'septiesdecies', 'undevicies',
+    'quinquiesdecies', 'sexiesdecies', 'septiesdecies', 'undevicies', 'nonies',
   ])('keeps "art. 25-%s d.lgs. 231/2001" whole', (suffix) => {
     expect(parse(`art. 25-${suffix} d.lgs. 231/2001`))
       .toMatchObject({ act_type: 'decreto legislativo', act_number: '231', date: '2001', article: `25-${suffix}` });
+  });
+
+  it('reads art. 21-nonies l. 241/1990 as itself, never as art. 21 (Normattiva spells the ninth «nonies»)', () => {
+    expect(parse('art. 21-nonies l. 241/1990')).toMatchObject({ act_type: 'legge', act_number: '241', article: '21-nonies' });
+    expect(parse('art. 21 nonies legge 241/1990')).toMatchObject({ article: '21-nonies' });
   });
 
   it('normalises the spaced spelling to the API form', () => {
@@ -327,5 +332,42 @@ describe('extractArticleRefs — article suffixes past decies', () => {
   it('extracts the whole suffix from a footnote', () => {
     const refs = extractArticleRefs('cfr. art. 25-septiesdecies e art. 25-ter', 'decreto legislativo');
     expect(refs.map(r => r.numero)).toEqual(['25-septiesdecies', '25-ter']);
+  });
+});
+
+// The palette reads what a user types or pastes, and `extractArticleRefs` reads footnotes: a long
+// run of spaces must cost time proportional to its length (a quadratic time froze the tab).
+describe('the palette parser — long runs in linear time', () => {
+  const spaces = ' '.repeat(100_000);
+  const hostile: Record<string, string> = {
+    'spaces after «regolamento»': `regolamento${spaces}x`,
+    'spaces after «regolamento (»': `regolamento (${spaces}ue`,
+    'spaces inside a marker': `regolamento (ue${spaces}) 2016/679`,
+    'spaces after «reg. ue»': `reg. ue${spaces}2016${spaces}/${spaces}679`,
+    'spaces after «direttiva»': `direttiva${spaces}95/46`,
+    'spaces after «direttiva (UE)»': `direttiva (UE)${spaces}2016/680`,
+    'spaces after «art. 1» and «direttiva (UE)»': `art. 1 della direttiva (UE)${spaces}x`,
+    'spaces after «art. 1»': `art. 1${spaces}x`,
+    'spaces after «art. 1» and a code': `art. 1${spaces}c.c.`,
+    'spaces after «art.»': `art.${spaces}1`,
+    'spaces after «art. 1-»': `art. 1-${spaces}x`,
+    'spaces around a hyphen': `art. 1${spaces}-${spaces}bis`,
+    'spaces after an act': `legge 241/1990${spaces}x`,
+    'spaces inside an act': `legge${spaces}241${spaces}/${spaces}1990`,
+    'a long number': `art. ${'1'.repeat(100_000)}x`,
+  };
+
+  for (const [name, text] of Object.entries(hostile)) {
+    it(name, () => {
+      const start = performance.now();
+      parseLegalCitation(text);
+      extractArticleRefs(text);
+      expect(performance.now() - start).toBeLessThan(1500);
+    });
+  }
+
+  it('still reads an article across a gap of spaces and a spaced suffix', () => {
+    expect(extractArticleRefs(`art. 5${' '.repeat(500)}c.c.`)).toEqual([{ numero: '5', tipoAtto: 'codice civile', confidence: 0.9 }]);
+    expect(extractArticleRefs('art. 5 - bis e art. 6-ter').map((r) => r.numero)).toEqual(['5-bis', '6-ter']);
   });
 });

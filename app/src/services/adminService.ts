@@ -172,3 +172,83 @@ export const republishSharedEnvironment = async (id: string): Promise<{ id: stri
 export const deleteSharedEnvironment = async (id: string): Promise<void> => {
   return del(`/admin/shared-environments/${id}`);
 };
+
+// ============================================
+// VisuaLex Studia: the texts users accept
+// ============================================
+
+/** What the administrator writes for one version of a text; the number and the author come from the server. */
+export interface StudiaTextBody {
+  titolo: string;
+  corpo: string;
+  /** The checkbox's label. */
+  conferma: string;
+  /** The button's label. */
+  azione: string;
+}
+
+export interface StudiaTextVersion extends StudiaTextBody {
+  id: string;
+  versione: number;
+  createdAt: string;
+  /** The administrator's username; null when the version was written by a migration or the account is gone. */
+  autore: string | null;
+}
+
+export interface StudiaTextGroup {
+  chiave: string;
+  /** Newest first: the first is the current version. */
+  versioni: StudiaTextVersion[];
+}
+
+/**
+ * Every text with all its versions, newest first.
+ */
+export const studiaTexts = async (): Promise<StudiaTextGroup[]> => {
+  const response = await get<{ testi: StudiaTextGroup[] }>('/admin/studia/testi');
+  return response.testi;
+};
+
+/**
+ * Save a new version of a text (never overwrites). Rejects with status 409 when another version
+ * was saved at the same moment.
+ */
+export const saveStudiaText = async (chiave: string, body: StudiaTextBody): Promise<StudiaTextVersion> => {
+  return post<StudiaTextVersion>(`/admin/studia/testi/${encodeURIComponent(chiave)}`, body);
+};
+
+// ============================================
+// VisuaLex Studia: the thresholds of the community's validation
+// ============================================
+
+/** The two numbers: approvals needed to validate a proposed card, «errata» votes needed to archive it. */
+export interface StudiaSoglie {
+  approvazioni: number;
+  errate: number;
+}
+
+export interface StudiaSoglieSettings {
+  soglie: StudiaSoglie;
+  limiti: { approvazioni: { min: number; max: number }; errate: { min: number; max: number } };
+  predefinite: StudiaSoglie;
+}
+
+/** What a change would do (or did): how many proposed cards become validated and archived. */
+export interface StudiaSoglieEffetto {
+  validate: number;
+  archiviate: number;
+}
+
+export const studiaSoglie = async (): Promise<StudiaSoglieSettings> => {
+  return get<StudiaSoglieSettings>('/admin/studia/soglie');
+};
+
+/** Read-only: the counts the thresholds would give now. */
+export const previewStudiaSoglie = async (soglie: StudiaSoglie): Promise<StudiaSoglieEffetto> => {
+  return post<StudiaSoglieEffetto>('/admin/studia/soglie/anteprima', soglie);
+};
+
+/** Saves both values and recomputes the proposed cards; answers the values and the counts applied. */
+export const saveStudiaSoglie = async (soglie: StudiaSoglie): Promise<StudiaSoglieEffetto & { soglie: StudiaSoglie }> => {
+  return put<StudiaSoglieEffetto & { soglie: StudiaSoglie }>('/admin/studia/soglie', soglie);
+};

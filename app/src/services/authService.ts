@@ -2,6 +2,8 @@
  * Authentication service for user registration, login, and token management
  */
 import { post, get, put } from './api';
+import { forgetReturnTo } from '../utils/returnTo';
+import { publishUser } from './authEvents';
 import type {
   UserRegisterRequest,
   UserLoginRequest,
@@ -27,6 +29,7 @@ export const login = async (credentials: UserLoginRequest): Promise<TokenRespons
   // Store tokens in localStorage
   localStorage.setItem('access_token', response.access_token);
   localStorage.setItem('refresh_token', response.refresh_token);
+  currentUserRequest = null;
 
   return response;
 };
@@ -37,22 +40,49 @@ export const login = async (credentials: UserLoginRequest): Promise<TokenRespons
 export const logout = (): void => {
   localStorage.removeItem('access_token');
   localStorage.removeItem('refresh_token');
+  currentUserRequest = null;
+  forgetReturnTo();
   // Optionally redirect to login page
   window.location.href = '/login';
 };
 
+// One GET /auth/me per page load, shared: every useAuth() caller (Layout, Sidebar,
+// each MERL-T slot of each article…) asked on mount, some sixteen times for one
+// article. Replaced on login, logout and password change; a failure is not kept.
+let currentUserRequest: Promise<UserResponse> | null = null;
+
 /**
  * Get current authenticated user info
  */
-export const getCurrentUser = async (): Promise<UserResponse> => {
-  return get<UserResponse>('/auth/me');
+export const getCurrentUser = (): Promise<UserResponse> => {
+  if (!currentUserRequest) {
+    currentUserRequest = get<UserResponse>('/auth/me').catch((error: unknown) => {
+      currentUserRequest = null;
+      throw error;
+    });
+  }
+  return currentUserRequest;
 };
 
 /**
  * Change user password
  */
 export const changePassword = async (data: ChangePasswordRequest): Promise<UserResponse> => {
-  return put<UserResponse>('/auth/change-password', data);
+  const user = await put<UserResponse>('/auth/change-password', data);
+  currentUserRequest = Promise.resolve(user);
+  return user;
+};
+
+/**
+ * Turn the development mode on or off for the signed-in account. The server refuses (403) when the
+ * administrator has not enabled the account. The answer is the user as `/auth/me` gives it: it
+ * becomes the shared current user and is published, so every mounted `useAuth()` follows at once.
+ */
+export const setDevMode = async (enabled: boolean): Promise<UserResponse> => {
+  const user = await put<UserResponse>('/auth/dev-mode', { enabled });
+  currentUserRequest = Promise.resolve(user);
+  publishUser(user);
+  return user;
 };
 
 /**

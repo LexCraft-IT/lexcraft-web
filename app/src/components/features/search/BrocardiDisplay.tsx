@@ -3,10 +3,13 @@ import { Lightbulb, ExternalLink, ChevronDown, BookOpen, Link2, FileText, Chevro
 import type { BrocardiInfo as BrocardiInfoType, RelazioneContent, Footnote, CrossReference, GlossaryEntry } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { SafeHTML } from '../../../utils/sanitize';
-import { MassimeSection } from './MassimeSection';
+import { DOCTRINE_ATTRIBUTION, DOCTRINE_SOURCE_NAME, LATIN_MAXIMS_LABEL } from '../../../utils/doctrineLabel';
 import { FootnoteTooltip } from './FootnoteTooltip';
 import { MarkableBrocardiSection } from './MarkableBrocardiSection';
 import { useAppStore } from '../../../store/useAppStore';
+import type { DecisionSearchNorma } from '../../../types/decisions';
+import { TOUCH_TARGET_RESPONSIVE } from '../../../constants/interactions';
+import type { ReadingBackEntry } from '../../../utils/readingBackStack';
 
 // Error Boundary for BrocardiSection — surfaces the failure instead of hiding
 // the section silently so users know something went wrong and can retry.
@@ -378,7 +381,7 @@ function CrossReferencesSection({
   }, {} as Record<string, CrossReference[]>);
 
   const sectionLabels = {
-    brocardi: 'Brocardi',
+    brocardi: LATIN_MAXIMS_LABEL,
     ratio: 'Ratio',
     spiegazione: 'Spiegazione',
     massime: 'Massime'
@@ -431,8 +434,16 @@ function CrossReferencesSection({
   );
 }
 
-function GlossarioSection({ entries }: { entries: GlossaryEntry[] }) {
+/** The article a glossary term is read beside: its decisions open next to the article's tab. */
+export interface GlossaryCaseLaw {
+  norma: DecisionSearchNorma;
+  normaLabel: string;
+  tabId?: string;
+}
+
+function GlossarioSection({ entries, caseLaw }: { entries: GlossaryEntry[]; caseLaw?: GlossaryCaseLaw }) {
   const [isOpen, setIsOpen] = useState(false);
+  const openTopicSearch = useAppStore((s) => s.openTopicSearch);
 
   const toggle = () => setIsOpen((v) => !v);
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -464,7 +475,7 @@ function GlossarioSection({ entries }: { entries: GlossaryEntry[] }) {
       {isOpen && (
         <ul className="flex flex-wrap gap-2 px-4 pb-3">
           {entries.map((entry) => (
-            <li key={entry.url}>
+            <li key={entry.url} className="flex flex-wrap items-center gap-1">
               <a
                 href={entry.url}
                 target="_blank"
@@ -473,6 +484,18 @@ function GlossarioSection({ entries }: { entries: GlossaryEntry[] }) {
               >
                 {entry.termine}
               </a>
+              <button
+                type="button"
+                aria-label={`Sentenze su questo tema: ${entry.termine}`}
+                onClick={() => openTopicSearch(
+                  { tema: entry.termine, ...(caseLaw ? { norma: caseLaw.norma, normaLabel: caseLaw.normaLabel } : {}) },
+                  `Tema: ${entry.termine}`,
+                  caseLaw?.tabId ? { besideId: caseLaw.tabId } : undefined,
+                )}
+                className={`rounded-full px-2 py-1 text-xs text-primary-700 hover:underline dark:text-primary-400 ${TOUCH_TARGET_RESPONSIVE} inline-flex items-center`}
+              >
+                Sentenze su questo tema
+              </button>
             </li>
           ))}
         </ul>
@@ -481,7 +504,21 @@ function GlossarioSection({ entries }: { entries: GlossaryEntry[] }) {
   );
 }
 
-function RelatedArticlesSection({ related }: { related: NonNullable<BrocardiInfoType['RelatedArticles']> }) {
+/**
+ * The previous and next article, opened here in the reader. Their `url` points
+ * at the source's own page and takes the reader away, so it is never used;
+ * without a way to open the article in the reader the neighbours are shown as
+ * plain text.
+ */
+function RelatedArticlesSection({
+  related,
+  tipoAtto,
+  onArticleClick,
+}: {
+  related: NonNullable<BrocardiInfoType['RelatedArticles']>;
+  tipoAtto?: string;
+  onArticleClick?: (articleNumber: string, tipoAtto: string) => void;
+}) {
   const items = [
     related.previous ? { ...related.previous, label: 'Precedente' } : null,
     related.next ? { ...related.next, label: 'Successivo' } : null,
@@ -489,20 +526,36 @@ function RelatedArticlesSection({ related }: { related: NonNullable<BrocardiInfo
 
   if (items.length === 0) return null;
 
+  const itemClass =
+    'inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-200 md:min-h-0 md:py-2';
+
   return (
     <div className="flex flex-wrap gap-2">
-      {items.map((item) => (
-        <a
-          key={item.url}
-          href={item.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 md:min-h-0 md:py-2"
-        >
-          <span className="text-xs uppercase tracking-wide text-slate-400">{item.label}</span>
-          <span>{item.titolo || `Art. ${item.numero}`}</span>
-        </a>
-      ))}
+      {items.map((item) => {
+        const content = (
+          <>
+            <span className="text-xs uppercase tracking-wide text-slate-400">{item.label}</span>
+            <span>{item.titolo || `Art. ${item.numero}`}</span>
+          </>
+        );
+        return onArticleClick && tipoAtto ? (
+          <button
+            key={`${item.label}-${item.numero}`}
+            type="button"
+            onClick={() => onArticleClick(item.numero, tipoAtto)}
+            className={cn(
+              itemClass,
+              'hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-slate-800'
+            )}
+          >
+            {content}
+          </button>
+        ) : (
+          <span key={`${item.label}-${item.numero}`} className={itemClass}>
+            {content}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -510,6 +563,8 @@ function RelatedArticlesSection({ related }: { related: NonNullable<BrocardiInfo
 interface BrocardiDisplayProps {
   info: BrocardiInfoType | null;
   currentNorma?: { tipo_atto: string; data?: string; numero_atto?: string };
+  /** The article and its tab: a glossary term's decisions are searched with it and open beside it. */
+  caseLaw?: GlossaryCaseLaw;
   onArticleClick?: (articleNumber: string, tipoAtto: string) => void;
   /**
    * Parent article identity. When both are provided, the Ratio and
@@ -524,6 +579,8 @@ interface BrocardiDisplayProps {
    * `rect` is the viewport-space bounding box of the selection, used by the
    * consumer to anchor an inline composer on the span itself. */
   onRequestAddNote?: (scopedArticleId: string, text: string, startOffset: number, rect: { x: number; y: number; width: number; height: number }) => void;
+  /** Where the commentary is read: given, the decisions the Ratio and the Spiegazione cite are links. */
+  decisionLinks?: { besideId?: string; origin?: ReadingBackEntry };
 }
 
 function BrocardiEmptyState({ link }: { link?: string | null }) {
@@ -535,16 +592,16 @@ function BrocardiEmptyState({ link }: { link?: string | null }) {
           Nessun approfondimento disponibile
         </div>
         <div className="text-xs text-slate-400 dark:text-slate-500 max-w-md">
-          Brocardi.it non pubblica dottrina o massime per questo articolo.
+          Nessuna dottrina disponibile per questo articolo.
         </div>
         {link && (
           <a
             href={link}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="mt-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-1.5"
           >
-            Verifica su Brocardi.it <ExternalLink size={11} />
+            {`Verifica su ${DOCTRINE_SOURCE_NAME}`} <ExternalLink size={11} />
           </a>
         )}
       </div>
@@ -552,7 +609,7 @@ function BrocardiEmptyState({ link }: { link?: string | null }) {
   );
 }
 
-export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, uniqueArticleId, onRequestAddNote }: BrocardiDisplayProps) {
+export function BrocardiDisplay({ info, currentNorma, caseLaw, onArticleClick, itemKey, uniqueArticleId, onRequestAddNote, decisionLinks }: BrocardiDisplayProps) {
   const canMark = Boolean(itemKey && uniqueArticleId && onRequestAddNote);
   // Default collapsed on mobile (<768px), expanded on desktop
   const [isMainOpen, setIsMainOpen] = useState(() =>
@@ -564,7 +621,6 @@ export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, u
   }
 
   const hasContent = info.Brocardi || info.Ratio || info.Spiegazione ||
-    (info.Massime && info.Massime.length > 0) ||
     (info.Relazioni && info.Relazioni.length > 0) ||
     (info.CrossReferences && info.CrossReferences.length > 0) ||
     (info.Footnotes && info.Footnotes.length > 0) ||
@@ -588,7 +644,7 @@ export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, u
         </span>
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-slate-400 font-medium normal-case bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
-            Fonte: Brocardi.it
+            {DOCTRINE_ATTRIBUTION}
           </span>
           <ChevronDown
             size={16}
@@ -600,7 +656,7 @@ export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, u
       {isMainOpen && (
         <div className="space-y-4 animate-in slide-in-from-top-2 fade-in duration-300">
           <BrocardiSection
-            title="Brocardi"
+            title={LATIN_MAXIMS_LABEL}
             content={info.Brocardi || null}
           />
           {canMark && typeof info.Ratio === 'string' && info.Ratio.trim().length > 0 ? (
@@ -610,6 +666,7 @@ export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, u
               itemKey={itemKey!}
               sectionArticleId={`${uniqueArticleId}/brocardi/ratio`}
               onRequestAddNote={onRequestAddNote!}
+              decisionLinks={decisionLinks}
             />
           ) : (
             <BrocardiSection title="Ratio" content={info.Ratio || null} />
@@ -621,6 +678,7 @@ export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, u
               itemKey={itemKey!}
               sectionArticleId={`${uniqueArticleId}/brocardi/spiegazione`}
               onRequestAddNote={onRequestAddNote!}
+              decisionLinks={decisionLinks}
               icon={<FileText size={16} className="text-primary-500" />}
             />
           ) : (
@@ -629,11 +687,6 @@ export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, u
               content={info.Spiegazione || null}
               icon={<FileText size={16} className="text-primary-500" />}
             />
-          )}
-
-          {/* Massime with search and filter */}
-          {info.Massime && info.Massime.length > 0 && (
-            <MassimeSection massime={info.Massime} />
           )}
 
           {/* Note a piè di pagina */}
@@ -662,16 +715,22 @@ export function BrocardiDisplay({ info, currentNorma, onArticleClick, itemKey, u
 
           {/* Glossario (dizionario giuridico Brocardi) */}
           {info.Glossario && info.Glossario.length > 0 && (
-            <GlossarioSection entries={info.Glossario} />
+            <GlossarioSection entries={info.Glossario} caseLaw={caseLaw} />
           )}
 
           {/* Articoli correlati (precedente/successivo) */}
-          {info.RelatedArticles && <RelatedArticlesSection related={info.RelatedArticles} />}
+          {info.RelatedArticles && (
+            <RelatedArticlesSection
+              related={info.RelatedArticles}
+              tipoAtto={currentNorma?.tipo_atto}
+              onArticleClick={onArticleClick}
+            />
+          )}
 
           {info.link && (
             <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700/50 flex justify-end">
-              <a href={info.link} target="_blank" rel="noreferrer" className="text-xs font-medium text-slate-500 hover:text-primary-600 dark:text-slate-400 dark:hover:text-primary-400 hover:underline flex items-center gap-1.5 transition-colors">
-                Apri su Brocardi.it <ExternalLink size={12} />
+              <a href={info.link} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-slate-500 hover:text-primary-600 dark:text-slate-400 dark:hover:text-primary-400 hover:underline flex items-center gap-1.5 transition-colors">
+                {`Apri su ${DOCTRINE_SOURCE_NAME}`} <ExternalLink size={12} />
               </a>
             </div>
           )}

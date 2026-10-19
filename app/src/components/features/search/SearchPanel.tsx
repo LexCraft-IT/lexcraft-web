@@ -1,30 +1,65 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { PanInfo } from 'framer-motion';
-import { WorkspaceManager } from '../workspace/WorkspaceManager';
-import { CommandPalette } from './CommandPalette';
-import { QuickNormsManager } from './QuickNormsManager';
-import { AliasManager } from '../settings/AliasManager';
 const PDFViewer = lazy(() => import('../../ui/PDFViewer').then(m => ({ default: m.PDFViewer })));
-import { WorkspaceNavigator } from '../workspace/WorkspaceNavigator';
-import { NormaCard } from './NormaCard';
 import { AnnexSwitchDialog } from '../../ui/AnnexSwitchDialog';
 import type { SearchParams, ArticleData, Norma } from '../../../types';
-import { SearchX, Search, X, Star, Plus, Sparkles, ChevronLeft, ChevronRight, Info } from 'lucide-react';
+import { SearchX, Search, X, Star, Plus, Sparkles, ChevronRight, Info } from 'lucide-react';
 import { addToHistory } from '../../../services/historyService';
 import { isAuthenticated } from '../../../services/authService';
 import { useSearchParams } from 'react-router-dom';
-import { useAppStore } from '../../../store/useAppStore';
+import { appStore, useAppStore } from '../../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../../../lib/utils';
 import { useAutoSwitch } from '../../../hooks/useAutoSwitch';
 import { Z_INDEX } from '../../../constants/zIndex';
 import { getErrorMessage } from '../../../utils/errors';
+import { responseErrorMessage } from '../../../utils/responseError';
 import { buildNormaKey } from '../../../utils/normaKeys';
-import { resolveAct } from '../../../utils/actUrn';
 import { ReadingBackControl } from './ReadingBackControl';
 import { matchesSearchFilters } from '../../../utils/searchFilters';
+import { isTypedSearch } from '../../../hooks/useSearchActions';
+import { focusSearchFieldOrPalette } from '../../../utils/searchFieldControl';
+import { deriveVersionInfo, requestIsHistorical } from '../../../utils/versionDisplay';
 import { parseSearchDeepLink, SEARCH_PARAM } from '../../../utils/deepLinks';
+import { legalFetch } from '../../../services/legalFetch';
+import { WORKSPACE_AREA_ID } from '../../../utils/workspaceOrigin';
+import { isDesktopViewport, useIsDesktop } from '../../../hooks/useIsDesktop';
+import { besideRefFor, findPracticeArticle, practiceArticleKey } from '../../../utils/practice';
+import { actKeyOf } from '../dossier/dossierLayout';
+import { PracticeNotice, type PracticeStreaming } from '../practice/PracticeParts';
+import { ReadingRow } from '../practice/ReadingRow';
+import { PracticeBar } from '../practice/PracticeBar';
+import { PracticePhoneView } from '../practice/PracticePhoneView';
+
+/** The practice whose light window or, on a phone, full-screen reader `askerId` names: where a norm
+ *  cited in its text is searched and opened. */
+function askerPracticeOf(askerId: string | undefined) {
+  if (!askerId) return undefined;
+  const { practices, phoneReader } = appStore.getState();
+  return practices.find((p) => p.beside.some((b) => b.id === askerId)) ??
+    (phoneReader?.ref.id === askerId ? practices.find((p) => p.id === phoneReader.practiceId) : undefined);
+}
+
+/** A subject opened from a light window or from the phone's reader: beside the window, or in the reader. */
+function openFromAsker(practiceId: string, ref: ReturnType<typeof besideRefFor>, askerId: string): void {
+  const { openBeside, openPhoneReader } = appStore.getState();
+  if (isDesktopViewport()) openBeside(practiceId, ref, askerId);
+  else openPhoneReader(practiceId, ref);
+}
+
+/** A row a search added to a practice (it was not there before): the annex auto-switch removes
+ *  the stray rows of the first search, and only those (spec §5.2). */
+interface CreatedRow { practiceId: string; actId: string; articleKey: string }
+/** The bar of practices floats `bottom-6`: 24 px. */
+const BAR_OFFSET = 24;
+/** Where the way back floats on a phone: above the services pill (`bottom-3`, a line tall) and
+ *  the feedback button (`bottom-6`, 48 px), which sit under it. */
+const PHONE_BACK_OFFSET = 80;
+/** On the desktop before the bar is measured: its least height (`--practice-bar-height`'s 3.75rem). */
+const BAR_MIN_HEIGHT = 60;
+
+/** The rows one search created, named by the search's own params (the object `handleSearch` got). */
+interface CreatedRows { search: SearchParams | null; rows: CreatedRow[] }
 
 // Estimate the number of articles a search will return based on the `article`
 // field. Used both for the streaming progress bar and the loading skeleton.
@@ -55,21 +90,12 @@ export function SearchPanel() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [loadingProgress, setLoadingProgress] = useState<{ loaded: number; total?: number } | null>(null);
   const {
-    addWorkspaceTab, addNormaToTab, addNormaIndexToTab, workspaceTabs, removeArticleFromNorma, removeTab,
-    focusArticleInTab,
     searchTrigger, clearSearchTrigger,
     searchQueue, drainNextSearch,
     quickNorms, selectQuickNorm, triggerSearch,
-    commandPaletteOpen, openCommandPalette, closeCommandPalette,
-    quickNormsManagerOpen, openQuickNormsManager, closeQuickNormsManager
+    pendingDecision, drainPendingDecision,
+    openQuickNormsManager,
   } = useAppStore(useShallow(s => ({
-    addWorkspaceTab: s.addWorkspaceTab,
-    addNormaToTab: s.addNormaToTab,
-    addNormaIndexToTab: s.addNormaIndexToTab,
-    workspaceTabs: s.workspaceTabs,
-    removeArticleFromNorma: s.removeArticleFromNorma,
-    removeTab: s.removeTab,
-    focusArticleInTab: s.focusArticleInTab,
     searchTrigger: s.searchTrigger,
     clearSearchTrigger: s.clearSearchTrigger,
     searchQueue: s.searchQueue,
@@ -77,12 +103,9 @@ export function SearchPanel() {
     quickNorms: s.quickNorms,
     selectQuickNorm: s.selectQuickNorm,
     triggerSearch: s.triggerSearch,
-    commandPaletteOpen: s.commandPaletteOpen,
-    openCommandPalette: s.openCommandPalette,
-    closeCommandPalette: s.closeCommandPalette,
-    quickNormsManagerOpen: s.quickNormsManagerOpen,
+    pendingDecision: s.pendingDecision,
+    drainPendingDecision: s.drainPendingDecision,
     openQuickNormsManager: s.openQuickNormsManager,
-    closeQuickNormsManager: s.closeQuickNormsManager,
   })));
   const [resultsBuffer, setResultsBuffer] = useState<Record<string, { norma: Norma, articles: ArticleData[], versionDate?: string }>>({});
   const [customTabLabel, setCustomTabLabel] = useState<string | null>(null);
@@ -90,13 +113,33 @@ export function SearchPanel() {
   // skeleton can render a meaningful number of placeholder cards (M-4).
   const [expectedSkeletonCount, setExpectedSkeletonCount] = useState<number>(1);
 
-  // Track active streaming tab to avoid creating duplicates
-  const streamingTabRef = useRef<{ normaKey: string; tabId: string } | null>(null);
+  // One layout per breakpoint (T4, gotcha 26); the practice the current search lands in (its first
+  // result decides, the rest follow it); the rows it created.
+  const isDesktop = useIsDesktop();
+  const practiceCount = useAppStore((s) => s.practices.length);
+  const closePhoneReader = useAppStore((s) => s.closePhoneReader);
+  const streamingPracticeRef = useRef<string | null>(null);
+  const [streamingPracticeId, setStreamingPracticeId] = useState<string | null>(null);
+  const createdRowsRef = useRef<CreatedRows>({ search: null, rows: [] });
+  // A search started from a light window (a norm cited in its text): the window that asked and its
+  // practice. The search lands there, and its first article opens beside the window, once.
+  const askerRef = useRef<{ practiceId: string; windowId: string; opened: boolean } | null>(null);
+  // The annex auto-switch (§5.2): the first search's stray rows, taken off once the annex search has
+  // landed an article (`pendingStrayRef` until that search starts, then `strayRowsRef`); a failed
+  // annex search leaves the act as it was.
+  const pendingStrayRef = useRef<CreatedRow[]>([]);
+  const strayRowsRef = useRef<CreatedRow[]>([]);
+  // The phone's full-screen reader is closed when the screen widens: the desktop reads in windows (§8).
+  useEffect(() => {
+    if (isDesktop) closePhoneReader();
+  }, [isDesktop, closePhoneReader]);
+  // The bar of practices floats over the table (§3.4): its height, measured, keeps the column clear.
+  const [practiceBarHeight, setPracticeBarHeight] = useState<number | null>(null);
 
   // R2 (streaming-ux): how many articles the current search is expected to
-  // produce. When it's exactly 1, processResult auto-focuses the single
-  // result (even when merged into an existing tab via R3). Above 1 we
-  // stay out of the way per R1.
+  // produce. When it's exactly 1, processResult opens the single result's
+  // row (even in an act already on the table). Above 1 we stay out of the
+  // way per R1.
   const expectedTotalRef = useRef<number>(0);
   const deepLinkFocusRef = useRef<string | null>(null);
   // Search filters drop streamed articles client-side. Count what they drop
@@ -108,15 +151,11 @@ export function SearchPanel() {
   // Abort in-flight streaming fetch when a new search starts or component unmounts
   const streamAbortRef = useRef<AbortController | null>(null);
 
-  // Mobile: active tab index for swipe navigation
-  const [mobileActiveTabIndex, setMobileActiveTabIndex] = useState(0);
-
-  // Keep mobile tab index in bounds when tabs change
+  // A decision asked for from outside the search space (the `/sentenze/…` address) is opened here, on
+  // every change of the request: the address may queue it after this panel has mounted.
   useEffect(() => {
-    if (mobileActiveTabIndex >= workspaceTabs.length && workspaceTabs.length > 0) {
-      setMobileActiveTabIndex(workspaceTabs.length - 1);
-    }
-  }, [workspaceTabs.length, mobileActiveTabIndex]);
+    if (pendingDecision) drainPendingDecision();
+  }, [pendingDecision, drainPendingDecision]);
 
   // PDF State
   const [pdfState, setPdfState] = useState<{ isOpen: boolean; url: string | null; isLoading: boolean }>({
@@ -128,10 +167,9 @@ export function SearchPanel() {
   // `tabLabel` is the per-search custom label (e.g. from a dossier). It must
   // be threaded through as a parameter rather than read from `customTabLabel`
   // state, otherwise a queued multi-search (see triggerMultiSearch) closes
-  // over a stale label captured when the memoized callback was created — the
-  // second search would end up landing in a default-label tab. See the drain
-  // effect below for the flow.
-  const processResult = useCallback((result: ArticleData, versionDate?: string, isStreaming = false, tabLabel?: string, targetTabId?: string, filters?: SearchParams['filters']) => {
+  // over a stale label captured when the memoized callback was created. See
+  // the drain effect below for the flow.
+  const processResult = useCallback((result: ArticleData, versionDate?: string, isStreaming = false, tabLabel?: string, targetPracticeId?: string, filters?: SearchParams['filters'], version?: SearchParams['version']) => {
     if (result.error) {
       console.error("Backend Error for item:", result.error);
       const article = result.norma_data?.numero_articolo || 'richiesto';
@@ -146,14 +184,9 @@ export function SearchPanel() {
       return;
     }
 
-    // Mark as historical if version_date was provided
-    if (versionDate) {
-      result.versionInfo = {
-        isHistorical: true,
-        requestedDate: versionDate,
-        effectiveDate: normaData.data_versione || normaData.data
-      };
-    }
+    // What was ASKED for: a date, or the original text. What came back is
+    // `result.validity`, the window the source states; never an echo of the date.
+    result.versionInfo = deriveVersionInfo({ version, version_date: versionDate });
 
     if (!matchesSearchFilters(result, filters)) {
       filteredOutRef.current += 1;
@@ -172,86 +205,51 @@ export function SearchPanel() {
     const key = buildNormaKey(norma);
     if (!key) return;
 
-    // If streaming, add directly to workspace instead of buffering
+    // If streaming, add directly to the practice instead of buffering
     if (isStreaming) {
-      const isHistorical = result.versionInfo?.isHistorical;
-
       // Update loading progress
       setLoadingProgress(prev => prev ? { ...prev, loaded: prev.loaded + 1 } : { loaded: 1 });
-
-      // Check if we're streaming to the same norma as before
-      const isSameNorma = streamingTabRef.current && streamingTabRef.current.normaKey === key;
 
       const numero = result.norma_data.numero_articolo;
       const allegato = result.norma_data.allegato;
       const articleUniqueId = allegato ? `all${allegato}:${numero}` : numero;
 
-      // Direct-merge path: when the caller pre-created a tab (dossier "apri
-      // tutto") and passed its id, we bypass all label-matching logic and
-      // always merge into that tab. Also binds streamingTabRef so subsequent
-      // articles from the same norma continue writing there.
-      if (targetTabId && workspaceTabs.some((t) => t.id === targetTabId)) {
-        addNormaToTab(targetTabId, norma, [result]);
-        streamingTabRef.current = { normaKey: key, tabId: targetTabId };
-      } else if (isSameNorma && streamingTabRef.current) {
-        // Add article to the tab we created for this streaming session
-        addNormaToTab(streamingTabRef.current.tabId, norma, [result]);
-      } else {
-        // First article of a new norma.
-        //
-        // Custom-label search (dossier "apri tutti"): first look for an
-        // already-open custom tab with the SAME label and merge into it —
-        // this is how a multi-norm dossier collapses into a single tab.
-        // Fall back to creating a new custom tab.
-        //
-        // Non-custom search: R3 (streaming-ux) — merge into an existing
-        // non-custom, non-historical tab that already holds the same norma,
-        // otherwise create a new default-labeled tab.
-        let mergeTarget: typeof workspaceTabs[number] | undefined;
-        if (tabLabel && !isHistorical) {
-          mergeTarget = workspaceTabs.find(tab =>
-            tab.labelIsCustom &&
-            tab.label === tabLabel &&
-            !tab.content.some(item =>
-              item.type === 'norma' && item.articles?.some(a => a.versionInfo?.isHistorical)
-            )
-          );
-        } else if (!tabLabel && !isHistorical) {
-          mergeTarget = workspaceTabs.find(tab =>
-            !tab.labelIsCustom &&
-            tab.content.some(item =>
-              item.type === 'norma' &&
-              item.norma.tipo_atto === norma.tipo_atto &&
-              item.norma.numero_atto === norma.numero_atto &&
-              item.norma.data === norma.data &&
-              !item.articles?.some(a => a.versionInfo?.isHistorical)
-            )
-          );
-        }
-
-        if (mergeTarget) {
-          addNormaToTab(mergeTarget.id, norma, [result]);
-          streamingTabRef.current = { normaKey: key, tabId: mergeTarget.id };
-        } else {
-          const versionSuffix = isHistorical && versionDate ? ` - Ver. ${versionDate}` : '';
-          const label = tabLabel || `${norma.tipo_atto}${norma.numero_atto ? ` ${norma.numero_atto}` : ''}${versionSuffix}`;
-          const newTabId = addWorkspaceTab(label, norma, [result], { isCustom: !!tabLabel });
-          streamingTabRef.current = { normaKey: key, tabId: newTabId };
-        }
-
-      }
-
-      // R2 (streaming-ux): single-article searches auto-focus the result even
-      // when merged into a pre-existing tab (R3). For ranges we let the user
-      // stay on whatever they're reading (R1). Not on the targetTabId path:
-      // the dossier "apri tutte" queue (gotcha 15) would otherwise jump to
-      // each article as it lands. A deep link focuses the article it names
-      // on any path, range included.
+      // The practice (spec §5.1, T11): the dossier's practice (`targetPracticeId`, gotcha 15), else the
+      // one this search already landed in, else the active one, created when there is none. Which
+      // rows open (§3.2): the one article a one-article search asked for (R2), the first article of
+      // an act new to the practice in a range (R1), the article a deep link names; never on the
+      // dossier's queue, which would jump to every article as it lands.
+      const store = appStore.getState();
+      // Once the first article has landed, the rest follow it: a closed target is warned once per search.
+      const asker = askerRef.current;
+      const wanted = streamingPracticeRef.current ?? targetPracticeId ?? asker?.practiceId ?? null;
+      const landingId = wanted && store.practices.some((p) => p.id === wanted) ? wanted : store.activePracticeId;
+      const heldAct = store.practices.find((p) => p.id === landingId)?.acts.find((a) => a.key === actKeyOf(norma));
+      const articleKey = practiceArticleKey(result);
+      const isNewRow = !heldAct?.articles.some((a) => practiceArticleKey(a) === articleKey);
       const isDeepLinkTarget = deepLinkFocusRef.current === articleUniqueId;
-      if (streamingTabRef.current && (isDeepLinkTarget || (expectedTotalRef.current === 1 && !targetTabId))) {
-        focusArticleInTab(streamingTabRef.current.tabId, articleUniqueId);
-        if (isDeepLinkTarget) deepLinkFocusRef.current = null;
+      // A norm cited in a window opens beside it, not in the table.
+      const reveal = isDeepLinkTarget || (!targetPracticeId && !asker && (expectedTotalRef.current === 1 || !heldAct));
+      const landed = store.addArticlesToPractice(wanted, norma, [result], {
+        ...(reveal ? { reveal: 'first' as const } : {}),
+        ...(tabLabel ? { label: tabLabel } : {}),
+      });
+      if (streamingPracticeRef.current !== landed.practiceId) {
+        streamingPracticeRef.current = landed.practiceId;
+        setStreamingPracticeId(landed.practiceId);
       }
+      if (isNewRow) createdRowsRef.current.rows.push({ practiceId: landed.practiceId, actId: landed.actId, articleKey });
+      if (asker && !asker.opened) {
+        asker.opened = true;
+        openFromAsker(landed.practiceId, besideRefFor({ kind: 'article', actId: landed.actId, articleKey }), asker.windowId);
+      }
+      if (strayRowsRef.current.length > 0) {
+        // The annex's article is on the table: the main text's stray rows go (never the one just landed).
+        const strays = strayRowsRef.current.filter((row) => row.articleKey !== articleKey || row.actId !== landed.actId);
+        strayRowsRef.current = [];
+        for (const row of strays) store.removePracticeArticle(row.practiceId, row.actId, row.articleKey);
+      }
+      if (isDeepLinkTarget) deepLinkFocusRef.current = null;
     } else {
       // Buffer results for batch processing
       setResultsBuffer(prev => {
@@ -278,7 +276,7 @@ export function SearchPanel() {
         };
       });
     }
-  }, [workspaceTabs, addNormaToTab, addWorkspaceTab, focusArticleInTab]);
+  }, []);
 
   const handleSearch = useCallback(async (params: SearchParams) => {
 
@@ -294,7 +292,16 @@ export function SearchPanel() {
     filteredOutRef.current = 0;
     acceptedRef.current = 0;
     setResultsBuffer({}); // Clear buffer before new search
-    streamingTabRef.current = null; // Reset streaming tab tracker
+    streamingPracticeRef.current = null;
+    setStreamingPracticeId(null);
+    const askerPractice = askerPracticeOf(params.besideId);
+    askerRef.current = askerPractice && params.besideId
+      ? { practiceId: askerPractice.id, windowId: params.besideId, opened: false }
+      : null;
+    createdRowsRef.current = { search: params, rows: [] };
+    // Only the annex search the auto-switch asked for takes the stray rows over.
+    strayRowsRef.current = params.annex ? pendingStrayRef.current : [];
+    pendingStrayRef.current = [];
 
     const expectedTotal = calculateExpectedArticles(params.article || '');
     expectedTotalRef.current = expectedTotal;
@@ -310,14 +317,15 @@ export function SearchPanel() {
 
     try {
       // Always use streaming endpoint (now supports Brocardi too!)
-      const response = await fetch('/stream_article_text', {
+      const response = await legalFetch('/stream_article_text', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
         signal: controller.signal,
       });
 
-      if (!response.ok) throw new Error('Errore nella richiesta');
+      // The API says why in Italian (a range whose index cannot be read, an article not in the act).
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Errore nella richiesta'));
 
       // Stream results - articles appear as they're fetched
       if (!response.body) return;
@@ -337,7 +345,7 @@ export function SearchPanel() {
           if (line.trim()) {
             try {
               const result = JSON.parse(line);
-              processResult(result, params.version_date, true, params.tabLabel, params.targetTabId, params.filters);
+              processResult(result, params.version_date, true, params.tabLabel, params.targetPracticeId, params.filters, params.version);
             } catch (e) {
               parseFailures += 1;
               console.error("Error parsing line", line, e);
@@ -350,7 +358,7 @@ export function SearchPanel() {
       if (buffer.trim()) {
         try {
           const result = JSON.parse(buffer);
-          processResult(result, params.version_date, true, params.tabLabel, params.targetTabId, params.filters);
+          processResult(result, params.version_date, true, params.tabLabel, params.targetPracticeId, params.filters, params.version);
         } catch (e) {
           parseFailures += 1;
           console.error("Error parsing final buffer", e);
@@ -402,89 +410,40 @@ export function SearchPanel() {
       if (streamAbortRef.current === controller) {
         setIsLoading(false);
         setLoadingProgress(null);
+        setStreamingPracticeId(null);
+        // An annex search that landed nothing leaves the first search's rows where they are.
+        strayRowsRef.current = [];
         streamAbortRef.current = null;
       }
     }
   }, [processResult]);
 
   // On unmount: abort any in-flight stream (C-2) and drop the buffered
-  // results + streaming tab ref (M-1) so nothing leaks into a future
-  // SearchPanel mount if the user navigates away mid-batch.
+  // results (M-1) so nothing leaks into a future SearchPanel mount if the
+  // user navigates away mid-batch.
   useEffect(() => {
     return () => {
       streamAbortRef.current?.abort();
       streamAbortRef.current = null;
-      streamingTabRef.current = null;
       setResultsBuffer({});
     };
   }, []);
 
-  // Process results buffer and create workspace tabs
+  // Process the results buffer into the practice
   useEffect(() => {
     if (Object.keys(resultsBuffer).length > 0 && !isLoading) {
-
-      // Use custom label if provided (e.g., from dossier), otherwise generate default
-      const useCustomLabel = customTabLabel && Object.keys(resultsBuffer).length > 0;
-
+      // Every group joins the active practice (created when there is none, named after the dossier's
+      // label when one was given); the first group's first row opens (R1/R2).
       Object.values(resultsBuffer).forEach((group, index) => {
-        // For historical versions, always create a new tab
-        const isHistorical = group.articles.some(a => a.versionInfo?.isHistorical);
-
-        const isCustomForThisGroup = !!useCustomLabel && index === 0;
-
-        if (isHistorical) {
-          // Create new tab with version date in label
-          const versionDate = group.versionDate ? ` - Ver. ${group.versionDate}` : ' - Storico';
-          const label = isCustomForThisGroup
-            ? customTabLabel!
-            : `${group.norma.tipo_atto}${group.norma.numero_atto ? ` ${group.norma.numero_atto}` : ''}${versionDate}`;
-          addWorkspaceTab(label, group.norma, group.articles, { isCustom: isCustomForThisGroup });
-        } else {
-          // R3 (streaming-ux): merge into an existing tab that holds the
-          // same norma, but only if that tab is not reserved (labelIsCustom)
-          // and is not a historical view.
-          //
-          // Custom-label searches (dossier "apri tutti") previously always
-          // forked a new tab, which prevented a multi-norm dossier from
-          // landing in a single tab. Now: a custom-labeled search tries to
-          // merge into an existing custom-labeled tab with the SAME LABEL —
-          // so sequential dossier searches all collapse into the dossier's
-          // one tab (see dossier `triggerMultiSearch` queue).
-          const existingTab = isCustomForThisGroup
-            ? workspaceTabs.find(tab =>
-                tab.labelIsCustom &&
-                tab.label === customTabLabel &&
-                !tab.content.some(item =>
-                  item.type === 'norma' && item.articles?.some(a => a.versionInfo?.isHistorical)
-                )
-              )
-            : workspaceTabs.find(tab =>
-                !tab.labelIsCustom &&
-                tab.content.some(item =>
-                  item.type === 'norma' &&
-                  item.norma.tipo_atto === group.norma.tipo_atto &&
-                  item.norma.numero_atto === group.norma.numero_atto &&
-                  item.norma.data === group.norma.data &&
-                  !item.articles?.some(a => a.versionInfo?.isHistorical)
-                )
-              );
-
-          if (existingTab) {
-            addNormaToTab(existingTab.id, group.norma, group.articles);
-          } else {
-            const label = isCustomForThisGroup
-              ? customTabLabel!
-              : `${group.norma.tipo_atto}${group.norma.numero_atto ? ` ${group.norma.numero_atto}` : ''}`;
-            addWorkspaceTab(label, group.norma, group.articles, { isCustom: isCustomForThisGroup });
-          }
-        }
+        appStore.getState().addArticlesToPractice(null, group.norma, group.articles, {
+          ...(index === 0 ? { reveal: 'first' as const } : {}),
+          ...(customTabLabel ? { label: customTabLabel } : {}),
+        });
       });
-
-      // Clear buffer and custom label after processing
       setResultsBuffer({});
       setCustomTabLabel(null);
     }
-  }, [resultsBuffer, isLoading, addWorkspaceTab, addNormaToTab, workspaceTabs, customTabLabel]);
+  }, [resultsBuffer, isLoading, customTabLabel]);
 
   useEffect(() => {
     const deepLinkValue = searchParams.get(SEARCH_PARAM);
@@ -521,7 +480,7 @@ export function SearchPanel() {
   // Listen for programmatic search triggers
   useEffect(() => {
     if (searchTrigger) {
-      // Capture custom tab label before search
+      // Capture the label that names the practice (a dossier's) before search
       if (searchTrigger.tabLabel) {
         setCustomTabLabel(searchTrigger.tabLabel);
       }
@@ -532,11 +491,10 @@ export function SearchPanel() {
 
   // Drain the multi-search queue one item at a time. We only fire the next
   // item when: nothing is loading, no trigger is pending, and the results
-  // buffer has been drained by the tab-processor effect above. That way each
-  // queued search runs end-to-end before the next starts — critical because
-  // they share the same custom label and merge into the SAME tab via
-  // `addNormaToTab`, which requires the tab to already exist when the 2nd
-  // through Nth searches resolve.
+  // buffer has been drained by the effect above. That way each queued search
+  // runs end-to-end before the next starts — critical because they share the
+  // dossier's practice (`targetPracticeId`), which must hold the earlier searches'
+  // articles when the 2nd through Nth resolve.
   useEffect(() => {
     if (searchQueue.length === 0) return;
     if (isLoading) return;
@@ -558,31 +516,26 @@ export function SearchPanel() {
   } = useAutoSwitch({
     onSearch: handleSearch,
     isLoading,
-    onRemoveDuplicateTabs: (params) => {
-      // Remove any existing tabs with the same norma (from the initial search without annex)
-      const duplicateTabs = workspaceTabs.filter(tab =>
-        tab.content.some(item =>
-          item.type === 'norma' &&
-          item.norma.tipo_atto.toLowerCase() === params.act_type.toLowerCase() &&
-          item.norma.numero_atto === params.act_number &&
-          item.norma.data === params.date
-        )
-      );
-
-      duplicateTabs.forEach(tab => {
-        removeTab(tab.id);
-      });
+    onReplaceFirstSearch: (params) => {
+      // The practices close nothing: the annex's articles are rows of their own (`allegato` is in
+      // the row's key). Only the rows the first search created are taken off (spec §5.2), named by
+      // their ids — the request's number and date are not the result's (the palette sends a year,
+      // and no number for a code) — and only once the annex search has landed an article.
+      const created = createdRowsRef.current;
+      pendingStrayRef.current = created.search === params ? created.rows : [];
+      createdRowsRef.current = { search: null, rows: [] };
     }
   });
 
-  // Register search for auto-switch detection when search trigger is used
+  // Register search for auto-switch detection when search trigger is used. A search the user typed
+  // (the palette, the field) runs as the palette always ran it, unchecked.
   useEffect(() => {
-    if (searchTrigger && !searchTrigger.annex) {
+    if (searchTrigger && !searchTrigger.annex && !isTypedSearch(searchTrigger)) {
       registerSearch(searchTrigger);
     }
   }, [searchTrigger, registerSearch]);
 
-  const handleCrossReferenceNavigate = useCallback((articleNumber: string, normaData: ArticleData['norma_data']) => {
+  const handleCrossReferenceNavigate = useCallback((articleNumber: string, normaData: ArticleData['norma_data'], askerId?: string) => {
     const params: SearchParams = {
       act_type: normaData.tipo_atto,
       act_number: normaData.numero_atto || '',
@@ -590,57 +543,38 @@ export function SearchPanel() {
       article: articleNumber,
       version: (normaData.versione as 'vigente' | 'originale') || 'vigente',
       version_date: normaData.data_versione || '',
-      show_brocardi_info: true,
+      show_brocardi_info: !requestIsHistorical(normaData),
       annex: normaData.allegato || undefined  // Preserve annex when navigating via cross-reference
     };
-    handleSearch(params);
+    // The text in force of an article of the same act already on the table is revealed,
+    // not searched again (T2); a past text of it never stands in for it, so without its row the text
+    // in force is loaded as a new row. A past text's jump asks for its own version, so it searches.
+    // Cited from a light window (`askerId`), the row opens beside that window instead of being
+    // revealed in the table (spec §4.5), and a search it needs starts from the window.
+    if (!requestIsHistorical(normaData)) {
+      const { practices, activePracticeId, revealPracticeRow } = appStore.getState();
+      const askerPractice = askerPracticeOf(askerId);
+      const practice = askerPractice ?? practices.find((p) => p.id === activePracticeId);
+      const act = practice?.acts.find((a) => a.key === actKeyOf(normaData));
+      const articleId = normaData.allegato ? `all${normaData.allegato}:${articleNumber}` : articleNumber;
+      const inForce = act && findPracticeArticle(
+        { ...act, articles: act.articles.filter((a) => !requestIsHistorical(a.norma_data)) }, articleId);
+      if (practice && act && inForce) {
+        if (askerPractice && askerId) {
+          openFromAsker(practice.id, besideRefFor({ kind: 'article', actId: act.id, articleKey: practiceArticleKey(inForce) }), askerId);
+          return;
+        }
+        if (revealPracticeRow(practice.id, act.id, practiceArticleKey(inForce))) return;
+      }
+    }
+    handleSearch(askerId ? { ...params, besideId: askerId } : params);
   }, [handleSearch]);
 
-
-  /**
-   * "Open a code and browse" — the entry point the app never had.
-   *
-   * Resolves the act's URN structurally (no article text is fetched), drops an
-   * article-less block on the active tab and points the structure window at
-   * it. From there every pick loads into that block.
-   */
-  const handleBrowseStructure = useCallback(async (params: SearchParams) => {
-    setError(null);
-    try {
-      // The resolved identity, not the requested one: asking for "codice
-      // civile" comes back as regio decreto 262/1942, and a block built from
-      // the request would never match that same act arriving from a later
-      // search — the workspace would grow a duplicate tab for it.
-      const { norma } = await resolveAct({
-        act_type: params.act_type,
-        act_number: params.act_number || undefined,
-        date: params.date || undefined,
-      });
-
-      // Land on the tab the user is already working in; only open a new one
-      // when the workspace is empty.
-      //
-      // Deliberately NOT `{ isCustom: true }`: a custom-labelled tab is
-      // excluded from processResult's merge heuristics, so every later search
-      // for this act — a citation jump included — would spawn a duplicate tab.
-      // That is the accumulation this round exists to reduce.
-      const targetTabId = workspaceTabs.length > 0
-        ? workspaceTabs[workspaceTabs.length - 1].id
-        : addWorkspaceTab(params.act_type);
-
-      addNormaIndexToTab(targetTabId, norma);
-    } catch (e) {
-      // Loud on purpose: the user asked for a door and must be told when it
-      // does not open (CLAUDE.md gotcha #18 — no silent fallbacks).
-      console.error('handleBrowseStructure: URN resolution failed:', e);
-      setError(getErrorMessage(e) || "Impossibile aprire l'indice di questo atto.");
-    }
-  }, [workspaceTabs, addWorkspaceTab, addNormaIndexToTab]);
 
   const handleViewPdf = async (urn: string) => {
     setPdfState({ isOpen: true, url: null, isLoading: true });
     try {
-      const response = await fetch('/export_pdf', {
+      const response = await legalFetch('/export_pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ urn })
@@ -658,169 +592,49 @@ export function SearchPanel() {
     }
   };
 
-  const hasTabs = workspaceTabs.length > 0;
+  const hasTabs = practiceCount > 0;
+  const practiceStreaming: PracticeStreaming | null = loadingProgress && streamingPracticeId
+    ? { practiceId: streamingPracticeId, ...loadingProgress }
+    : null;
 
   return (
     <>
-      <CommandPalette
-        isOpen={commandPaletteOpen}
-        onClose={closeCommandPalette}
-        onSearch={handleSearch}
-        onBrowseStructure={handleBrowseStructure}
-      />
-
-      {/* One global control: the back-stack is global, so a per-tab copy would
-          sit inside the very tab an entry points at. */}
+      {/* One global control: the back-stack is global, so a per-practice copy would
+          sit inside the very place an entry points at. */}
       <ReadingBackControl
-        onNavigated={(tabId) => {
-          const index = workspaceTabs.findIndex(t => t.id === tabId);
-          if (index >= 0) setMobileActiveTabIndex(index);
-        }}
+        // It floats above the bar, clear of the act's heading and the windows' headers. Going back
+        // already made the practice active and, on a phone, opened the reader on a subject read beside
+        // or closed it for a row of the table (`walkBackTo`, in one update).
+        bottomOffset={isDesktop ? (practiceBarHeight ?? BAR_MIN_HEIGHT) + BAR_OFFSET + 12 : PHONE_BACK_OFFSET}
       />
 
-      {/* Workspace Manager - renders all tabs */}
-      {/* Desktop: Workspace floating panels - hidden on mobile */}
-      <div id="tour-results-area" className="hidden md:block">
-        <WorkspaceManager
-          onViewPdf={handleViewPdf}
-          onCrossReference={handleCrossReferenceNavigate}
-        />
-      </div>
-
-      {/* Desktop: Workspace Navigator dock - hidden on mobile */}
-      <div className="hidden md:block">
-        <WorkspaceNavigator />
-      </div>
-
-      {/* Mobile: Swipeable tabs navigation */}
-      {hasTabs && (
-        <div className="md:hidden w-full h-full flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
-          {/* Tab header with navigation - Glass aesthetic */}
-          <div className="flex-shrink-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800 px-4 py-4">
-            <div className="flex items-center justify-between">
-              {/* Prev button */}
-              <button
-                onClick={() => setMobileActiveTabIndex(Math.max(0, mobileActiveTabIndex - 1))}
-                disabled={mobileActiveTabIndex === 0}
-                className={cn(
-                  "p-2.5 rounded-xl transition-all shadow-sm active:scale-95",
-                  mobileActiveTabIndex === 0
-                    ? "text-slate-300 dark:text-slate-700 bg-slate-50 dark:bg-slate-900"
-                    : "text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700"
-                )}
-              >
-                <ChevronLeft size={20} />
-              </button>
-
-              {/* Tab label and indicator */}
-              <div className="flex-1 text-center min-w-0 px-4">
-                <p className="font-bold text-slate-900 dark:text-white text-base truncate">
-                  {workspaceTabs[mobileActiveTabIndex]?.label || 'Risultati'}
-                </p>
-                {/* Dots indicator */}
-                <div className="flex justify-center gap-1.5 mt-2.5">
-                  {workspaceTabs.map((_, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setMobileActiveTabIndex(idx)}
-                      className={cn(
-                        "h-1.5 rounded-full transition-all duration-300",
-                        idx === mobileActiveTabIndex
-                          ? "w-6 bg-primary-500 shadow-glow-sm"
-                          : "w-1.5 bg-slate-300 dark:bg-slate-700"
-                      )}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Next button */}
-              <button
-                onClick={() => setMobileActiveTabIndex(Math.min(workspaceTabs.length - 1, mobileActiveTabIndex + 1))}
-                disabled={mobileActiveTabIndex === workspaceTabs.length - 1}
-                className={cn(
-                  "p-2.5 rounded-xl transition-all shadow-sm active:scale-95",
-                  mobileActiveTabIndex === workspaceTabs.length - 1
-                    ? "text-slate-300 dark:text-slate-700 bg-slate-50 dark:bg-slate-900"
-                    : "text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700"
-                )}
-              >
-                <ChevronRight size={20} />
-              </button>
-            </div>
+      {/* The table and the bar on the desktop, the phone's table below md; one layout mounted (T4,
+          gotcha 26). */}
+      {/* Mounted over both layouts: a notice not yet closed survives a change of breakpoint. */}
+      <PracticeNotice />
+      {isDesktop ? (
+        <>
+          <div
+            id={WORKSPACE_AREA_ID}
+            className="w-full"
+            // The column's bottom padding reads it (§3.4); without the bar, its fallback.
+            style={practiceBarHeight === null ? undefined : { ['--practice-bar-height' as string]: `${practiceBarHeight}px` }}
+          >
+            <ReadingRow onViewPdf={handleViewPdf} onCrossReference={handleCrossReferenceNavigate} streaming={practiceStreaming} />
           </div>
-
-          {/* Swipeable content area */}
-          <div className="flex-1 overflow-hidden">
-            <AnimatePresence mode="wait" initial={false}>
-              {workspaceTabs[mobileActiveTabIndex] && (
-                <motion.div
-                  key={workspaceTabs[mobileActiveTabIndex].id}
-                  initial={{ opacity: 0, x: 50 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -50 }}
-                  transition={{ duration: 0.3, ease: "circOut" }}
-                  drag="x"
-                  dragConstraints={{ left: 0, right: 0 }}
-                  dragElastic={0.2}
-                  onDragEnd={(_e: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
-                    const threshold = 50;
-                    if (info.offset.x > threshold && mobileActiveTabIndex > 0) {
-                      setMobileActiveTabIndex(mobileActiveTabIndex - 1);
-                    } else if (info.offset.x < -threshold && mobileActiveTabIndex < workspaceTabs.length - 1) {
-                      setMobileActiveTabIndex(mobileActiveTabIndex + 1);
-                    }
-                  }}
-                  className="h-full overflow-y-auto p-4 space-y-4 custom-scrollbar"
-                >
-                  {workspaceTabs[mobileActiveTabIndex].content
-                    .filter((item): item is typeof item & { type: 'norma' } => item.type === 'norma')
-                    .map((normaBlock) => {
-                      const tabIsStreaming =
-                        isLoading &&
-                        streamingTabRef.current?.tabId === workspaceTabs[mobileActiveTabIndex].id;
-                      return (
-                        <NormaCard
-                          key={normaBlock.id}
-                          norma={normaBlock.norma}
-                          articles={normaBlock.articles || []}
-                          tabId={workspaceTabs[mobileActiveTabIndex].id}
-                          normaBlockId={normaBlock.id}
-                          onCloseArticle={(articleId) => {
-                            removeArticleFromNorma(workspaceTabs[mobileActiveTabIndex].id, normaBlock.id, articleId);
-                          }}
-                          onViewPdf={handleViewPdf}
-                          onCrossReference={handleCrossReferenceNavigate}
-                          isStreaming={tabIsStreaming}
-                          streamProgress={tabIsStreaming ? loadingProgress : null}
-                        />
-                      );
-                    })}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
+          <PracticeBar onHeightChange={setPracticeBarHeight} />
+        </>
+      ) : (
+        <PracticePhoneView onViewPdf={handleViewPdf} onCrossReference={handleCrossReferenceNavigate} streaming={practiceStreaming} />
       )}
 
-      {/* QuickNorms Manager Modal */}
-      <QuickNormsManager
-        isOpen={quickNormsManagerOpen}
-        onClose={closeQuickNormsManager}
-        onSearch={handleSearch}
-      />
-
-      {/* Alias Manager Modal */}
-      <AliasManager />
-
-      {/* Main Content Area - Empty state when no tabs */}
+      {/* Main Content Area - Empty state when no practices */}
       {!hasTabs && !isLoading && (
         <div id="tour-main-content" className="w-full h-full flex flex-col items-center justify-center p-8 animate-in fade-in duration-700 bg-slate-50 dark:bg-slate-950">
-          {/* Interactive Search Icon */}
+          {/* Search Icon */}
           <div
-            className="relative group cursor-pointer active:scale-95 transition-transform"
-            onClick={openCommandPalette}
-            title="Apri ricerca (Cmd+K)"
+            // The picture is not a control: the button under it is (a click on it reached both).
+            className="relative group"
           >
             {/* Blur Background */}
             <div className="absolute inset-0 bg-primary-500/20 rounded-[2.5rem] blur-2xl group-hover:bg-primary-500/30 transition-all duration-700 animate-pulse" />
@@ -828,7 +642,6 @@ export function SearchPanel() {
             {/* Icon Container - Glass Card */}
             <div className="relative w-32 h-32 sm:w-40 sm:h-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl rounded-[2.5rem] shadow-glass-lg flex items-center justify-center border border-white dark:border-slate-800 transition-all duration-500 group-hover:shadow-primary-500/10 group-hover:-translate-y-2">
               <Search size={64} className="text-primary-500 stroke-[1.2] w-14 h-14 sm:w-16 sm:h-16 group-hover:scale-110 transition-transform duration-500" />
-              <span className="sr-only">Apri la ricerca</span>
 
               {/* Keyboard Shortcut Badge */}
               <div className="absolute -bottom-2 -right-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg border-4 border-slate-50 dark:border-slate-950 uppercase tracking-widest">
@@ -836,7 +649,7 @@ export function SearchPanel() {
               </div>
             </div>
             <button
-              onClick={openCommandPalette}
+              onClick={() => focusSearchFieldOrPalette()}
               className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold shadow-md hover:shadow-lg transition-all focus-ring"
             >
               <Search size={16} />
@@ -856,7 +669,8 @@ export function SearchPanel() {
               {["Art. 2043 c.c.", "Art. 5 GDPR", "Art. 1 Costituzione"].map((example) => (
                 <button
                   key={example}
-                  onClick={openCommandPalette}
+                  // The example goes into the field, ready to search with Enter or to be changed.
+                  onClick={() => focusSearchFieldOrPalette(example)}
                   className="px-3 py-1.5 rounded-full border border-primary-200 dark:border-primary-800 bg-primary-50/70 dark:bg-primary-950/40 text-primary-700 dark:text-primary-300 text-xs font-semibold hover:bg-primary-100 dark:hover:bg-primary-900/60 transition-colors focus-ring"
                 >
                   {example}

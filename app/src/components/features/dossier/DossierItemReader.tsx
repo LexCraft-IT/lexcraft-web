@@ -6,18 +6,27 @@ import { useArticleMarkers } from '../../../hooks/useArticleMarkers';
 import { useArticleTextInteractions } from '../../../hooks/useArticleTextInteractions';
 import { ArticleBody } from '../search/ArticleBody';
 import { UpdateNotePopover } from '../search/UpdateNotePopover';
+import { BlockAnnotationsPopover } from '../search/BlockAnnotationsPopover';
+import { LooseHighlightsList } from '../search/LooseHighlightsList';
 import { InlineNoteComposer } from '../search/InlineNoteComposer';
 import { InlineNotePopover } from '../search/InlineNotePopover';
 import { buildItemKey, uniqueArticleIdFromNorma } from '../../../utils/normaKeys';
-import { formatCitation } from '../../../utils/normaMeta';
+import { formatNormCitation, unversionedCitation, withCitation } from '../../../utils/citation';
+import { todayInRome } from '../../../utils/dateUtils';
+import { describeVersion, historicalItemLabel, isEuropeanAct, requestIsHistorical } from '../../../utils/versionDisplay';
+import { VersionBanner } from '../search/VersionBanner';
 import { fetchArticleForNorma } from '../../../utils/articleFetchCache';
 import { getUpdateNoteParagraphs, parseArticleStructure } from '../../../utils/articleStructure';
-import type { Annotation, ArticleData, NormaVisitata } from '../../../types';
+import { describeBlock, groupAnnotationsByBlock, hasAnnotations, highlightsWithoutSign } from '../../../utils/articleAnnotations';
+import type { Annotation, ArticleData, Highlight, NormaVisitata } from '../../../types';
+import { highlightColorName } from '../../../utils/highlightColors';
 
 interface Props {
   norma: NormaVisitata;
   onOpenOnDashboard: () => void;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  /** The fetched article, for a row that takes its rubrica from the text when the act's index gave none. */
+  onArticle?: (article: ArticleData) => void;
 }
 
 type FetchState =
@@ -28,13 +37,18 @@ type FetchState =
 /** A settled fetch, tagged with the request identity that produced it. */
 type FetchResult = { key: string; state: Exclude<FetchState, { phase: 'loading' }> };
 
+// What a past text is shown with in place of the reader's marks (stable, so the
+// memoised rendering does not run again for a fresh empty array).
+const NO_HIGHLIGHTS: Highlight[] = [];
+const NO_ANNOTATIONS: Annotation[] = [];
+
 /**
  * In-row reading surface for a dossier norma item. Mirrors the minimal
  * annotate/highlight subset of ArticleTabContent, reusing the very same
  * `buildItemKey` / `uniqueArticleIdFromNorma` pair so notes and highlights
  * created here and on the dashboard land on the same store rows.
  */
-export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props) {
+export function DossierItemReader({ norma, onOpenOnDashboard, showToast, onArticle }: Props) {
   const [result, setResult] = useState<FetchResult | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -88,6 +102,26 @@ export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props
   const state: FetchState = result?.key === fetchKey ? result.state : { phase: 'loading' };
   const isReady = state.phase === 'ready';
 
+  // A past text is a reading here too: the keys of notes and highlights carry no
+  // version, so whatever was made on it would appear on the text in force.
+  const article = state.phase === 'ready' ? state.article : undefined;
+  useEffect(() => {
+    if (article) onArticle?.(article);
+  }, [article, onArticle]);
+  const display = article ? describeVersion(article.validity, norma) : null;
+  const readOnly = display?.readOnly ?? false;
+  const historical = requestIsHistorical(norma);
+  const citeLocked = historical && !display?.canCite;
+  const citationNow = () => (display?.canCite
+    ? formatNormCitation({
+      norma,
+      validity: article?.validity,
+      requestedDate: norma.data_versione?.trim() || undefined,
+      original: !norma.data_versione?.trim() && requestIsHistorical(norma),
+      consultedAt: todayInRome(),
+    })
+    : null);
+
   useEffect(() => {
     void loadAnnotationsForArticle(itemKey, uniqueArticleId);
     void loadHighlightsForArticle(itemKey, uniqueArticleId);
@@ -104,13 +138,30 @@ export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props
 
   const rawText = state.phase === 'ready' ? (state.article.article_text || '') : '';
   const structure = useMemo(() => parseArticleStructure(rawText), [rawText]);
-  const markedHtml = useArticleMarkers({ rawText, highlights: articleHighlights, annotations: itemAnnotations, structure });
-  // Update-note references and the foldable AGGIORNAMENTO tail, as on the
-  // dashboard. `enabled` waits for the body: it exists only once the fetch settles.
-  const { updatesOpen, openNote, closeNote } = useArticleTextInteractions(contentRef, itemKey, {
+  const shownHighlights = readOnly ? NO_HIGHLIGHTS : articleHighlights;
+  const shownAnnotations = readOnly ? NO_ANNOTATIONS : itemAnnotations;
+  const markedHtml = useArticleMarkers({ rawText, highlights: shownHighlights, annotations: shownAnnotations, structure, signs: !readOnly });
+  // What each block's sign counts, for the popover it opens (the renderer
+  // derives the signs from the same inputs, through the same module).
+  const blockGroups = useMemo(
+    () => groupAnnotationsByBlock(rawText, structure, shownHighlights, shownAnnotations),
+    [rawText, structure, shownHighlights, shownAnnotations],
+  );
+  // Highlights no sign can reach (their text changed): still removable.
+  const looseHighlights = useMemo(
+    () => (readOnly ? NO_HIGHLIGHTS : highlightsWithoutSign(articleHighlights, blockGroups)),
+    [readOnly, articleHighlights, blockGroups],
+  );
+  // Update-note references, the foldable AGGIORNAMENTO tail and the
+  // annotation signs, as on the dashboard. `enabled` waits for the body: it
+  // exists only once the fetch settles.
+  const { updatesOpen, openNote, closeNote, openBlock, closeBlock } = useArticleTextInteractions(contentRef, itemKey, {
     enabled: isReady,
     contentKey: markedHtml,
+    // A past text opens its notes (the rule that applies is often in them); the toggle still folds them.
+    updatesOpenByDefault: display?.updateNotesOpen ?? false,
   });
+  const openGroup = openBlock === null ? undefined : blockGroups[openBlock];
 
   // Delegated click on the article body: tapping a wavy `.note-anchor`
   // opens the compact InlineNotePopover for that single note, exactly as
@@ -140,6 +191,7 @@ export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props
   // re-highlighting the exact same span at the same offset is a no-op with
   // an explanatory toast, not a second overlapping <mark>.
   const handlePopupHighlight = (text: string, color: 'yellow' | 'green' | 'red' | 'blue', startOffset: number) => {
+    if (readOnly) return;
     const alreadyHighlighted = articleHighlights.some(h =>
       h.text.toLowerCase() === text.toLowerCase() && h.startOffset === startOffset
     );
@@ -148,12 +200,17 @@ export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props
       return;
     }
     addHighlight(itemKey, uniqueArticleId, text, '', color, startOffset);
-    showToast(`Testo evidenziato in ${color}`, 'success');
+    showToast(`Testo evidenziato in ${highlightColorName(color)}`, 'success');
   };
 
   const handlePopupCopy = async (text: string) => {
+    // The table decides what may leave the page: a text it refuses is not copied under any label.
+    if (display && !display.canCopyOrSave) {
+      showToast(display.copyBlockedReason ?? '', 'info');
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(`${text}\n\n---\nTratto da: ${formatCitation(norma)}`);
+      await navigator.clipboard.writeText(withCitation(text, citationNow(), unversionedCitation(norma, todayInRome())));
       showToast('Testo copiato con citazione', 'success');
     } catch {
       showToast('Errore durante la copia', 'error');
@@ -161,8 +218,16 @@ export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props
   };
 
   const handleCopyCitation = async () => {
+    if (display && !display.canCopyOrSave) {
+      showToast(display.copyBlockedReason ?? '', 'info');
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(formatCitation(norma));
+      // A past text is cited as the version it is; with no honest citation, none is copied.
+      // An act of the Union has none by design (the server ignores the day), and the plain one is true.
+      const citation = citationNow();
+      if (historical && !citation && !isEuropeanAct(norma.tipo_atto)) return;
+      await navigator.clipboard.writeText(citation ? citation.long : unversionedCitation(norma, todayInRome()));
       showToast('Citazione copiata', 'success');
     } catch {
       showToast('Errore durante la copia', 'error');
@@ -193,25 +258,47 @@ export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props
 
   return (
     <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
-      <ArticleBody
-        contentRef={contentRef}
-        itemKey={itemKey}
-        processedContent={markedHtml}
-        panelHighlights={articleHighlights}
-        onPopupHighlight={handlePopupHighlight}
-        onPopupAddNote={(text, startOffset, rect) => {
-          setComposer({ rect, anchorText: text, startOffset });
-        }}
-        onPopupCopy={handlePopupCopy}
-        onRemoveHighlight={removeHighlight}
-        updatesOpen={updatesOpen}
-      />
+      {display?.banner && <VersionBanner banner={display.banner} variant={display.textVisible ? 'banner' : 'state'} />}
+      {/* The source could not be read, so the banner has nothing to say: the day asked for is all there is. */}
+      {historical && !display?.banner && (
+        <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">{historicalItemLabel(norma)}</p>
+      )}
+      {(display?.textVisible ?? true) && (
+        <ArticleBody
+          contentRef={contentRef}
+          itemKey={itemKey}
+          processedContent={markedHtml}
+          onPopupHighlight={handlePopupHighlight}
+          onPopupAddNote={(text, startOffset, rect) => {
+            if (readOnly) return;
+            setComposer({ rect, anchorText: text, startOffset });
+          }}
+          onPopupCopy={handlePopupCopy}
+          updatesOpen={updatesOpen}
+          copyOnly={readOnly}
+        />
+      )}
+      <LooseHighlightsList highlights={looseHighlights} articleId={uniqueArticleId} onRemove={removeHighlight} />
       {openNote && structure.notes[openNote.id] && (
         <UpdateNotePopover
           noteId={openNote.id}
           paragraphs={getUpdateNoteParagraphs(rawText, structure.notes[openNote.id])}
           anchorEl={openNote.anchorEl}
           onClose={closeNote}
+        />
+      )}
+      {openBlock !== null && hasAnnotations(openGroup) && (
+        <BlockAnnotationsPopover
+          key={openBlock}
+          containerRef={contentRef}
+          blockIndex={openBlock}
+          blockLabel={describeBlock(rawText, structure.blocks[openBlock])}
+          group={openGroup}
+          contentKey={markedHtml}
+          onClose={closeBlock}
+          onUpdateNote={updateAnnotation}
+          onRemoveNote={removeAnnotation}
+          onRemoveHighlight={removeHighlight}
         />
       )}
       {composer && (
@@ -241,7 +328,8 @@ export function DossierItemReader({ norma, onOpenOnDashboard, showToast }: Props
         <button
           type="button"
           onClick={handleCopyCitation}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 px-2 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+          disabled={citeLocked}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 px-2 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Copy size={13} /> Copia citazione
         </button>

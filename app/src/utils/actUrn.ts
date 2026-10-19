@@ -1,4 +1,5 @@
 import type { Norma } from '../types';
+import { legalFetch } from '../services/legalFetch';
 
 /**
  * Resolve an act from its identifying parameters, without fetching any article
@@ -9,7 +10,7 @@ import type { Norma } from '../types';
  * the response comes back as regio decreto 262 of 1942-03-16. Keeping that
  * resolved identity matters, because a block built from the *request* instead
  * would never match the same act arriving later from a search, and the
- * workspace would grow a duplicate tab for it.
+ * practice would grow a duplicate act for it.
  *
  * The endpoint still requires an `article` value — more strictly than it used
  * to. The handler now rejects a missing one outright (400, "Campo obbligatorio
@@ -37,12 +38,12 @@ export interface ActUrnParams {
 export interface ResolvedAct {
   /** Identifier accepted by `/fetch_tree`. */
   urn: string;
-  /** The act as the backend resolved it, ready to seed a workspace block. */
+  /** The act as the backend resolved it, ready to seed an act of a practice. */
   norma: Norma;
 }
 
 export async function resolveAct(params: ActUrnParams): Promise<ResolvedAct> {
-  const response = await fetch('/fetch_norma_data', {
+  const response = await legalFetch('/fetch_norma_data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

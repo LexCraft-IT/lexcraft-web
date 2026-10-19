@@ -1,17 +1,19 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Command } from 'cmdk';
-import { Search, X, Check, Star, Zap, Lightbulb, ArrowRight, Book, Tag, List, Plus, Settings2, Sparkles, SlidersHorizontal } from 'lucide-react';
+import { Search, X, Check, Star, Zap, Lightbulb, ArrowRight, Book, Tag, List, Plus, Settings2, Sparkles, SlidersHorizontal, Gavel } from 'lucide-react';
 import type { SearchParams, CustomAlias, SearchFilters } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { parseItalianDate } from '../../../utils/dateUtils';
 import { useAppStore } from '../../../store/useAppStore';
-import { parseLegalCitation, isSearchReady, formatParsedCitation, toSearchParams, type ParsedCitation } from '../../../utils/citationParser';
+import { useShallow } from 'zustand/react/shallow';
 import { useTour } from '../../../hooks/useTour';
 import { ACT_TYPES, ACT_TYPES_REQUIRING_DETAILS, getActTypesByGroup } from '../../../constants/actTypes';
 import { useAliasCatalog, foldAlias } from '../../../hooks/useAliasCatalog';
 import { Z_INDEX } from '../../../constants/zIndex';
 import { motion, AnimatePresence } from 'framer-motion';
 import { defaultSearchFilters } from '../../../utils/searchFilters';
+import { citationSearchParams, useSearchQuery } from '../../../hooks/useSearchQuery';
+import { formatDecisionShort } from '../../../utils/decisionLinks';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -22,6 +24,9 @@ interface CommandPaletteProps {
    * path. Skips the article step entirely.
    */
   onBrowseStructure?: (params: SearchParams) => void;
+  /** Called once a decision or a topic was put in the practices: the host shows the search page, which
+   *  alone draws them. */
+  onShowSearch?: () => void;
 }
 
 type PaletteStep = 'select_act' | 'input_article' | 'input_details';
@@ -36,12 +41,33 @@ function requiresDetails(actValue: string): boolean {
 }
 
 
-export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, onShowSearch }: CommandPaletteProps) {
   const {
     quickNorms, selectQuickNorm, settings, openQuickNormsManager,
-    customAliases, trackAliasUsage, openAliasManager
-  } = useAppStore();
-  const { tryStartTour } = useTour({ theme: settings.theme as 'light' | 'dark' });
+    customAliases, trackAliasUsage, openAliasManager, openDecision, openTopicSearch, takeCommandPaletteQuery, commandPaletteQuery
+  } = useAppStore(useShallow(s => ({
+    quickNorms: s.quickNorms,
+    selectQuickNorm: s.selectQuickNorm,
+    settings: s.settings,
+    openQuickNormsManager: s.openQuickNormsManager,
+    customAliases: s.customAliases,
+    trackAliasUsage: s.trackAliasUsage,
+    openAliasManager: s.openAliasManager,
+    openDecision: s.openDecision,
+    openTopicSearch: s.openTopicSearch,
+    takeCommandPaletteQuery: s.takeCommandPaletteQuery,
+    commandPaletteQuery: s.commandPaletteQuery,
+  })));
+  // The box is focused as the palette opens; the first-open tour (driver.js, started 300 ms later)
+  // can take that focus, so when the tour ends the box gets it back. Only if the box is still there:
+  // the ref is empty once the palette has closed or moved on to another step.
+  const boxRef = useRef<HTMLInputElement>(null);
+  const { tryStartTour } = useTour({
+    theme: settings.theme as 'light' | 'dark',
+    onComplete: (tour) => {
+      if (tour === 'commandPalette') setTimeout(() => boxRef.current?.focus(), 0);
+    },
+  });
   const [step, setStep] = useState<PaletteStep>('select_act');
   const [selectedAct, setSelectedAct] = useState('');
   const [article, setArticle] = useState('1');
@@ -51,6 +77,19 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
   const [includeBrocardi, setIncludeBrocardi] = useState(true);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [filters, setFilters] = useState<SearchFilters>(defaultSearchFilters);
+
+  // A citation handed over as the palette opens goes into the box (a decision that was not found).
+  // Adjusted during render (own state, no effect); the store's copy is then taken in an effect.
+  const [handedOver, setHandedOver] = useState<string | null>(null);
+  if (isOpen && commandPaletteQuery !== null && commandPaletteQuery !== handedOver) {
+    setHandedOver(commandPaletteQuery);
+    setInputValue(commandPaletteQuery);
+  } else if (commandPaletteQuery === null && handedOver !== null) {
+    setHandedOver(null);
+  }
+  useEffect(() => {
+    if (isOpen && commandPaletteQuery !== null) takeCommandPaletteQuery();
+  }, [isOpen, commandPaletteQuery, takeCommandPaletteQuery]);
 
   // Trigger Command Palette tour on first open
   useEffect(() => {
@@ -103,102 +142,8 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
     [presetEntries]
   );
 
-  // Smart citation parsing - include custom aliases for resolution
-  // Es. "art 5 gdpr" risolve "gdpr" in Regolamento UE 679/2016
-  const localCitation = useMemo<ParsedCitation | null>(() => {
-    if (!inputValue || inputValue.length < 2) return null;
-    return parseLegalCitation(inputValue, customAliases);
-  }, [inputValue, customAliases]);
-
-  // Server-side fallback for act names the client does not carry.
-  //
-  // The parser above knows the ~40 acts in constants/actTypes.ts plus the
-  // ABBREVIATION_MAP hand-copied from the backend's NORMATTIVA_SEARCH. The
-  // backend resolver knows 387 names — "statuto dei lavoratori", "legge
-  // fornero", "TUSL", "GDPR" — so a lawyer typing any of them got "Nessun
-  // risultato trovato" and an Enter that could only autocomplete, because
-  // isSearchReady needs an act_type the client had no way to produce.
-  //
-  // Rather than grow a second copy of those tables here (they would drift the
-  // first time the backend gained a name), ask the endpoint that already
-  // resolves them. Only as a FALLBACK: whatever the client recognises today
-  // still wins, so nothing that works now changes.
-  // The answer carries the query it answered, so "is this still current?" is
-  // derived at render instead of reset by a synchronous setState in the effect
-  // (CLAUDE.md gotcha 11 — derive, do not silence the rule).
-  const [serverResult, setServerResult] = useState<{ query: string; citation: ParsedCitation | null } | null>(null);
-
-  // Gated on "not search-ready", not merely "act unnamed". Both shapes reach
-  // here: "statuto dei lavoratori" the client cannot name at all, and "gdpr"
-  // it names as regolamento UE but without the number and year that
-  // isSearchReady requires — so both left the palette on ENTER COMPLETA.
-  const remoteQuery = useMemo(() => {
-    const query = inputValue.trim();
-    return query.length >= 3 && !isSearchReady(localCitation) ? query : null;
-  }, [inputValue, localCitation]);
-
-  useEffect(() => {
-    if (!remoteQuery) return;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      fetch('/parse_query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: remoteQuery }),
-        signal: controller.signal,
-      })
-        .then(res => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
-        })
-        .then(payload => {
-          const parsed = payload?.recognized ? payload.parsed : null;
-          setServerResult({
-            query: remoteQuery,
-            citation: parsed?.act_type
-              ? {
-                  act_type: parsed.act_type,
-                  act_number: parsed.act_number || undefined,
-                  date: parsed.date || undefined,
-                  article: parsed.article || undefined,
-                  // Named by the server's curated tables, not guessed.
-                  confidence: 0.9,
-                }
-              : null,
-          });
-        })
-        .catch(err => {
-          if ((err as Error).name === 'AbortError') return;
-          // Never swallowed (CLAUDE.md gotcha 18): the palette degrades to
-          // local-only matching, but a backend that stopped answering is
-          // visible rather than silent.
-          console.error('Error resolving query server-side:', remoteQuery, err);
-          setServerResult({ query: remoteQuery, citation: null });
-        });
-    }, 250);
-
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [remoteQuery]);
-
-  const serverCitation = useMemo(
-    () => (remoteQuery && serverResult?.query === remoteQuery ? serverResult.citation : null),
-    [remoteQuery, serverResult]
-  );
-  const resolvingRemotely = Boolean(remoteQuery) && serverResult?.query !== remoteQuery;
-
-  // The client wins when its own parse is already searchable; otherwise the
-  // server fills in. Nothing that resolves locally today changes.
-  const parsedCitation = useMemo<ParsedCitation | null>(
-    () => (isSearchReady(localCitation) ? localCitation : serverCitation ?? localCitation),
-    [localCitation, serverCitation]
-  );
-
-  const citationReady = useMemo(() => isSearchReady(parsedCitation), [parsedCitation]);
-  const citationPreview = useMemo(() => parsedCitation ? formatParsedCitation(parsedCitation) : '', [parsedCitation]);
+  // What the box names (a decision, a norm, a topic): one reading, shared with the search page's field.
+  const { decisionRef, parsedCitation, citationReady, citationPreview, resolvingRemotely, topic } = useSearchQuery(inputValue);
 
   // Reset on close
   useEffect(() => {
@@ -215,8 +160,10 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
     }
   }, [isOpen]);
 
-  // Handle Escape key
+  // Handle Escape key. Only while open: a closed palette that took every Escape and called
+  // `preventDefault` on it would hide it from whoever honours `defaultPrevented` (the rail's overlay).
   useEffect(() => {
+    if (!isOpen) return undefined;
     const down = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -226,7 +173,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
 
     document.addEventListener('keydown', down);
     return () => document.removeEventListener('keydown', down);
-  }, [onClose]);
+  }, [isOpen, onClose]);
 
   const handleSelectAct = useCallback((actValue: string) => {
     setSelectedAct(actValue);
@@ -294,6 +241,20 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
     );
   }, [catalog.presets]);
 
+  const handleSearchTopic = useCallback(() => {
+    if (!topic) return;
+    openTopicSearch({ tema: topic }, `Tema: ${topic}`);
+    onClose();
+    onShowSearch?.();
+  }, [topic, openTopicSearch, onClose, onShowSearch]);
+
+  const handleOpenDecision = useCallback(() => {
+    if (!decisionRef) return;
+    openDecision(decisionRef, { fromLink: true });
+    onClose();
+    onShowSearch?.();
+  }, [decisionRef, openDecision, onClose, onShowSearch]);
+
   const handleCitationSearch = useCallback(() => {
     if (!parsedCitation) return;
 
@@ -303,15 +264,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
     }
 
     if (citationReady) {
-      const params = toSearchParams(parsedCitation);
-      onSearch({
-        ...params,
-        date: params.date ? parseItalianDate(params.date) : '',
-        version: 'vigente',
-        version_date: '',
-        show_brocardi_info: includeBrocardi,
-        filters,
-      });
+      onSearch(citationSearchParams(parsedCitation, { showBrocardi: includeBrocardi, filters }));
       onClose();
     } else if (parsedCitation.act_type) {
       setSelectedAct(parsedCitation.act_type);
@@ -396,7 +349,8 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
   if (!isOpen) return null;
 
   return (
-    <div className={cn('fixed inset-0 p-4 sm:p-6 md:p-20 overflow-y-auto custom-scrollbar', Z_INDEX.commandPalette)}>
+    // Covers the workspace: Cmd/Ctrl+F is left to the browser (`isWorkspaceCovered`).
+    <div data-find-overlay="" className={cn('fixed inset-0 p-4 sm:p-6 md:p-20 overflow-y-auto custom-scrollbar', Z_INDEX.commandPalette)}>
       {/* Premium Backdrop */}
       <motion.div
         initial={{ opacity: 0 }}
@@ -423,7 +377,8 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
           <div className="border-b border-slate-200 dark:border-slate-800">
             {/* Navigation / Step Breadcrumbs */}
             <div className="flex items-center gap-2 px-6 pt-5 pb-3">
-              <div
+              <button
+                type="button"
                 onClick={() => setStep('select_act')}
                 className={cn(
                   "group flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
@@ -436,10 +391,11 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
               >
                 {selectedAct && step !== 'select_act' ? <Check size={12} strokeWidth={3} /> : <Book size={12} strokeWidth={3} />}
                 <span>Atto</span>
-              </div>
+              </button>
 
               {requiresDetails(selectedAct) && (
-                <div
+                <button
+                  type="button"
                   onClick={() => selectedAct && setStep('input_details')}
                   className={cn(
                     "group flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer",
@@ -452,7 +408,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
                 >
                   {(actNumber && actDate) && step !== 'input_details' ? <Check size={12} strokeWidth={3} /> : <Zap size={12} strokeWidth={3} />}
                   <span>Dettagli</span>
-                </div>
+                </button>
               )}
 
               <div className={cn(
@@ -466,6 +422,14 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
               </div>
             </div>
 
+            {/* One live region for the whole life of the palette, its text changing: a region that
+                appears already holding its text is often not announced. The visible line is aria-hidden. */}
+            <p role="status" className="sr-only">
+              {decisionRef
+                ? `Sentenza: ${formatDecisionShort(decisionRef)}. Invio per aprire.`
+                : topic ? `Cerca "${topic}" nelle sentenze della Cassazione.` : ''}
+            </p>
+
             {/* Main Interactive Input Area */}
             <div className="flex items-center gap-4 px-6 pb-6">
               <div className="w-12 h-12 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center text-slate-400">
@@ -475,18 +439,43 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
               {step === 'select_act' && (
                 <div className="flex-1">
                   <Command.Input
+                    ref={boxRef}
+                    autoFocus
                     value={inputValue}
                     onValueChange={setInputValue}
-                    placeholder="Es. 'cc', 'art 2043 cc' o seleziona..."
+                    placeholder="Es. 'art 2043 cc' o 'Cass. civ. 10787/2024'"
                     className="w-full bg-transparent text-slate-900 dark:text-white placeholder-slate-400 outline-none text-xl font-bold tracking-tight"
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && parsedCitation) {
+                      if (e.key === 'Enter' && decisionRef) {
+                        e.preventDefault();
+                        handleOpenDecision();
+                      } else if (e.key === 'Enter' && parsedCitation) {
                         e.preventDefault();
                         handleCitationSearch();
                       }
                     }}
                   />
                   <AnimatePresence>
+                    {/* A decision named in the box: Enter opens its tab */}
+                    {decisionRef && (
+                      <motion.div
+                        aria-hidden
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-2 flex items-center gap-2.5"
+                      >
+                        <div className="w-5 h-5 rounded-md flex items-center justify-center bg-emerald-500 text-white">
+                          <Gavel size={10} strokeWidth={3} />
+                        </div>
+                        <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                          Sentenza → {formatDecisionShort(decisionRef)}
+                        </span>
+                        <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          Invio apre
+                        </span>
+                      </motion.div>
+                    )}
                     {/* Citation Match Indicator (shows alias badge if from alias) */}
                     {parsedCitation && citationPreview && (
                       <motion.div
@@ -511,12 +500,12 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
                             ? "text-indigo-600 dark:text-indigo-400"
                             : citationReady ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
                         )}>
-                          {parsedCitation.fromAlias && <span className="opacity-60 mr-1">via alias →</span>}
+                          {parsedCitation.fromAlias && <span className="opacity-60 mr-1">tramite alias →</span>}
                           {citationPreview}
                         </span>
                         <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          {citationReady ? "Enter Ricerca" : "Enter Completa"}
+                          {citationReady ? "Invio Ricerca" : "Invio Completa"}
                         </span>
                       </motion.div>
                     )}
@@ -591,7 +580,15 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
             {step === 'select_act' && (
               <Command.List id="command-palette-results" className="p-3">
                 <Command.Empty className="px-6 py-12 text-center text-slate-400">
-                  {citationReady ? (
+                  {decisionRef ? (
+                    <>
+                      <div className="w-16 h-16 rounded-3xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-4">
+                        <Gavel size={24} className="text-emerald-600 dark:text-emerald-400" />
+                      </div>
+                      <p className="font-bold text-slate-600 dark:text-slate-300">{formatDecisionShort(decisionRef)}</p>
+                      <p className="text-xs font-medium opacity-60 mt-1">Premi Enter per aprire la sentenza</p>
+                    </>
+                  ) : citationReady ? (
                     <>
                       {/* The act resolved, so Enter will search. Saying "nessun
                           risultato" here describes the local suggestion list,
@@ -625,8 +622,30 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
                   )}
                 </Command.Empty>
 
+                {/* A topic, not a decision or a norm: its own line, after those */}
+                {topic && (
+                  <Command.Group className="mb-4">
+                    <Command.Item
+                      value={`cerca-sentenze ${topic}`}
+                      onSelect={handleSearchTopic}
+                      className={cn(
+                        "group flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all",
+                        "bg-white dark:bg-slate-900 border border-transparent",
+                        "aria-selected:bg-emerald-50 dark:aria-selected:bg-emerald-900/10 aria-selected:border-emerald-200/50 dark:aria-selected:border-emerald-800/30"
+                      )}
+                    >
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-500">
+                        <Gavel size={18} />
+                      </div>
+                      <span className="flex-1 min-w-0 text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                        Cerca "{topic}" nelle sentenze della Cassazione
+                      </span>
+                    </Command.Item>
+                  </Command.Group>
+                )}
+
                 {/* QuickNorms Section */}
-                <Command.Group className="mb-4">
+                <Command.Group id="command-palette-quick-norms" className="mb-4">
                   <div className="flex items-center justify-between px-3 mb-3">
                     <div className="flex items-center gap-2 text-[10px] font-black text-amber-500 uppercase tracking-widest">
                       <Star size={12} fill="currentColor" strokeWidth={3} />
@@ -873,7 +892,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure }:
           {/* Premium Footer */}
           <div className="px-6 py-5 border-t border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-xl">
             {/* Quick Settings - Brocardi Toggle */}
-            <div className="flex items-center justify-between mb-5">
+            <div id="command-palette-brocardi-toggle" className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-4">
                 <div className={cn(
                   "p-2 rounded-xl border transition-all",
