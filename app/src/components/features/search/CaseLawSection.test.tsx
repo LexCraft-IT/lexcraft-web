@@ -85,7 +85,7 @@ describe('CaseLawSection', () => {
     expect(toggle()).toHaveAttribute('aria-expanded', 'true');
     expect(screen.queryByText(/Brocardi/)).toBeNull();
     // the only massime are the Corte costituzionale's own (G-281), in their block
-    const corteCost = screen.getByRole('region', { name: 'Corte costituzionale — massime' });
+    const corteCost = screen.getByRole('region', { name: 'Corte costituzionale: massime' });
     for (const text of screen.queryAllByText(/[Mm]assime/)) expect(corteCost).toContainElement(text);
     expect(screen.getByTestId('rassegne-panel')).toBeInTheDocument();
     expect(panelCalls.at(-1)).toMatchObject({
@@ -157,7 +157,7 @@ describe('CaseLawSection', () => {
     show();
     expect(cc).not.toHaveBeenCalled();
     await userEvent.click(toggle());
-    expect(screen.getByRole('heading', { name: 'Corte costituzionale — massime' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Corte costituzionale: massime' })).toBeInTheDocument();
     expect(await screen.findByRole('link', { name: 'Fonte: Corte costituzionale, dati aperti, CC BY-SA 3.0' })).toBeInTheDocument();
     expect(cc).toHaveBeenCalledExactlyOnceWith(NORMA.urn, 1, undefined);
   });
@@ -176,7 +176,7 @@ describe('CaseLawSection', () => {
   it('gives an act of the Union no Corte costituzionale block', async () => {
     show({ norma: { tipo_atto: 'regolamento ue', data: '2016', numero_atto: '679', numero_articolo: '6' } });
     await userEvent.click(toggle());
-    expect(screen.queryByRole('heading', { name: 'Corte costituzionale — massime' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Corte costituzionale: massime' })).toBeNull();
   });
 
   it('gives no Court of Justice block to a national act', async () => {

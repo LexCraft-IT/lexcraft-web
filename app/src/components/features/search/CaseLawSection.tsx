@@ -179,7 +179,7 @@ export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry }: C
             {offersCassazione && articleUrn && (
               <section aria-labelledby={`${panelId}-corte-cost`} className="space-y-3">
                 <h4 id={`${panelId}-corte-cost`} className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                  Corte costituzionale — massime
+                  Corte costituzionale: massime
                 </h4>
                 <CorteCostMassimeBlock
                   articleUrn={articleUrn}
