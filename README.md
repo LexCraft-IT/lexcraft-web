@@ -12,8 +12,9 @@ The web interface of LexCraft and the site of lexcraft.it.
 cd app && npm ci && npm run test -- --run && npm run build && npm run lint
 ```
 
-In development the app talks to the core's Python API (`:5000`) and server (`:3001`): run
-lexcraft-core's `./start.sh --dev` with `LEXCRAFT_WEB_DIR` pointing to this repository's `app/`.
+In development the app talks to the core's Python API (`:5000`) and server (`:3001`): clone
+lexcraft-core beside this repository and run its `./start.sh --dev`, which takes `../lexcraft-web/app`
+by itself (`LEXCRAFT_WEB_DIR` names any other folder).
 
 ## Licence
 

@@ -22,8 +22,9 @@ npm --prefix app run lint
 ```
 
 A bare `tsc --noEmit` does not walk the project references and reports a false green. For a browser
-pass the app needs the core: lexcraft-core's `./start.sh --dev` with `LEXCRAFT_WEB_DIR` set to this
-repository's `app/`.
+pass the app needs the core: clone lexcraft-core beside this repository and run its
+`./start.sh --dev`, which takes `../lexcraft-web/app` by itself (`LEXCRAFT_WEB_DIR` names any other
+folder).
 
 ## Rule 23 holds here too
 
