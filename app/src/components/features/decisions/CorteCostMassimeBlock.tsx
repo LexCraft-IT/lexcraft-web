@@ -159,7 +159,7 @@ export function CorteCostMassimeBlock({ articleUrn, constitution = false, beside
     <label className={cn('inline-flex cursor-pointer items-center gap-2 text-sm text-slate-700 dark:text-slate-200', TOUCH_TARGET_RESPONSIVE)}>
       <input
         type="checkbox"
-        className="h-4 w-4 shrink-0 accent-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        className="h-4 w-4 shrink-0 accent-primary-600"
         checked={ruolo === 'norma'}
         onChange={(e) => setOnlyAtIssueFor(e.target.checked ? articleUrn : null)}
       />
@@ -213,17 +213,9 @@ export function CorteCostMassimeBlock({ articleUrn, constitution = false, beside
         <p role="alert" className="text-sm text-slate-700 dark:text-slate-200">Le altre massime non sono arrivate: riprova.</p>
       )}
       {!switching && shown.length < listed.totale && (
-        <button
-          type="button"
-          onClick={loadMore}
-          disabled={loading}
-          className={cn(
-            'rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800',
-            TOUCH_TARGET_RESPONSIVE,
-          )}
-        >
+        <Button type="button" variant="secondary" size="sm" onClick={loadMore} disabled={loading}>
           {loading ? 'Caricamento…' : `Mostra altre massime (${formatCount(listed.totale - shown.length)})`}
-        </button>
+        </Button>
       )}
     </div>
   );
