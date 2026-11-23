@@ -1,5 +1,11 @@
 .DS_Store
 
+# Environment files stay on the machine that has them (the monorepo's .gitignore kept them out; its
+# rule does not reach into a submodule). The examples are committed.
+.env
+.env.*
+!.env.example
+
 # Local-only real decision texts for the find tests (personal data): never committed. The rule
 # lived in the monorepo's .gitignore as apps/web/src/utils/__fixtures__/private/.
 app/src/utils/__fixtures__/private/
