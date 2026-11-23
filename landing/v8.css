@@ -1,0 +1,758 @@
+/* LexCraft v6: il meglio della v3 e della v5 (BRIEF-v6.md) sopra il kit di design-taste-frontend.
+   Colori solo di Pietra: carta var(--c-carta), inchiostro var(--c-ink), pietra #8a8478 (mai per il testo), evidenziatore #d9d4ca, inverso #1f1e1c.
+   Una sola curva in tutto il sito (--ease); nessuna animazione oltre 0,8 s tranne l'intro e l'entrata dell'apertura. */
+:root {
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  --m-ease-io: var(--ease); --m-ease-enter: var(--ease);
+  --sel: #d9d4ca; --sel-scuro: #4a463f;
+  /* il logo dell'intro e quello dell'apertura hanno la stessa larghezza: alla fine dell'intro il logo scivola solo in su, senza scalare */
+  --logo-w: min(76vw, 720px);
+  /* testo vero (BRIEF-v5 § 2 e § 8): corpo 18 px, didascalie 15 */
+  --t-body: 18px; --t-small: 15px; --t-label: 15px; --t-lead: 20px; --t-card: 20px;
+}
+@media (max-width: 639px) {
+  :root { --t-body: 17px; --t-lead: 18px; --t-small: 15px; --t-label: 15px; --t-h2: clamp(30px, 8.4vw, 36px); }
+}
+body { font-size: var(--t-body); }
+p, li { font-size: inherit; }
+kbd { font: 500 15px/1 var(--font-mono); padding: 4px 8px; border: 1px solid #b9b2a6; border-bottom-width: 2px; border-radius: 6px; background: var(--c-carta2); color: var(--c-ink); white-space: nowrap; }
+
+/* ---------- il logo nella barra: nascosto finché il logo grande dell'apertura è sullo schermo ---------- */
+.nav__logo .lg { display: block; height: 22px; width: auto; overflow: visible; }
+.nav__logo { transition: opacity 300ms var(--ease); }
+/* chiuso in larghezza (e fuori dal giro del tab) finché il logo grande è sullo schermo: l'etichetta dell'anteprima parte dal bordo del .wrap */
+.nav__logo { max-width: 160px; overflow: hidden; transition: opacity 300ms var(--ease), max-width 400ms var(--ease), visibility 0s; }
+html.logo-in-apertura .nav__logo { opacity: 0; max-width: 0; visibility: hidden; pointer-events: none; transition: opacity 200ms var(--ease), max-width 400ms var(--ease), visibility 0s 400ms; }
+html.logo-in-apertura .nav__badge { margin-left: 0; }
+html.logo-in-apertura .nav__logo { margin-right: calc(-1 * var(--s-8)); }
+@media (max-width: 1279px) { html.logo-in-apertura .nav__logo { margin-right: calc(-1 * var(--s-6)); } }
+@media (max-width: 639px) { html.logo-in-apertura .nav__logo { margin-right: calc(-1 * var(--s-3)); } }
+.nav__logo { transition-property: opacity, max-width, margin-right, visibility; }
+.nav__badge { transition: margin-left 400ms var(--ease); }
+.lg .lg-sel { fill: var(--sel); } .lg .lg-ink { fill: var(--c-ink); } .lg .lg-fusto { fill: #8a8478; } .lg .lg-scan { fill: var(--c-carta); }
+.nav__badge { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; margin-left: var(--s-4); border-radius: 4px; background: var(--sel); font: 500 14px/1 var(--font-text); white-space: nowrap; flex: none; }
+@media (max-width: 1279px) { .nav__badge { display: none; } }
+
+/* ================================================================ 1. l'intro (circa 5 s)
+   BRIEF-v6 § 1: la colonnina resta nitida a ogni fotogramma. Niente scale() sul logo: lo zoom lo fa v6.js cambiando il viewBox,
+   così l'SVG si ridisegna in vettoriale; il marmo è un'immagine di 662×1536 px (più dei pixel che occupa a 2x);
+   il contorno della colonna è un tratto vettoriale sopra il marmo; la luce è un alone dietro e un riflesso sopra, mai un filtro. */
+.intro { display: none; position: fixed; inset: 0; z-index: 1000; background: #1f1e1c; overflow: hidden; }
+html.has-intro .intro { display: block; }
+/* v7: la pagina non perde la barra di scorrimento durante l'intro, così alla fine il centro non si sposta (l'intro si salta già con rotella, tocco e tasti) */
+html.intro-safe:not(.intro-live) .intro { display: none; }
+.intro__glow { position: absolute; inset: 0; background: radial-gradient(closest-side at 50% 50%, rgb(241 238 232 / .13), transparent 72%); opacity: 0; transition: opacity 900ms var(--ease); }
+.intro.is-lit .intro__glow { opacity: 1; }
+.intro__carta { position: absolute; inset: 0; background: var(--c-carta); clip-path: circle(0 at 50% 50%); }
+.intro__logo { position: absolute; left: 50%; top: 50%; z-index: 2; width: var(--logo-w); transform: translate(-50%, -50%); }
+.intro__logo .lg { display: block; width: 100%; height: auto; overflow: visible; }
+.intro__salta { position: absolute; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); z-index: 3; min-height: 44px; padding: 0 18px; border: 1px solid rgb(241 238 232 / .4); border-radius: 99px; background: transparent; color: #f1eee8; font: 500 15px/1 var(--font-text); cursor: pointer; transition: background-color 200ms var(--ease), color 400ms var(--ease), border-color 400ms var(--ease); }
+.intro__salta:hover { background: rgb(241 238 232 / .1); }
+.intro__salta:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.intro.is-carta .intro__salta { color: var(--c-ink); border-color: rgb(43 42 40 / .35); transition-delay: 450ms; }
+
+/* 0–1,5 s: le parti, pietra chiara sul nero, una dopo l'altra dal basso (plinto, toro, fusto, scanalature, echino, abaco) */
+.lg--intro .i-p { fill: #c9c4bb; transform-box: fill-box; opacity: 0; transition: fill 600ms var(--ease); }
+.lg--intro .i-plinto, .lg--intro .i-toro, .lg--intro .i-fusto { transform-origin: 50% 100%; }
+.lg--intro .i-scan { fill: none; stroke: #6f6a61; stroke-width: 1.49; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke 600ms var(--ease); }
+.lg--intro .i-marmo, .lg--intro .i-luce { opacity: 0; }
+.lg--intro .i-luce { transform: translateX(-34px); }
+.lg--intro .i-bordo > * { fill: none; stroke: #a39b8d; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.lg--intro .i-bordo { opacity: 0; transition: opacity 600ms var(--ease); }
+.lg--intro .i-lex { clip-path: inset(0 0 0 100%); }
+.lg--intro .i-craft { clip-path: inset(0 100% 0 0); }
+.lg--intro .i-lex path, .lg--intro .i-craft path { fill: #f1eee8; transition: fill 500ms var(--ease); }
+.lg--intro .lg-sel { fill: var(--sel-scuro); clip-path: inset(0 100% 0 0); transition: fill 500ms var(--ease); }
+.intro.is-on .i-plinto { animation: in-su 450ms var(--ease) 0ms both; }
+.intro.is-on .i-toro { animation: in-su 450ms var(--ease) 200ms both; }
+.intro.is-on .i-fusto { animation: in-cresce 650ms var(--ease) 380ms both; }
+.intro.is-on .i-scan { animation: in-scan 450ms var(--ease) 880ms both; }
+.intro.is-on .i-echino { animation: in-giu 420ms var(--ease) 1000ms both; }
+.intro.is-on .i-abaco { animation: in-giu 420ms var(--ease) 1120ms both; }
+@keyframes in-su { from { opacity: 0; transform: translateY(70%); } to { opacity: 1; transform: none; } }
+@keyframes in-cresce { from { opacity: 1; transform: scaleY(0); } to { opacity: 1; transform: none; } }
+@keyframes in-giu { from { opacity: 0; transform: translateY(-180%); } to { opacity: 1; transform: none; } }
+@keyframes in-scan { to { stroke-dashoffset: 0; } }
+/* 1,5–2,8 s: prende luce col marmo del cliente (marmo-2), un riflesso la attraversa una volta */
+.intro.is-lit .i-p { fill: #efebe4; }
+.intro.is-lit .i-scan { stroke: #b9b1a3; }
+.intro.is-lit .i-marmo { opacity: 1; transition: opacity 700ms var(--ease); }
+.intro.is-lit .i-bordo { opacity: 1; }
+.intro.is-lit .i-luce { animation: in-luce 900ms var(--ease) 350ms both; }
+@keyframes in-luce { 0% { opacity: 0; transform: translateX(-34px); } 25% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; transform: translateX(34px); } }
+/* 2,8–4 s: LEX esce a sinistra della colonnina, CRAFT a destra, l'evidenziatore si posa su CRAFT */
+.intro.is-scritta .i-lex { animation: in-lex 700ms var(--ease) 200ms forwards; }
+.intro.is-scritta .i-craft { animation: in-craft 700ms var(--ease) 200ms forwards; }
+.intro.is-scritta .lg-sel { animation: in-craft 600ms var(--ease) 650ms forwards; }
+@keyframes in-lex { to { clip-path: inset(0 0 0 0); } }
+@keyframes in-craft { to { clip-path: inset(0 0 0 0); } }
+/* 4–5 s: la carta si apre da un cerchio che contiene già tutta la scritta; il logo torna nei suoi colori e resta al centro */
+.intro.is-carta .i-p { fill: var(--c-ink); }
+.intro.is-carta .i-fusto { fill: #8a8478; }
+.intro.is-carta .i-scan { stroke: var(--c-carta); }
+.intro.is-carta .i-marmo, .intro.is-carta .i-bordo { opacity: 0; transition: opacity 500ms var(--ease); }
+.intro.is-carta .i-lex path, .intro.is-carta .i-craft path { fill: var(--c-ink); }
+.intro.is-carta .lg-sel { fill: var(--sel); }
+.intro.is-fine { opacity: 0; transition: opacity 300ms var(--ease); pointer-events: none; }
+
+/* ================================================================ 2. l'apertura: il logo fermo al centro dello schermo, i cerchi e tutte le funzioni in orbita
+   v7: il logo dell'apertura sta esattamente dove l'intro lascia il suo (al centro dello schermo, alla stessa larghezza),
+   così alla fine dell'intro non si sposta di un pixel: l'intro si dissolve sopra un logo identico. Sotto, il motto e il resto;
+   sopra, lo spazio delle funzioni quando non girano in orbita. */
+:root { --logo-h: calc(var(--logo-w) * 130.9 / 716.3); }
+main > .hero.apertura { position: relative; overflow: hidden; isolation: isolate; }
+main > .hero.apertura > .cerchi { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
+main > .hero.apertura > .wrap { position: relative; z-index: 1; }
+main > .hero.apertura .hero-text.apertura__corpo { position: relative; width: 100%; height: 100%; display: block; }
+/* il bordo alto del logo a metà schermo meno metà logo: la .hero-text comincia sotto la barra e il distacco dell'apertura */
+.apertura__testo { position: relative; z-index: 2; display: grid; justify-items: center; text-align: center; gap: var(--s-4);
+  margin-top: calc(50svh - var(--nav) - var(--photo, 0px) - var(--hgap) - var(--logo-h) / 2); }
+.apertura h1 { margin: 0; display: grid; justify-items: center; gap: var(--s-4); font-size: inherit; line-height: 1; }
+.apertura__logo { display: block; width: var(--logo-w); height: var(--logo-h); }
+.apertura__logo .lg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* il motto come nel login dell'app: Garamond corsivo */
+.apertura__motto { font: italic 400 clamp(30px, 3.2vw, 48px)/1.08 var(--font-display); letter-spacing: -0.01em; color: var(--c-ink); text-wrap: balance; }
+.apertura__sotto { margin: 0; max-width: 30em; font: 400 clamp(18px, 1.4vw, 20px)/1.45 var(--font-text); color: var(--c-ink); text-wrap: balance; }
+.apertura .btn-row { justify-content: center; margin-top: var(--s-2); }
+.apertura .hero__proof { margin: 0; font: 400 15px/1.4 var(--font-text); color: var(--c-grigio); }
+.apertura__stato { display: inline-block; margin-right: 6px; padding: 3px 8px; border-radius: 4px; background: var(--sel); font: 500 14px/1.2 var(--font-text); color: var(--c-ink); }
+@media (min-width: 1280px) { .apertura__stato { display: none; } }
+
+/* le funzioni (BRIEF-v7 § 2: tutte e tredici). Senza orbita stanno nello spazio sopra il logo; con l'orbita (da 1360×840)
+   girano su un anello attorno al testo, a distanza costante l'una dall'altra, quindi mai sovrapposte né sopra il testo */
+.funzioni { list-style: none; margin: 0; padding: 0; position: absolute; left: 0; right: 0; top: 0; z-index: 2;
+  height: calc(50svh - var(--nav) - var(--photo, 0px) - var(--hgap) - var(--logo-h) / 2 - var(--s-5));
+  display: flex; flex-wrap: wrap; justify-content: center; align-content: center; gap: 8px 10px; }
+.funz { display: inline-flex; width: max-content; align-items: center; gap: 8px; min-height: 40px; padding: 0 15px 0 12px; border: 1px solid var(--c-linea); border-radius: 99px; background: var(--c-carta2); color: var(--c-ink); font: 500 15px/1 var(--font-text); white-space: nowrap; cursor: default; }
+.funz svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.funz small { font: italic 400 15px/1 var(--font-display); color: var(--c-grigio); }
+html.orbita-viva .funzioni { inset: 0; height: auto; display: block; z-index: 1; pointer-events: none; }
+html.orbita-viva .funzioni li { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: auto; will-change: transform; }
+html.orbita-viva .funzioni li > .funz { position: absolute; left: 0; top: 0; translate: -50% -50%; }
+/* entrano una volta, mettendosi a fuoco (la sfocatura è sulle pillole, mai sulla colonna né sul logo) */
+/* v8.1: in orbita l'entrata la fa v8.js nello stesso calcolo della posizione (--o, --k), senza sfocatura né transizioni che si
+   riavviavano a ogni fotogramma; la transizione CSS resta solo per le funzioni ferme sopra il logo */
+html.apertura-js .apertura:not(.is-aperta) .funz { opacity: 0; }
+html.apertura-js:not(.orbita-viva) .apertura:not(.is-aperta) .funz { translate: 0 12px; }
+html:not(.orbita-viva) .apertura.is-aperta .funz { transition: opacity 520ms cubic-bezier(.22, 1, .36, 1) var(--d, 0ms), translate 520ms cubic-bezier(.22, 1, .36, 1) var(--d, 0ms); }
+.apertura.is-assestata .funz { transition: none; }
+.orbite__pausa { display: none; min-height: 44px; margin-left: 14px; padding: 0; border: 0; background: none; color: var(--c-grigio); font: 500 15px/1 var(--font-text); text-decoration: underline; text-decoration-color: var(--c-linea2); text-underline-offset: 4px; cursor: pointer; }
+html.orbita-viva .orbite__pausa { display: inline; }
+.orbite__pausa:hover { color: var(--c-ink); text-decoration: underline; text-underline-offset: 4px; }
+/* il testo entra una volta dopo l'intro; il logo è già al suo posto (l'intro ce l'ha lasciato) */
+html.apertura-js .apertura:not(.is-aperta) :is(.apertura__motto, .apertura__sotto, .btn-row, .hero__proof) { opacity: 0; translate: 0 12px; }
+.apertura.is-aperta :is(.apertura__motto, .apertura__sotto, .btn-row, .hero__proof) { transition: opacity 600ms var(--ease) var(--d, 0ms), translate 700ms var(--ease) var(--d, 0ms); }
+.apertura.is-aperta .apertura__motto { --d: 60ms; } .apertura.is-aperta .apertura__sotto { --d: 160ms; } .apertura.is-aperta .btn-row { --d: 260ms; } .apertura.is-aperta .hero__proof { --d: 340ms; }
+html.apertura-js .apertura:not(.logo-fermo):not(.is-aperta) .apertura__logo { opacity: 0; }
+.apertura.is-aperta:not(.logo-fermo) .apertura__logo { transition: opacity 600ms var(--ease); }
+
+@media (max-width: 639px) {
+  .apertura__motto { font-size: clamp(32px, 8.8vw, 38px); }
+  .apertura__sotto { font-size: 17px; }
+  .apertura .btn-row { width: 100%; }
+  .apertura .btn-row .btn { width: 100%; justify-content: center; }
+  .apertura .btn-row .btn--secondary { display: none; }
+  .apertura .hero__proof { font-size: 14px; }
+  .funzioni { gap: 6px; }
+  .funz { min-height: 32px; gap: 6px; padding: 0 10px 0 9px; font-size: 14px; }
+  .funz small { font-size: 14px; }
+  .funz svg { width: 15px; height: 15px; }
+}
+
+/* ================================================================ la colonnina che scende con la lettura (da 1280 px, senza etichette) */
+.lettura { display: none; }
+@media (min-width: 1280px) and (prefers-reduced-motion: no-preference) {
+  .lettura { display: block; position: fixed; z-index: 60; right: 22px; top: calc(var(--nav, 72px) + 40px); bottom: 40px; width: 12px; pointer-events: none; transition: opacity 400ms var(--ease); }
+  .lettura::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--c-linea); }
+  html.has-intro:not(.intro-safe) .lettura { opacity: 0; }
+  .lettura__colonna { position: absolute; left: 1px; top: 0; width: 10px; height: 38px; transform: translateY(var(--ly, 0px)); --ci: var(--c-ink); --cf: #8a8478; --cs: var(--c-carta); }
+  .lettura.is-scura::before { background: #4a463f; }
+  .lettura.is-scura .lettura__colonna { --ci: #f1eee8; --cf: #b2afa9; --cs: #1f1e1c; }
+}
+
+/* ================================================================ la colonnina come cursore */
+.cursore { display: none; }
+html.col-cursore .cursore { display: block; position: fixed; left: 0; top: 0; z-index: 2000; pointer-events: none; transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0); will-change: transform; }
+html.col-cursore, html.col-cursore :is(a, button, label, summary, [role="tab"]) { cursor: none; }
+html.col-cursore :is(input, textarea, select) { cursor: auto; }
+html.col-cursore.cursore-fuori .cursore { opacity: 0; }
+.cursore__col { position: absolute; left: -5px; top: -19px; width: 10px; height: 38px; max-width: none; overflow: visible; transition: scale 200ms var(--ease); --ci: var(--c-ink); --cf: #8a8478; --cs: var(--c-carta); }
+.cursore__sel { position: absolute; left: 3px; top: -14px; height: 28px; width: 0; background: var(--sel); opacity: .85; transition: width 300ms var(--ease); }
+.cursore.is-link .cursore__sel { width: 34px; }
+.cursore.is-giu .cursore__col { scale: 1 .86; }
+.cursore.is-scuro .cursore__col { --ci: #f1eee8; --cf: #b2afa9; --cs: #1f1e1c; }
+.cursore.is-scuro .cursore__sel { background: var(--sel-scuro); }
+.cursore.is-campo { opacity: 0; }
+
+
+/* ================================================================ le schermate: la finestra dell'app intera, coi bordi, mai ritagliata */
+.finestra { margin: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--c-linea2); background: var(--c-carta); box-shadow: 0 44px 90px -50px rgb(43 42 40 / .65), 0 2px 8px rgb(43 42 40 / .05); }
+.finestra picture, .finestra img { display: block; width: 100%; height: auto; }
+.stato-funz { display: inline-flex; align-items: center; gap: 9px; justify-self: start; align-self: start; width: max-content; margin: 0 0 var(--s-4); padding: 7px 13px; border-radius: 99px; background: var(--c-ink); color: var(--c-carta); font: 500 15px/1 var(--font-text); }
+.stato-funz::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--sel); }
+.ground-inverse .stato-funz { background: var(--sel); color: #1f1e1c; }
+.ground-inverse .stato-funz::before { background: #1f1e1c; }
+
+/* Ricerca, Analizza, Pseudonimizza: testo da una parte, la schermata grande dall'altra (Analizza a specchio) */
+main > section.sez-schermo > .wrap.grid.schermo__griglia { align-content: center; align-items: start; row-gap: var(--s-6); }
+.schermo__testo { grid-column: 1 / 6; display: flex; flex-direction: column; }
+.schermo__testo h2 { margin: 0 0 var(--s-4); }
+.schermo__testo > p { margin: 0; font-size: var(--t-lead); line-height: 1.5; }
+.sez-schermo .finestra { grid-column: 6 / 13; }
+/* lo zoom in più: un dettaglio della stessa schermata, ingrandito, accanto (mai al posto della schermata intera) */
+.zoom { position: relative; margin: var(--s-6) 0 0; aspect-ratio: 1000 / 300; overflow: hidden; border-radius: 10px; border: 1px solid var(--c-ink); background: var(--c-carta); box-shadow: 0 24px 50px -30px rgb(43 42 40 / .6); }
+.zoom img { position: absolute; left: 0; top: 0; max-width: none; width: calc(100% * 2880 / var(--zw)); height: auto; transform: translate(calc(var(--zx) / -2880 * 100%), calc(var(--zy) / -1800 * 100%)); }
+.passi { list-style: none; counter-reset: passo; margin: var(--s-6) 0 0; padding: 0; }
+.passi li { counter-increment: passo; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px solid var(--c-linea); }
+.passi li::before { content: counter(passo); font: 500 16px/1.5 var(--font-mono); color: var(--c-grigio); }
+/* Pseudonimizza, su fondo scuro: i nomi barrati e i segnaposti, grandi */
+.sez-pseudo .finestra { border-color: var(--c-linea2); }
+.segnaposti { margin-top: var(--s-6); }
+.segnaposti p { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 14px; row-gap: 6px; margin: 0; padding: 14px 0; border-top: 1px solid #3d3a35; font: 400 clamp(24px, 2.1vw, 31px)/1.15 var(--font-display); }
+.segnaposti__nome { color: #d9d4ca; text-decoration: line-through; text-decoration-color: transparent; text-decoration-thickness: 2px; transition: text-decoration-color 500ms var(--ease) var(--d, 0ms); }
+.segnaposti__freccia { color: #8a8478; font-size: .8em; }
+.segnaposti__seg { padding: 5px 9px 6px; border-radius: 5px; background: var(--c-ink); color: var(--c-carta); font: 600 .62em/1 var(--font-text); letter-spacing: .05em; }
+html.apertura-js .segnaposti:not(.is-fatto) :is(.segnaposti__seg, .segnaposti__freccia) { opacity: 0; translate: -8px 0; }
+.segnaposti.is-fatto :is(.segnaposti__seg, .segnaposti__freccia) { transition: opacity 400ms var(--ease) var(--d, 0ms), translate 500ms var(--ease) var(--d, 0ms); }
+.segnaposti.is-fatto .segnaposti__nome { text-decoration-color: #8a8478; }
+.segnaposti p:nth-child(2) > * { --d: 260ms; }
+@media (max-width: 1023px) {
+  .schermo__testo, .sez-schermo .finestra, .sez-schermo--dx .schermo__testo, .sez-schermo--dx .finestra { grid-column: 1 / -1; order: 0; }
+  .zoom { display: none; }
+}
+@media (max-width: 639px) {
+  /* al telefono la schermata a 390, intera, alta quanto serve */
+  .sez-schermo .finestra { width: min(100%, 340px); justify-self: center; margin-inline: auto; border-radius: 18px; }
+  .segnaposti p { font-size: 24px; }
+}
+
+/* ================================================================ Pratiche (pinned-chapters): le schermate vere intere, mai ritagliate né ingrandite */
+#pratiche .mo-pc__step p { font-size: var(--t-body); line-height: 1.55; }
+#pratiche .mo-pc__step h3 { font: 400 26px/1.15 var(--font-display); letter-spacing: -0.01em; }
+#pratiche .mo-pc__visual--lit { padding: 0; background: var(--c-carta); aspect-ratio: auto; display: block; }
+#pratiche .mo-pc__visual img { display: block; width: 100%; height: auto; aspect-ratio: 1800 / 1125; object-fit: contain; max-height: none; }
+@media (min-width: 1024px) {
+  main #pratiche[data-moment].is-live > .mo-pc__grid { grid-template-columns: calc((100% - 11 * var(--gutter)) * 5 / 12 + 4 * var(--gutter)) minmax(0, 1fr); column-gap: var(--gutter); }
+  #pratiche.is-live .mo-pc__visuals { aspect-ratio: 1800 / 1125; height: auto; max-height: none; align-self: center; border-radius: 12px; overflow: hidden; border: 1px solid var(--c-linea2); box-shadow: 0 44px 90px -50px rgb(43 42 40 / .65); background: var(--c-carta); }
+  #pratiche.is-live .mo-pc__visual { transition: opacity 500ms var(--ease); transform: none; }
+  #pratiche.is-live .mo-pc__visual picture, #pratiche.is-live .mo-pc__visual img { display: block; width: 100%; height: 100%; }
+  #pratiche.is-live .mo-pc__step p { transition: grid-template-rows 500ms var(--ease), opacity 400ms var(--ease); }
+  #pratiche .mo-pc__step.is-on { border-left-color: var(--c-ink); }
+}
+/* sotto i 1024 px: una scheda che si scorre di lato, le tre schermate a 390 intere col testo sopra */
+@media (max-width: 1023px) {
+  #pratiche .mo-pc__visuals { display: none; }
+  #pratiche .mo-pc__steps { display: flex; gap: 14px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; list-style: none;
+    margin: var(--s-6) calc(var(--gut) * -1) 0; padding: 0 var(--gut) 4px; scroll-padding-inline: var(--gut); }
+  #pratiche .mo-pc__steps::-webkit-scrollbar { display: none; }
+  #pratiche .mo-pc__step { flex: 0 0 min(76vw, 320px); scroll-snap-align: start; display: flex; flex-direction: column; gap: var(--s-3); margin: 0; padding: 0; border: 0; }
+  #pratiche .mo-pc__step h3, #pratiche .mo-pc__step p { margin: 0; }
+  #pratiche .mo-pc__step p { min-height: 6.2em; }
+  #pratiche .mo-pc__visual--lit { margin: 0; border-radius: 18px; overflow: hidden; border: 1px solid var(--c-linea2); }
+  #pratiche .mo-pc__visual picture { display: block; }
+  #pratiche .mo-pc__visual img { aspect-ratio: 780 / 1688; }
+}
+
+
+/* ================================================================ La tua IA, a tutta pagina */
+.sez-ia__testa { max-width: 900px; }
+.sez-ia__testa h2 { margin: 0 0 var(--s-4); }
+.sez-ia__testa p { margin: 0; font-size: var(--t-lead); line-height: 1.5; max-width: 44em; }
+.flusso { position: relative; margin-top: var(--s-7); display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 4fr); align-items: center; gap: var(--gutter); }
+.flusso__fili { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.filo { fill: none; stroke: var(--c-ink); stroke-width: 2.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.filo--luce { stroke: var(--sel); stroke-width: 14; stroke-dasharray: none; opacity: 0; }
+.flusso__nodo { position: relative; z-index: 1; background: var(--c-carta2); border: 1px solid var(--c-linea); border-radius: 14px; padding: 22px 24px; box-shadow: 0 24px 60px -40px rgb(43 42 40 / .5); font: 400 17px/1.4 var(--font-text); }
+.flusso__eti { margin: 0 0 6px; font: 500 15px/1.2 var(--font-text); color: var(--c-grigio); }
+.flusso__eti em, .flusso__atti em, .flusso__voci em { font: italic 400 17px/1 var(--font-display); }
+.flusso__titolo { font: 400 30px/1.12 var(--font-display); margin: 0 0 12px; }
+.flusso__voci { list-style: none; margin: 0; padding: 0; }
+.flusso__voci li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 8px; margin-top: 5px; border-radius: 3px; background: var(--sel); }
+.flusso__voci b { font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.flusso__voci span { color: var(--c-ink2); font-size: 15px; white-space: nowrap; }
+/* gli atti pseudonimizzati (in arrivo): accanto a fonti e note, col bordo tratteggiato di quello che ancora non c'è */
+.flusso__voci li.is-pseudo { margin-top: 6px; flex-direction: column; gap: 2px; background: none; border: 1px dashed #8a8478; border-radius: 8px; padding: 9px 10px; }
+.flusso__voci li.is-pseudo b { white-space: normal; }
+.flusso__ia { justify-self: center; width: min(100%, 250px); aspect-ratio: 1; border-radius: 50%; display: grid; place-content: center; text-align: center; gap: 8px; background: var(--c-ink); color: var(--c-carta); border: 0; }
+.flusso__mcp { justify-self: center; font: 500 14px/1 var(--font-text); padding: 6px 10px; border: 1px solid var(--c-grigio); border-radius: 4px; color: #d9d4ca; }
+.flusso__nome { margin: 0; font: 400 34px/1.1 var(--font-display); }
+.flusso__stato { margin: 0; position: relative; height: 20px; font-size: 15px; color: #d9d4ca; }
+.flusso__stato span { position: absolute; inset: 0; transition: opacity 400ms var(--ease); }
+.flusso__stato .is-scrive { opacity: 0; }
+.flusso.is-scrive .flusso__stato .is-legge { opacity: 0; }
+.flusso.is-scrive .flusso__stato .is-scrive { opacity: 1; }
+.flusso__file { display: flex; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--c-ink2); }
+.flusso__file b { display: block; font-weight: 500; }
+.flusso__file small { color: var(--c-grigio); font-size: 15px; }
+.flusso__doc { flex: none; width: 34px; height: 42px; border-radius: 4px; display: grid; place-items: center; background: var(--c-ink); color: var(--c-carta); font: 500 15px/1 var(--font-text); }
+.flusso__firma { margin: 6px 0 0; color: var(--c-grigio); font-size: 15px; }
+.flusso__impulso { position: absolute; z-index: 2; left: 0; top: 0; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--c-ink); box-shadow: 0 0 0 7px rgb(217 212 202 / .95), 0 0 28px 12px rgb(217 212 202 / .7); opacity: 0; pointer-events: none; }
+.flusso__impulso.is-doc { width: 24px; height: 28px; margin: -14px 0 0 -12px; border-radius: 3px; box-shadow: 0 0 0 4px var(--c-carta), 0 0 24px 10px rgb(217 212 202 / .7); }
+@media (max-width: 1023px) {
+  .flusso { grid-template-columns: minmax(0, 1fr); gap: 56px; }
+  .flusso__fili, .flusso__impulso { display: none; }
+  .flusso__nodo + .flusso__nodo::before, .flusso__fili + .flusso__nodo::before { content: ""; position: absolute; left: 50%; top: -56px; height: 56px; width: 3px; translate: -50% 0; background: var(--c-ink); }
+  .flusso__ia { width: 200px; }
+}
+@media (max-width: 639px) { .flusso__voci li:nth-child(2) { display: none; } .flusso__nodo { padding: 18px; } .flusso__ia { width: 180px; } .flusso__nome { font-size: 28px; } .flusso__titolo { font-size: 26px; } }
+
+/* ================================================================ il motto: una schermata sola, il testo al centro (via lo schermo vuoto della v5) */
+#motto > .wrap { justify-content: center; }
+.motto__eti { margin: 0 0 var(--s-5); font: 500 17px/1.3 var(--font-text); letter-spacing: 0; color: var(--c-grigio); }
+#motto .mo-wh__text { margin: 0; font-size: clamp(34px, 4.4vw, 64px); line-height: 1.1; max-width: 21em; }
+#motto strong { background: linear-gradient(var(--sel), var(--sel)) no-repeat 0 88% / 100% .42em; }
+#motto .mo-w { color: color-mix(in oklab, var(--ink) 55%, var(--bg)); transition: color 400ms var(--ease); }
+#motto .mo-w.is-on, #motto .mo-w.is-letta { color: var(--ink); }
+.motto__licenza { margin: var(--s-6) 0 0; font-size: var(--t-lead); line-height: 1.5; max-width: 40em; color: var(--c-ink2); }
+@media (max-width: 1023px) { #motto .mo-wh__text { font-size: clamp(34px, 9.6vw, 46px); line-height: 1.12; } }
+
+/* ================================================================ Domande: tenuta come nella v5 */
+
+/* ================================================================ L'anteprima: come la pagina di accesso dell'app; l'incisione al centro e il modulo centrato sopra */
+.sez-anteprima { position: relative; isolation: isolate; overflow: hidden; }
+.sez-anteprima__fondo { object-position: 50% 50%; opacity: .42; }
+#anteprima > .wrap { justify-content: center; align-items: center; }
+.anteprima__modulo { width: min(100%, 540px); margin: 0 auto; padding: clamp(24px, 3vw, 40px); text-align: left; background: var(--c-carta2); border: 1px solid var(--c-linea); border-radius: 16px; box-shadow: 0 40px 90px -46px rgb(43 42 40 / .6); }
+.anteprima__modulo h2 { margin: 0 0 var(--s-3); font-size: clamp(32px, 3vw, 44px); }
+.anteprima__intro { margin: 0 0 var(--s-5); font-size: var(--t-body); line-height: 1.5; color: var(--c-ink); }
+.anteprima__modulo .form { grid-template-columns: minmax(0, 1fr); }
+.anteprima__modulo label { font: 500 16px/1.3 var(--font-text); color: var(--c-ink); }
+.anteprima__modulo input { font-size: 17px; min-height: 50px; background: #fff; border-color: var(--c-linea2); }
+.anteprima__modulo .btn-row .btn { width: 100%; justify-content: center; }
+.modulo-prova { margin: var(--s-3) 0 0; font: 500 15px/1.4 var(--font-text); color: var(--c-ink); }
+
+/* ================================================================ la chiusura (BRIEF-v7 § 8): l'animazione dell'intro a tutta larghezza, poi lo slogan
+   lo stesso SVG dell'intro: la colonnina si costruisce, prende il marmo, escono LEX e CRAFT, l'evidenziatore si posa su CRAFT.
+   Senza script o con prefers-reduced-motion si vede subito lo stato finale. */
+footer.closing .closing__cta { justify-content: flex-end; gap: var(--s-6); }
+.closing__marchio { display: block; border-radius: 4px; }
+.closing__marchio .lg { display: block; width: 100%; height: auto; overflow: visible; }
+.closing__marchio:focus-visible { outline: 2px solid #f1eee8; outline-offset: 6px; }
+.closing__slogan { margin: 0; font: italic 400 clamp(30px, 3.6vw, 52px)/1.1 var(--font-display); color: #f1eee8; max-width: none; }
+.closing__slogan .sel { background: var(--sel-scuro); color: #f1eee8; padding: 0 .14em; font-style: italic; }
+/* lo stato finale: colonna in marmo col contorno netto, lettere in carta, CRAFT evidenziato in pietra scura */
+.lg--chiusura .i-p { fill: #efebe4; transform-box: fill-box; }
+.lg--chiusura .i-plinto, .lg--chiusura .i-toro, .lg--chiusura .i-fusto { transform-origin: 50% 100%; }
+.lg--chiusura .i-scan { fill: none; stroke: #b9b1a3; stroke-width: 1.49; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.lg--chiusura .i-bordo > * { fill: none; stroke: #a39b8d; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.lg--chiusura .i-luce { opacity: 0; }
+.lg--chiusura .i-lex path, .lg--chiusura .i-craft path { fill: #f1eee8; }
+.lg--chiusura .lg-sel { fill: var(--sel-scuro); }
+/* l'animazione, una volta: parte quando la chiusura arriva sullo schermo (v7.js aggiunge .anima e poi le fasi) */
+.closing__marchio.anima .i-p { opacity: 0; }
+.closing__marchio.anima .i-scan { stroke-dashoffset: 1; }
+.closing__marchio.anima .i-marmo, .closing__marchio.anima .i-bordo { opacity: 0; }
+.closing__marchio.anima .i-lex { clip-path: inset(0 0 0 100%); }
+.closing__marchio.anima .i-craft, .closing__marchio.anima .lg-sel { clip-path: inset(0 100% 0 0); }
+.closing__marchio.anima .i-p { fill: #c9c4bb; transition: fill 600ms var(--ease); }
+.closing__marchio.is-on .i-plinto { animation: in-su 450ms var(--ease) 0ms both; }
+.closing__marchio.is-on .i-toro { animation: in-su 450ms var(--ease) 200ms both; }
+.closing__marchio.is-on .i-fusto { animation: in-cresce 650ms var(--ease) 380ms both; }
+.closing__marchio.is-on .i-scan { animation: in-scan 450ms var(--ease) 880ms both; }
+.closing__marchio.is-on .i-echino { animation: in-giu 420ms var(--ease) 1000ms both; }
+.closing__marchio.is-on .i-abaco { animation: in-giu 420ms var(--ease) 1120ms both; }
+.closing__marchio.is-lit .i-p { fill: #efebe4; }
+.closing__marchio.is-lit :is(.i-marmo, .i-bordo) { opacity: 1; transition: opacity 700ms var(--ease); }
+.closing__marchio.is-lit .i-luce { animation: in-luce 900ms var(--ease) 350ms both; }
+.closing__marchio.is-scritta .i-lex { animation: in-lex 700ms var(--ease) 0ms forwards; }
+.closing__marchio.is-scritta .i-craft { animation: in-craft 700ms var(--ease) 0ms forwards; }
+.closing__marchio.is-scritta .lg-sel { animation: in-craft 600ms var(--ease) 450ms forwards; }
+html.apertura-js .closing__slogan { transition: opacity 700ms var(--ease), translate 700ms var(--ease); }
+.closing__cta.attesa .closing__slogan { opacity: 0; translate: 0 12px; }
+
+/* il pulsante fisso del telefono: dopo l'apertura, mai sopra l'anteprima né sopra il pulsante della chiusura */
+@media (max-width: 1023px) { html.senza-barra .actionbar { transform: translateY(100%); visibility: hidden; transition: transform 300ms var(--ease), visibility 0s 300ms; } }
+
+/* pressione e campi */
+html:not([data-motion="off"]) :is(.tab, .nav__toggle) { transition: color 200ms var(--ease), border-color 200ms var(--ease), background-color 200ms var(--ease), transform 200ms var(--ease); }
+@media (prefers-reduced-motion: no-preference) {
+  .nav__toggle:active { transform: scale(.97); }
+  .field__error:not([hidden]) { animation: err-in 200ms var(--ease) both; }
+  @keyframes err-in { from { opacity: 0; transform: translateY(-4px); } }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .intro, .cursore, .passaggio, .lettura { display: none !important; }
+  .termine__data mark, .segnaposti * { transition: none !important; }
+}
+
+/* i livelli di fondo (marmo, biblioteca): le immagini .layer del kit dietro la .wrap */
+main > section:has(> img.layer) > .wrap { position: relative; z-index: 1; }
+/* al telefono e sul tablet: ogni sezione è alta quanto il suo contenuto, niente mezzi schermi bianchi */
+@media (max-width: 1023px) { main > section > .wrap > .flusso.fill { flex: none; } }
+
+/* precedenze: l'etichetta dello stato vince sui paragrafi della colonna di testo */
+.schermo__testo > p.stato-funz { margin: 0 0 var(--s-4); font: 500 15px/1 var(--font-text); color: var(--c-carta); }
+.ground-inverse .schermo__testo > p.stato-funz { color: #1f1e1c; }
+.flusso__voci .seg { padding: 1px 5px; border-radius: 3px; background: var(--c-ink); color: var(--c-carta); font: 600 12px/1.4 var(--font-text); letter-spacing: .05em; }
+@media (min-width: 1024px) { footer .closing__testa > .section-head { flex: 1 1 0; min-width: 0; width: auto; max-width: 780px; } }
+.apertura .hero__proof { margin: 0; font: 400 15px/1.4 var(--font-text); color: var(--c-grigio); }
+html.apertura-js .apertura:not(.is-aperta) .hero__proof { opacity: 0; }
+.apertura.is-aperta .hero__proof { transition: opacity 600ms var(--ease) 360ms; }
+
+/* le cose da fare: il calcolo dalla notifica è un dettaglio, una riga e un pezzo della scheda Compiti */
+.dettaglio { margin-top: var(--s-6); padding-top: var(--s-5); border-top: 1px solid var(--c-linea); }
+.dettaglio p { margin: 0 0 var(--s-3); font-size: var(--t-body); line-height: 1.5; color: var(--c-ink2); }
+.dettaglio__img { margin: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--c-linea2); box-shadow: 0 24px 50px -30px rgb(43 42 40 / .5); }
+.dettaglio__img img { display: block; width: 100%; height: auto; }
+
+/* via l'AI slop: niente ombre grandi e morbide sotto le finestre, niente pallino nelle etichette */
+.finestra { box-shadow: 0 1px 0 rgb(43 42 40 / .06); }
+.stato-funz::before { display: none; }
+
+/* l'anteprima: il pulsante largo quanto i campi, sullo stesso bordo */
+.anteprima__modulo .anteprima__invia { width: 100%; justify-content: center; margin-top: var(--s-2); }
+.anteprima__modulo .form__status:empty { display: none; }
+
+/* al telefono: le schermate vere a 1440 senza versione a 390 restano intere dentro una finestra che si scorre di lato;
+   dalla 1.59 Attività, Ricerca, Learn e Forum hanno la loro versione da telefono (.finestra--tel), come le facsimile */
+@media (max-width: 639px) {
+  .sez-schermo .finestra:not(.finestra--fax):not(.finestra--tel) { width: 100%; max-width: none; overflow-x: auto; overscroll-behavior-x: contain; border-radius: 12px; scrollbar-width: thin; }
+  .sez-schermo .finestra:not(.finestra--fax):not(.finestra--tel) img { width: 760px; max-width: none; height: auto; }
+  #pratiche .mo-pc__steps { display: grid; gap: var(--s-7); overflow: visible; margin: var(--s-6) 0 0; padding: 0; scroll-snap-type: none; }
+  #pratiche .mo-pc__step { flex: none; }
+  #pratiche .mo-pc__step p { min-height: 0; }
+  #pratiche .mo-pc__visual--lit { overflow-x: auto; overscroll-behavior-x: contain; }
+  #pratiche .mo-pc__visual img { width: 760px; max-width: none; aspect-ratio: 1800 / 1125; }
+}
+@media (min-width: 640px) and (max-width: 1023px) {
+  #pratiche .mo-pc__steps { display: grid; gap: var(--s-7); overflow: visible; margin: var(--s-6) 0 0; padding: 0; }
+  #pratiche .mo-pc__step { flex: none; }
+  #pratiche .mo-pc__visual img { aspect-ratio: 1800 / 1125; }
+}
+@media (max-width: 1023px) {
+  main #pratiche[data-moment] > .mo-pc__grid { grid-template-columns: minmax(0, 1fr); }
+  #pratiche .mo-pc__text, #pratiche .mo-pc__steps, #pratiche .mo-pc__step, #pratiche .mo-pc__visual--lit { min-width: 0; max-width: 100%; }
+}
+.anteprima__modulo .anteprima__intro { margin-bottom: var(--s-6); }
+
+/* gate v7, primo giro */
+.apertura__motto { font-size: clamp(30px, 3.7vw, 54px); }
+.apertura .hero__proof { color: var(--c-ink2); }
+main > .hero.apertura > .cerchi { top: var(--nav); height: calc(100% - var(--nav)); }
+/* l'etichetta dello stato: il testo comincia sul bordo, evidenziato come CRAFT nel logo (via la pillola col pallino) */
+.schermo__testo > p.stato-funz { padding: 3px 0; border-radius: 0; background: none; color: var(--c-ink); box-shadow: none; font: 500 15px/1.3 var(--font-text); }
+.schermo__testo > p.stato-funz { text-decoration: underline; text-decoration-color: var(--sel); text-decoration-thickness: .5em; text-underline-offset: -.32em; text-decoration-skip-ink: none; }
+/* Domande: le cinque voci stanno in una schermata; l'incisione arriva al bordo destro */
+/* Pratiche al telefono: una scheda che si scorre di lato, ogni schermata intera nella larghezza della scheda */
+@media (max-width: 639px) {
+  #pratiche .mo-pc__steps { display: flex; gap: 14px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none;
+    margin: var(--s-6) calc(var(--gut) * -1) 0; padding: 0 var(--gut) 4px; scroll-padding-inline: var(--gut); }
+  #pratiche .mo-pc__step { flex: 0 0 86%; scroll-snap-align: start; }
+  #pratiche .mo-pc__visual--lit { overflow: hidden; border-radius: 10px; border: 1px solid var(--c-linea2); }
+  #pratiche .mo-pc__visual img { width: 100%; max-width: 100%; }
+  #pratiche .mo-pc__step p { min-height: 8.5em; }
+}
+@media (max-width: 639px) { .apertura__motto { font-size: clamp(34px, 9.4vw, 40px); } }
+/* sui telefoni bassi o stretti le funzioni non stanno sopra il logo senza finire sotto la barra: lì restano solo nel resto della pagina */
+@media (max-width: 639px) and (max-height: 700px), (max-width: 359px) { .funzioni { display: none; } }
+/* l'etichetta della barra: il testo comincia sul bordo, evidenziato come CRAFT */
+.nav__badge { height: auto; padding: 2px 0; border-radius: 0; background: none; text-decoration: underline; text-decoration-color: var(--sel); text-decoration-thickness: .55em; text-underline-offset: -.36em; text-decoration-skip-ink: none; }
+@media (max-width: 639px) { #pratiche .mo-pc__steps { margin-inline: 0; padding-inline: 0; scroll-padding-inline: 0; } }
+
+/* ====================================================================================================
+   v8 (appunti di Luca del 17-11 sera)
+   ==================================================================================================== */
+
+/* ---------- i due temi: chiaro (carta) e scuro (inchiostro); lo sceglie il sistema, il pulsante della barra lo cambia ---------- */
+:root {
+  --c-carta: #f1eee8; --c-carta2: #faf8f4; --c-ink: #2b2a28; --c-ink2: #3d3b37; --c-grigio: #5f5a52;
+  --c-linea: #d3cdc1; --c-linea2: #cfc8bb; --sel: #d9d4ca;
+  --ombra: 0 44px 90px -50px rgb(43 42 40 / .65), 0 2px 8px rgb(43 42 40 / .06);
+  --marmo: linear-gradient(rgb(241 238 232 / .38), rgb(241 238 232 / .38)), url(img/marmo-libro.webp);
+  --sez-y: clamp(72px, 7.2vw, 108px);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --c-carta: #1f1e1c; --c-carta2: #2b2a28; --c-ink: #f1eee8; --c-ink2: #e6e1d8; --c-grigio: #b2afa9;
+  --c-linea: #4a463f; --c-linea2: #5f5a52; --sel: #4a463f;
+  --ombra: 0 0 0 1px rgb(214 210 202 / .28), 0 10px 0 -5px rgb(214 210 202 / .3), 0 30px 50px -24px rgb(0 0 0 / .9);
+  --marmo: linear-gradient(rgb(31 30 28 / .5), rgb(31 30 28 / .5)), url(img/marmo-scuro-libro.webp);
+  --p-bg: #1f1e1c; --p-surface: #2b2a28; --p-ink: #f1eee8; --p-muted: #b2afa9;
+  --p-accent: #f1eee8; --p-accent-ink: #1f1e1c; --p-action: #f1eee8; --p-action-ink: #1f1e1c;
+  --p-inv-bg: #151413; --p-inv-surface: #1f1e1c;
+  --ground-bg: #2b2a28; --ground-surface: #353330; --ground-ink: #f1eee8; --ground-muted: #b2afa9; --ground-accent: #8a8478;
+  color-scheme: dark;
+}
+html, body { background: var(--c-carta); color: var(--c-ink); }
+html:not([data-motion="off"]) body { transition: background-color 300ms var(--ease), color 300ms var(--ease); }
+.tema { display: inline-grid; place-items: center; width: 44px; height: 44px; margin-right: 6px; padding: 0; border: 1px solid var(--c-linea); border-radius: 99px; background: transparent; color: var(--c-ink); cursor: pointer; transition: background-color 200ms var(--ease), border-color 200ms var(--ease); }
+.tema:hover { background: var(--sel); }
+.tema:active { transform: scale(.96); }
+.tema svg { grid-area: 1 / 1; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: opacity 250ms var(--ease), rotate 400ms var(--ease); }
+:root[data-theme="dark"] .tema__luna, :root:not([data-theme="dark"]) .tema__sole { opacity: 0; rotate: -40deg; }
+.nav__actions { display: flex; align-items: center; }
+@media (max-width: 1023px) { .tema { width: 40px; height: 40px; } }
+/* nel tema scuro le incisioni (la biblioteca, la pagina di accesso) diventano gesso su lavagna */
+:root[data-theme="dark"] :is(.domande__tavola img, .sez-anteprima__fondo) { filter: invert(.9) sepia(.15); mix-blend-mode: screen; }
+:root[data-theme="dark"] .sez-anteprima__fondo { opacity: .3; }
+:root[data-theme="dark"] .finestra, :root[data-theme="dark"] #pratiche .mo-pc__visuals { border-color: #5f5a52; }
+:root[data-theme="dark"] .nav { --bg: #1f1e1c; }
+
+/* ---------- le sezioni: alte quanto il loro contenuto, con lo stesso respiro sopra e sotto (via gli schermi vuoti fissi) ---------- */
+html main > section.section:not(.hero):not([data-moment="pinned-chapters"].is-live) { height: auto; min-height: 0; padding: var(--sez-y) 0; }
+html main > section.section:not(.hero) > .wrap { height: auto; min-height: 0; }
+html main > section.section:not(.hero) > .wrap.grid { align-content: start; }
+html main > section.section:not(.hero) > .wrap > .fill { flex: none; }
+html main > section.statement#motto { padding: calc(var(--sez-y) * 1.25) 0; }
+/* la sezione delle Pratiche resta fissata mentre si scorre (pinned-chapters): il riquadro non ha più vuoti sopra e sotto */
+html main #pratiche[data-moment].is-live > .mo-pc__grid { align-content: center; }
+@media (max-width: 1023px) { :root { --sez-y: 72px; } }
+@media (max-width: 639px) { :root { --sez-y: 64px; } html main > section.statement#motto { padding: 80px 0; } }
+
+/* ---------- carta e marmo alternati (via la pietra scura): il marmo del cliente, fermo dietro la pagina mentre si scorre ---------- */
+main > section.marmo { background-color: var(--c-carta); background-image: var(--marmo); background-position: center; background-size: 1536px 1024px; background-repeat: repeat; background-attachment: fixed; }
+/* il marmo a lastre accostate (a libro, come nelle cave): l'immagine a piena risoluzione, mai stirata, si ripete senza giunte */
+main > section.marmo + section:not(.marmo), main > section:not(.marmo) + section.marmo { border-top: 1px solid color-mix(in oklab, var(--c-linea) 70%, transparent); }
+@media (max-width: 1023px), (hover: none) { main > section.marmo { background-attachment: scroll; } }
+
+/* ---------- le schermate: torna l'ombra della v6, la finestra sta sopra la carta ---------- */
+.finestra, .grafo { box-shadow: var(--ombra); border: 1px solid var(--c-linea2); }
+@media (min-width: 1024px) { #pratiche.is-live .mo-pc__visuals { box-shadow: var(--ombra); border-color: var(--c-linea2); } }
+@media (max-width: 1023px) { #pratiche .mo-pc__visual--lit { box-shadow: 0 30px 60px -36px rgb(43 42 40 / .6); } }
+
+/* ---------- l'apertura: il blocco intero (logo, motto, testo, pulsanti) al centro ottico, un poco sopra la metà ---------- */
+main > .hero.apertura .hero-text.apertura__corpo { display: flex; flex-direction: column; justify-content: center; align-items: center; padding-bottom: 5svh; }
+.apertura__testo { margin-top: 0; }
+.apertura .hero__proof { text-align: center; }
+/* senza orbita le funzioni stanno ferme sopra il logo, nel blocco centrato */
+.funzioni { position: relative; inset: auto; height: auto; order: -1; max-width: 860px; margin: 0 auto var(--s-6); }
+html.orbita-viva .funzioni { position: absolute; inset: 0; max-width: none; margin: 0; order: 0; }
+/* l'orbita in prospettiva: le pillole davanti più grandi, nitide e con l'ombra; quelle dietro più piccole e chiare */
+html.orbita-viva .funzioni li > .funz { scale: var(--k, 1); opacity: var(--o, 1); box-shadow: 0 calc(4px + 22px * var(--z, .5)) calc(10px + 30px * var(--z, .5)) -14px rgb(43 42 40 / calc(.12 + .4 * var(--z, .5))); }
+:root[data-theme="dark"].orbita-viva .funzioni li > .funz {
+  /* al buio il rilievo viene da uno spessore netto grigio chiaro e dal bordo alto illuminato, non da un alone */
+  background: color-mix(in srgb, #4a4740 calc(100% * var(--z, .5)), var(--c-carta2));
+  border-color: rgb(214 210 202 / calc(.18 + .22 * var(--z, .5)));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / calc(.06 + .12 * var(--z, .5))), 0 calc(2px + 4px * var(--z, .5)) 0 -1px rgb(214 210 202 / calc(.22 + .43 * var(--z, .5))), 0 calc(8px + 10px * var(--z, .5)) 16px -10px rgb(0 0 0 / .8);
+}
+/* durante il volo dell'intro il logo vero aspetta: si accende quando quello dell'intro ci arriva sopra */
+.apertura.logo-in-volo .apertura__logo { opacity: 0; }
+@media (max-width: 639px) { .funzioni { margin-bottom: var(--s-5); } }
+
+/* ---------- le tendine «Come funziona», per chi vuole sapere di più ---------- */
+.piu { margin-top: var(--s-5); border-top: 1px solid var(--c-linea); border-bottom: 1px solid var(--c-linea); }
+.piu > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; list-style: none; cursor: pointer; font: 500 17px/1.3 var(--font-text); color: var(--c-ink); }
+.piu > summary::-webkit-details-marker { display: none; }
+.piu > summary::after { content: ""; flex: none; width: 12px; height: 12px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; rotate: 45deg; translate: 0 -3px; transition: rotate 300ms var(--ease), translate 300ms var(--ease); }
+.piu[open] > summary::after { rotate: 225deg; translate: 0 3px; }
+.piu > summary:hover { text-decoration: underline; text-decoration-color: var(--sel); text-decoration-thickness: .45em; text-underline-offset: -.28em; text-decoration-skip-ink: none; }
+.piu__corpo { padding: 0 0 var(--s-4); }
+.piu__corpo p { margin: 0 0 var(--s-3); font-size: 17px; line-height: 1.55; color: var(--c-ink2); max-width: 36em; }
+.piu__corpo p:last-child { margin-bottom: 0; }
+.piu__corpo b { font-weight: 500; color: var(--c-ink); }
+@media (prefers-reduced-motion: no-preference) { .piu[open] .piu__corpo { animation: piu-in 350ms var(--ease) both; } @keyframes piu-in { from { opacity: 0; translate: 0 -6px; } } }
+.sez-ia__testa .piu { max-width: 44em; }
+
+/* ---------- La tua IA: una tinta sola, le schede sulla carta ---------- */
+.flusso__nodo { background: var(--c-carta2); border-color: var(--c-linea); color: var(--c-ink); box-shadow: var(--ombra); }
+.flusso__voci li { color: var(--c-ink); }
+.flusso__voci span { color: var(--c-grigio); }
+.filo { stroke: var(--c-ink); }
+.flusso__ia .flusso__mcp { color: var(--c-carta); border-color: color-mix(in oklab, var(--c-carta) 45%, transparent); }
+.flusso__ia .flusso__stato { color: color-mix(in oklab, var(--c-carta) 80%, var(--c-ink)); }
+.flusso__voci .seg { background: var(--c-ink); color: var(--c-carta); }
+.flusso__doc { background: var(--c-ink); color: var(--c-carta); }
+.flusso__impulso { background: var(--c-ink); }
+
+/* ---------- Domande: l'incisione stampata sul marmo, senza riquadro ---------- */
+
+/* ---------- l'anteprima: le due uscite, prima l'app da scrivania ---------- */
+.anteprima__modulo { background: var(--c-carta2); border-color: var(--c-linea); }
+.anteprima__modulo input { background: var(--c-carta); color: var(--c-ink); }
+.uscite { list-style: none; margin: 0 0 var(--s-6); padding: 0; display: grid; gap: 0; border-top: 1px solid var(--c-linea); }
+.uscite li { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: 14px; row-gap: 2px; padding: 12px 0; border-bottom: 1px solid var(--c-linea); }
+.uscite__quando { grid-row: span 2; align-self: start; justify-self: start; padding: 3px 0; font: 500 15px/1.3 var(--font-text); text-decoration: underline; text-decoration-color: var(--sel); text-decoration-thickness: .5em; text-underline-offset: -.32em; text-decoration-skip-ink: none; }
+.uscite b { font: 400 22px/1.2 var(--font-display); }
+.uscite li > span:last-child { font-size: 16px; line-height: 1.45; color: var(--c-ink2); }
+
+/* ---------- la chiusura: tutto al centro, LexCraft esce subito dalla colonnina ---------- */
+footer.closing .closing__cta { align-items: center; text-align: center; }
+.closing__marchio { width: min(100%, 1180px); }
+.closing__slogan { text-align: center; }
+.closing__marchio.is-on .i-plinto { animation: in-su 380ms var(--ease) 0ms both; }
+.closing__marchio.is-on .i-toro { animation: in-su 380ms var(--ease) 60ms both; }
+.closing__marchio.is-on .i-fusto { animation: in-cresce 520ms var(--ease) 100ms both; }
+.closing__marchio.is-on .i-scan { animation: in-scan 400ms var(--ease) 360ms both; }
+.closing__marchio.is-on .i-echino { animation: in-giu 380ms var(--ease) 260ms both; }
+.closing__marchio.is-on .i-abaco { animation: in-giu 380ms var(--ease) 320ms both; }
+.closing__marchio.is-on .i-lex { animation: in-lex 700ms var(--ease) 120ms forwards; }
+.closing__marchio.is-on .i-craft { animation: in-craft 700ms var(--ease) 120ms forwards; }
+.closing__marchio.is-on .lg-sel { animation: in-craft 600ms var(--ease) 520ms forwards; }
+.closing__marchio.is-on .i-p { fill: #efebe4; }
+.closing__marchio.is-on :is(.i-marmo, .i-bordo) { opacity: 1; transition: opacity 600ms var(--ease) 200ms; }
+.closing__marchio.is-on .i-luce { animation: in-luce 900ms var(--ease) 500ms both; }
+
+/* ---------- il grafo delle pratiche: una costellazione alla Obsidian, che si avvicina e si legge ---------- */
+.grafo__griglia { align-items: center; row-gap: var(--s-6); }
+.grafo__griglia .schermo__testo { grid-column: 1 / 6; }
+.grafo { grid-column: 6 / 13; position: relative; margin: 0; border-radius: 12px; overflow: hidden; background: var(--c-carta2); color: var(--c-ink); aspect-ratio: 16 / 11; }
+.grafo__barra { position: absolute; left: 0; right: 0; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; font: 500 14px/1.2 var(--font-text); color: var(--c-grigio); pointer-events: none; }
+.grafo__titolo { color: var(--c-ink); font: 400 19px/1 var(--font-display); }
+.grafo__leg { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; justify-content: flex-end; }
+.grafo__leg i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: -6px; translate: 0 1px; }
+.grafo__leg .is-codice { background: none; box-shadow: inset 0 0 0 2px #a8884f; }
+.grafo__leg .is-pratica, .grafo .n.is-pratica { background: var(--c-ink); fill: var(--c-ink); }
+.grafo__leg .is-norma, .grafo .n.is-norma { background: #a8884f; fill: #a8884f; }
+.grafo__leg .is-sentenza, .grafo .n.is-sentenza { background: #5f8a72; fill: #5f8a72; }
+.grafo__leg .is-nota, .grafo .n.is-nota { background: #a39b8d; fill: #a39b8d; }
+.grafo__svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: pan-y; }
+.grafo .l { stroke: var(--c-grigio); stroke-opacity: .35; stroke-width: 1; vector-effect: non-scaling-stroke; transition: stroke-opacity 200ms var(--ease), stroke 200ms var(--ease); }
+.grafo .n { transition: opacity 200ms var(--ease); }
+.grafo .n.is-codice { fill: var(--c-carta2); stroke: #a8884f; stroke-width: 2.2; }
+:root[data-theme="dark"] .grafo .n.is-codice { fill: #191816; stroke: #c9b48a; }
+.grafo .t { fill: var(--c-ink); font: 500 calc(11px * var(--u, 1))/1 var(--font-text); paint-order: stroke; stroke: var(--c-carta2); stroke-width: calc(3px * var(--u, 1)); stroke-linejoin: round; pointer-events: none; opacity: 0; transition: opacity 300ms var(--ease); }
+.grafo .t.is-pratica { font: 400 calc(14px * var(--u, 1))/1 var(--font-display); fill: var(--c-ink); }
+.grafo.is-vicino .t.is-pratica { opacity: 1; }
+.grafo.is-acceso .l { stroke-opacity: .12; }
+.grafo.is-acceso .l.is-on { stroke: var(--c-ink); stroke-opacity: .8; }
+.grafo.is-acceso .n:not(.is-on) { opacity: .25; }
+.grafo.is-acceso .t { opacity: 0; }
+.grafo.is-acceso .t.is-on { opacity: 1; }
+.grafo.is-vicino.is-acceso .t.is-pratica:not(.is-on) { opacity: .3; }
+.grafo__eti { position: absolute; z-index: 3; left: 0; top: 0; margin: 0; padding: 7px 11px; max-width: 280px; border-radius: 6px; background: var(--c-ink); color: var(--c-carta); font: 500 14px/1.3 var(--font-text); box-shadow: 0 12px 30px -12px rgb(0 0 0 / .6); pointer-events: none; opacity: 0; translate: -50% calc(-100% - 30px); transition: opacity 150ms var(--ease); }
+.grafo__eti small { display: block; font: italic 400 15px/1.2 var(--font-display); opacity: .75; }
+.grafo__eti.is-on { opacity: 1; }
+.grafo__aiuto { position: absolute; left: 18px; bottom: 14px; z-index: 2; margin: 0; font: 400 14px/1.2 var(--font-text); color: var(--c-grigio); pointer-events: none; }
+@media (hover: none) { .grafo__aiuto { display: none; } }
+@media (max-width: 1023px) { .grafo__griglia .schermo__testo, .grafo { grid-column: 1 / -1; } }
+@media (max-width: 639px) { .grafo { aspect-ratio: 4 / 5; } .grafo__leg { display: none; } }
+
+:root[data-theme="dark"] .grafo { background: #191816; }
+:root[data-theme="dark"] .grafo .t { stroke: #191816; }
+:root[data-theme="dark"] .grafo__leg .is-norma, :root[data-theme="dark"] .grafo .n.is-norma { background: #c9b48a; fill: #c9b48a; }
+:root[data-theme="dark"] .grafo__leg .is-sentenza, :root[data-theme="dark"] .grafo .n.is-sentenza { background: #9fb3a6; fill: #9fb3a6; }
+:root[data-theme="dark"] .grafo__leg .is-nota, :root[data-theme="dark"] .grafo .n.is-nota { background: #6f6a61; fill: #6f6a61; }
+.flusso__nodo.flusso__ia { background: var(--c-ink); color: var(--c-carta); border: 0; }
+footer.closing .closing__slogan { max-width: 32ch; margin-inline: auto; text-wrap: balance; }
+/* il pulsante del tema resta anche sul telefono e sul tablet, accanto al menu (il pulsante dell'anteprima lì è nella barra in basso) */
+@media (max-width: 1023px) { :root:has(> body > nav.actionbar) .nav:not(.is-open) .nav__actions, .nav .nav__actions { display: flex; margin-left: auto; } .nav:not(.is-open) .nav__actions > .tema { display: inline-grid; } .nav__actions .btn { display: none; } .nav__actions + .nav__toggle { margin-left: 0; } }
+@media (max-width: 1023px) { :root:has(> body > nav.actionbar) .nav:not(.is-open) .nav__actions + .nav__toggle { margin-left: 8px; } }
+/* gate v8, primo giro */
+html.orbita-viva .funz small { color: var(--c-ink2); }
+.segnaposti__freccia { color: var(--c-grigio); }
+.grafo__griglia { align-items: start; }
+footer.closing { padding-top: var(--sez-y); }
+.sez-ia__testa .piu { max-width: 600px; }
+#pratiche .mo-pc__visuals.frame { background: none; }
+@media (max-width: 1023px) {
+  main > section.marmo { background-size: 1152px 768px; }
+}
+
+/* tema scuro: l'ombra è grigio chiaro, altrimenti sul fondo scuro sparisce e si perde il rilievo */
+:root[data-theme="dark"] .zoom, :root[data-theme="dark"] .dettaglio__img { box-shadow: var(--ombra); }
+:root[data-theme="dark"] .anteprima__modulo { box-shadow: var(--ombra); }
+@media (max-width: 1023px) { :root[data-theme="dark"] #pratiche .mo-pc__visual--lit { box-shadow: var(--ombra); } }
+
+/* ================================================================ Chi siamo (chi-siamo.html): i fondatori ci mettono la faccia */
+main > #chi-siamo.section { padding-top: calc(var(--sez-y) + 24px); }
+.cs-eti { margin: 0 0 18px; font: 500 15px/1.3 var(--font-text); letter-spacing: .08em; text-transform: uppercase; color: var(--c-grigio); }
+.cs-testa h1 { max-width: 32ch; font-size: clamp(38px, 4.2vw, 60px); line-height: 1.04; text-wrap: balance; }
+.cs-lead { max-width: 58ch; margin-top: 24px; font: 400 clamp(19px, 1.5vw, 22px)/1.5 var(--font-text); color: var(--c-ink2); text-wrap: pretty; }
+.cs-coppia { margin-top: clamp(40px, 4.4vw, 64px); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(32px, 5vw, 80px); }
+.cs-linkedin { display: inline-block; margin-top: 16px; }
+.cs-persona h2 { margin-top: 28px; font: 400 clamp(30px, 2.6vw, 38px)/1.1 var(--font-display); }
+.cs-ruolo { margin: 8px 0 16px; font: 500 14px/1.3 var(--font-text); letter-spacing: .08em; text-transform: uppercase; color: var(--c-grigio); }
+.cs-persona > p:not(.cs-ruolo) { max-width: 48ch; font-size: 18px; line-height: 1.55; color: var(--c-ink2); }
+/* il ritratto su una lastra di marmo rettangolare alta quanto la foto (non ad arco: sembrava una lapide), la figura scontornata che ne esce sopra con la testa */
+.cs-foto { position: relative; width: min(100%, 300px); margin: 0; aspect-ratio: 720 / 816; isolation: isolate; border-radius: 14px; box-shadow: var(--ombra); }
+.cs-foto::before { content: ""; position: absolute; z-index: -1; inset: 0; border-radius: 14px; border: 1px solid var(--c-linea2);
+  background-color: #ece8e0; background-image: radial-gradient(90% 70% at 50% 30%, rgb(255 255 255 / .6), rgb(255 255 255 / 0) 70%), linear-gradient(rgb(241 238 232 / .3), rgb(241 238 232 / .3)), url(img/marmo-libro.webp);
+  background-size: auto, auto, 640px 427px; background-position: center, center, 22% 64%;
+  box-shadow: inset 0 24px 40px -30px rgb(43 42 40 / .3); }
+.cs-foto img { position: absolute; left: 50%; bottom: 0; width: 100%; height: auto; translate: -50% 0; border-radius: 0 0 14px 14px;
+  filter: drop-shadow(0 14px 18px rgb(43 42 40 / .22)); transition: scale 600ms var(--ease); }
+.cs-persona:hover .cs-foto img { scale: 1.02; transform-origin: 50% 100%; }
+:root[data-theme="dark"] .cs-foto::before { background-image: radial-gradient(90% 70% at 50% 30%, rgb(255 255 255 / .12), rgb(255 255 255 / 0) 70%), url(img/marmo-scuro-libro.webp); background-size: auto, 640px 427px; background-position: center, 22% 64%; }
+:root[data-theme="dark"] .cs-foto img { filter: drop-shadow(0 14px 18px rgb(0 0 0 / .45)); }
+.cs-insieme { max-width: 36ch; margin: clamp(48px, 6vw, 80px) auto 0; text-align: center; font: italic 400 clamp(24px, 2.2vw, 32px)/1.3 var(--font-display); text-wrap: balance; }
+.cs-perche__testa { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(24px, 4vw, 64px); align-items: start; }
+.cs-perche__testa p { font-size: clamp(19px, 1.5vw, 22px); line-height: 1.5; color: var(--c-ink2); }
+.cs-principi { list-style: none; margin: clamp(40px, 5vw, 72px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(24px, 3vw, 40px); }
+.cs-principi li { padding: clamp(24px, 3vw, 40px); border: 1px solid var(--c-linea); border-radius: 14px; background: var(--c-carta2); box-shadow: var(--ombra); }
+.cs-principi__n { display: block; font: 400 56px/1 var(--font-display); color: var(--c-grigio); }
+.cs-principi h3 { margin: 18px 0 10px; font: 400 clamp(28px, 2.4vw, 34px)/1.1 var(--font-display); }
+.cs-principi p { font-size: 18px; line-height: 1.55; color: var(--c-ink2); }
+#community > .wrap.cs-community__griglia { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 80px); align-items: start; }
+.cs-presto { margin: 0; }
+.cs-azioni { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; margin-top: clamp(40px, 5vw, 64px); }
+.pagina-cs .nav__link[aria-current="page"] { text-decoration: underline; text-decoration-color: var(--sel); text-decoration-thickness: .45em; text-underline-offset: -.12em; text-decoration-skip-ink: none; }
+.footer__legal sup { font-size: .7em; }
+@media (max-width: 767px) {
+  .cs-coppia, .cs-perche__testa, .cs-principi, #community > .wrap.cs-community__griglia { grid-template-columns: minmax(0, 1fr); }
+  .cs-persona + .cs-persona { margin-top: 24px; }
+  .cs-insieme { text-align: left; margin-inline: 0; }
+}
+/* Chi siamo: la foto accanto al testo, più piccola (da 1024 px) */
+@media (min-width: 1024px) {
+  .cs-persona { display: grid; grid-template-columns: 220px minmax(0, 1fr); column-gap: 32px; align-items: start; }
+  .cs-persona > .cs-foto { grid-row: 1 / span 5; width: 100%; }
+  .cs-persona > h2 { margin-top: 6px; }
+  .cs-persona > .cs-linkedin { justify-self: start; }
+}
+
+
+/* ================================================================ v8.1: la tendina di Work, coi simboli delle funzioni al posto delle schermate */
+.nav__menu .menu-voci { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2) var(--s-4); padding-block: var(--s-5); }
+.menu-voce { display: grid; grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 14px; row-gap: 3px; align-items: center; padding: 12px; border-radius: 12px; color: var(--c-ink); text-decoration: none; }
+.menu-voce:hover, .menu-voce:focus-visible { background: color-mix(in srgb, var(--c-ink) 5%, transparent); }
+.menu-voce__ic { grid-row: 1 / 3; display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--c-linea); border-radius: 11px; background: var(--c-carta2); }
+.menu-voce__ic svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.menu-voce .t-card { align-self: end; font: 500 16px/1.2 var(--font-text); }
+.menu-voce .t-card small { font: italic 400 15px/1 var(--font-display); color: var(--c-grigio); }
+.menu-voce .t-small { align-self: start; font-size: 14px; line-height: 1.35; }
+html:not([data-motion="off"]) .menu-voce:hover .menu-voce__ic { translate: 0 -2px; }
+html:not([data-motion="off"]) .menu-voce__ic { transition: translate 200ms var(--ease); }
+@media (max-width: 1023px) {
+  .nav.is-open .nav__menu .menu-voci { grid-template-columns: minmax(0, 1fr); gap: 2px; padding-block: 0 var(--s-3); }
+  .nav.is-open .menu-voce { grid-template-columns: 36px minmax(0, 1fr); padding: 8px 0; }
+  .nav.is-open .menu-voce__ic { width: 36px; height: 36px; border-radius: 9px; }
+  .nav.is-open .menu-voce .t-small { display: none; }
+  .nav.is-open .menu-voce .t-card { grid-row: 1 / 3; align-self: center; }
+}
+
+/* ================================================================ v8.1: Domande, rifatta. A sinistra titolo, incisione e contatto (fermi mentre scorri);
+   a destra le cinque risposte, tutte aperte, su un foglio, così il testo non sta mai sulle venature del marmo */
+main > #domande.section > .wrap.domande__griglia { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--gutter); align-items: start; }
+#domande .domande__testa { grid-column: 1 / 5; position: sticky; top: calc(var(--nav, 72px) + 32px); }
+.domande__testa h2 { margin: 0 0 var(--s-3); }
+.domande__intro { margin: 0; font-size: var(--t-lead); line-height: 1.45; color: var(--c-ink2); }
+.domande__tavola { margin: var(--s-6) 0 0; }
+.domande__tavola img { display: block; width: 100%; max-width: 300px; height: auto; mix-blend-mode: multiply; }
+.domande__altro { margin: var(--s-5) 0 0; font-size: 17px; color: var(--c-ink2); }
+.domande__altro .link { color: var(--c-ink); }
+#domande .domande__foglio { grid-column: 6 / 13; margin: 0; padding: 8px 36px; border: 1px solid var(--c-linea); border-radius: 16px; background: var(--c-carta2); box-shadow: var(--ombra); }
+#domande .domande__foglio .faq__item { border: 0; border-bottom: 1px solid var(--c-linea); padding: 0; }
+#domande .domande__foglio .faq__item:last-child { border-bottom: 0; }
+#domande .domande__foglio .faq__item h3 { margin: 0; padding: 26px 0 10px; font: 400 27px/1.2 var(--font-display); letter-spacing: -0.01em; color: var(--c-ink); }
+#domande .domande__foglio .faq__item p { max-width: 62ch; margin: 0; padding: 0 0 26px; font-size: 18px; line-height: 1.65; color: var(--c-ink2); }
+@media (max-width: 1023px) {
+  #domande .domande__testa { grid-column: 1 / -1; position: static; }
+  #domande .domande__foglio { grid-column: 1 / -1; margin-top: var(--s-6); }
+  .domande__tavola { display: none; }
+}
+@media (max-width: 639px) {
+  #domande .domande__foglio { padding: 4px 20px; border-radius: 14px; }
+  #domande .domande__foglio .faq__item h3 { padding-top: 20px; font-size: 22px; }
+  #domande .domande__foglio .faq__item p { font-size: 17px; padding-bottom: 20px; }
+}
+
+/* v8.1: arrivando a una sezione dal menu il fuoco va sul suo titolo (per chi usa la tastiera o un lettore di schermo), ma il titolo
+   non è un controllo: niente anello attorno */
+:is(h1, h2, h3)[tabindex="-1"]:is(:focus, :focus-visible) { outline: none; box-shadow: none; }
+
+/* v8.1: la comparsa leggerissima delle sezioni (v8.js, rivela()): 14 px e l'opacità, 650 ms, una volta sola */
+html.rivela .rv { opacity: 0; translate: 0 14px; }
+html.rivela .rv.rv-in { opacity: 1; translate: 0 0; transition: opacity 650ms cubic-bezier(.22, 1, .36, 1) var(--rd, 0ms), translate 750ms cubic-bezier(.22, 1, .36, 1) var(--rd, 0ms); }
+
+/* v8.1: la prima domanda, «Ma quindi è gratis?»: una riga netta, poi le due colonne, gratis e a pagamento */
+#domande .domande__foglio .faq__item--prezzo .faq__netto { max-width: 30ch; padding: 0 0 18px; font: 400 25px/1.3 var(--font-display); color: var(--c-ink); }
+#domande .domande__foglio .faq__item--prezzo .faq__netto { text-decoration: underline; text-decoration-color: var(--sel); text-decoration-thickness: .42em; text-underline-offset: -.2em; text-decoration-skip-ink: none; }
+.faq__due { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 0 28px; }
+.faq__due > div { padding: 16px 18px 18px; border: 1px solid var(--c-linea); border-radius: 12px; background: var(--c-carta); }
+.faq__due h4 { margin: 0 0 6px; font: 500 15px/1.3 var(--font-text); letter-spacing: .02em; color: var(--c-ink); }
+#domande .domande__foglio .faq__due p { padding: 0; font-size: 16px; line-height: 1.55; }
+@media (max-width: 639px) {
+  .faq__due { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  #domande .domande__foglio .faq__item--prezzo .faq__netto { font-size: 21px; }
+}
