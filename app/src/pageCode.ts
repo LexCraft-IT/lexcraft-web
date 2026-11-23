@@ -9,24 +9,31 @@ export const PAGE_CODE = {
   forum: () => import('./components/features/bulletin/BulletinBoardPage'),
   community: () => import('./components/features/bulletin/ForumCommunityPage'),
   documents: () => import('./components/features/documents/DocumentReviewPage'),
+  rassegne: () => import('./components/features/rassegne/RassegneSearchPage'),
   credits: () => import('./pages/CreditsPage'),
   connectAiApp: () => import('./features/connections/ConnectAiAppPage'),
   // Opus's frame and its views together: one wait, not two in a row.
   opus: () => Promise.all([import('./components/features/planner/OpusPage'), import('./components/features/planner/OpusViews')]),
+  // Learn's home view («Oggi»); its frame, with the title, is in the first chunk (LC133).
+  learn: () => import('./components/features/studia/ReviewHome'),
 } as const;
 
 const under = (pathname: string, root: string) => pathname === root || pathname.startsWith(`${root}/`);
 
 /** The code an address's page waits for, if it is loaded with its route. */
 export function pageCodeFor(pathname: string): (() => Promise<unknown>) | null {
-  if (under(pathname, '/dossier')) return PAGE_CODE.dossier;
+  if (under(pathname, '/pratiche')) return PAGE_CODE.dossier;
   if (under(pathname, '/history')) return PAGE_CODE.history;
   if (under(pathname, '/forum/community')) return PAGE_CODE.community;
   if (under(pathname, '/forum')) return PAGE_CODE.forum;
   if (under(pathname, '/documents')) return PAGE_CODE.documents;
+  if (under(pathname, '/rassegne')) return PAGE_CODE.rassegne;
   if (under(pathname, '/crediti')) return PAGE_CODE.credits;
   if (under(pathname, '/collega-app')) return PAGE_CODE.connectAiApp;
-  if (under(pathname, '/opus')) return PAGE_CODE.opus;
+  if (under(pathname, '/work')) return PAGE_CODE.opus;
+  // Learn's planner is Work's page (LC130).
+  if (under(pathname, '/learn/attivita')) return PAGE_CODE.opus;
+  if (under(pathname, '/learn')) return PAGE_CODE.learn;
   return null;
 }
 

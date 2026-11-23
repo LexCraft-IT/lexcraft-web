@@ -25,7 +25,7 @@ function at(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/studia" element={<StudiaPage />}>
+        <Route path="/learn" element={<StudiaPage />}>
           <Route path="ripasso" element={<p>oggi</p>} />
           <Route path="ripasso/sessione" element={<p>sessione</p>} />
           <Route path="progressi" element={<p>progressi</p>} />
@@ -48,9 +48,9 @@ describe('StudiaPage — what it tells its views about the account', () => {
   ])('%o → validator %s', (value, expected) => {
     auth.value = value;
     render(
-      <MemoryRouter initialEntries={['/studia/valida']}>
+      <MemoryRouter initialEntries={['/learn/valida']}>
         <Routes>
-          <Route path="/studia" element={<StudiaPage />}>
+          <Route path="/learn" element={<StudiaPage />}>
             <Route path="valida" element={<Validator />} />
           </Route>
         </Routes>
@@ -64,9 +64,9 @@ describe('StudiaPage — what it tells its views about the account', () => {
 describe('StudiaPage', () => {
   it('heads the view with its name, leaving its links to the sidebar and the menu button to the layout', () => {
     const { container } = render(
-      <MemoryRouter initialEntries={['/studia/schede']}>
+      <MemoryRouter initialEntries={['/learn/schede']}>
         <Routes>
-          <Route path="/studia" element={<StudiaPage />}>
+          <Route path="/learn" element={<StudiaPage />}>
             <Route path="schede" element={<p>vista</p>} />
           </Route>
         </Routes>
@@ -81,15 +81,15 @@ describe('StudiaPage', () => {
   });
 
   it.each([
-    ['/studia/ripasso', 'Oggi'],
-    ['/studia/progressi', 'Progressi'],
-    ['/studia/schede', 'Le mie schede'],
-    ['/studia/schede/k1', 'Le mie schede'],
-    ['/studia/valida', 'Da validare'],
+    ['/learn/ripasso', 'Oggi'],
+    ['/learn/progressi', 'Progressi'],
+    ['/learn/schede', 'Le mie schede'],
+    ['/learn/schede/k1', 'Le mie schede'],
+    ['/learn/valida', 'Da validare'],
   ])('titles %s with the page\'s name, «Gymnasium · la tua palestra giuridica» small over it (L-37)', (path, name) => {
     at(path);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(new RegExp(`^${name}$`));
-    expect(screen.getByText('Gymnasium · la tua palestra giuridica')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveAccessibleDescription('Learn');
   });
 
   it('gives «Le mie schede» a place for its action beside the title, and no other view', () => {
@@ -98,9 +98,9 @@ describe('StudiaPage', () => {
       return <p data-testid="slot">{actionSlot ? 'slot' : 'none'}</p>;
     }
     const { unmount } = render(
-      <MemoryRouter initialEntries={['/studia/schede']}>
+      <MemoryRouter initialEntries={['/learn/schede']}>
         <Routes>
-          <Route path="/studia" element={<StudiaPage />}>
+          <Route path="/learn" element={<StudiaPage />}>
             <Route path="schede" element={<Slot />} />
           </Route>
         </Routes>
@@ -111,9 +111,9 @@ describe('StudiaPage', () => {
     expect(screen.getByRole('banner').querySelector('.contents')).not.toBeNull();
     unmount();
     render(
-      <MemoryRouter initialEntries={['/studia/valida']}>
+      <MemoryRouter initialEntries={['/learn/valida']}>
         <Routes>
-          <Route path="/studia" element={<StudiaPage />}>
+          <Route path="/learn" element={<StudiaPage />}>
             <Route path="valida" element={<Slot />} />
           </Route>
         </Routes>
@@ -123,13 +123,13 @@ describe('StudiaPage', () => {
   });
 
   it('shows the strip, with its gear, over «Da validare» (Gymnasium spec §5.1)', () => {
-    at('/studia/valida');
+    at('/learn/valida');
     expect(screen.getByRole('button', { name: 'Impostazioni dello studio' })).toBeInTheDocument();
   });
 
   it('opens the study settings in the strip, in place and never in a window, Esc giving the focus back to the gear (U1b)', async () => {
     vi.mocked(studiaService.preferences).mockClear().mockResolvedValue({ ripassiAlGiorno: 20, nuoveAlGiorno: 10, materieComunita: [] } as never);
-    at('/studia/valida');
+    at('/learn/valida');
     const user = userEvent.setup();
     const gear = screen.getByRole('button', { name: 'Impostazioni dello studio' });
     expect(gear).not.toHaveAttribute('aria-haspopup');
@@ -148,6 +148,7 @@ describe('StudiaPage', () => {
     const community = await within(panel).findByRole('button', { name: /^Schede della comunità · / });
     await user.click(community);
     expect(community).toHaveAttribute('aria-expanded', 'true');
+    // Opened, the focus goes to the list's space, never into a field (`ui/Expand`, LC105); Tab reaches the first switch.
     await user.tab();
     expect(within(panel).getAllByRole('switch')[0]).toHaveFocus();
     await user.keyboard('{Escape}');
@@ -169,10 +170,12 @@ describe('StudiaPage', () => {
   it('saves a number typed in the strip\'s settings when Esc closes them: the field is left (U1b)', async () => {
     vi.mocked(studiaService.preferences).mockResolvedValue({ ripassiAlGiorno: 20, nuoveAlGiorno: 10, materieComunita: [] } as never);
     vi.mocked(studiaService.savePreferences).mockClear().mockResolvedValue({ ripassiAlGiorno: 30, nuoveAlGiorno: 10, materieComunita: [] } as never);
-    at('/studia/valida');
+    at('/learn/valida');
     const user = userEvent.setup();
     const gear = screen.getByRole('button', { name: 'Impostazioni dello studio' });
     await user.click(gear);
+    // Opened a frame later, the panel takes the focus (`ui/Expand`): a field typed in before would lose it halfway.
+    await waitFor(() => expect(gear).toHaveAttribute('aria-expanded', 'true'));
     const field = await screen.findByLabelText('Ripassi al giorno');
     await user.clear(field);
     await user.type(field, '30');
@@ -181,7 +184,7 @@ describe('StudiaPage', () => {
     expect(gear).toHaveFocus();
   });
 
-  it.each(['/studia/ripasso', '/studia/progressi', '/studia/schede', '/studia/valida'])('draws %s in the sections\' frame, the layout\'s full width with nothing narrower (G6, W2)', (path) => {
+  it.each(['/learn/ripasso', '/learn/progressi', '/learn/schede', '/learn/valida'])('draws %s in the sections\' frame, the layout\'s full width with nothing narrower (G6, W2)', (path) => {
     const { container } = at(path);
     const page = container.firstElementChild as HTMLElement;
     expect(page.className).not.toMatch(/\bmax-w-|\bmx-auto\b/);
@@ -193,7 +196,7 @@ describe('StudiaPage', () => {
   });
 
   it('draws the session as the lesson, a screen of its own over the shell, with no heading of the area (Gymnasium spec §5.4)', () => {
-    const { container } = at('/studia/ripasso/sessione');
+    const { container } = at('/learn/ripasso/sessione');
     const frame = screen.getByTestId('lesson-frame');
     // Portalled out of the page, in its own band: over the sidebar and the floating buttons, under the overlays.
     expect(container).not.toContainElement(frame);
@@ -203,7 +206,7 @@ describe('StudiaPage', () => {
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
   });
 
-  it.each(['/studia/ripasso', '/studia/progressi', '/studia/schede', '/studia/schede/k1', '/studia/ripasso/sessione'])('leaves %s alone: «Oggi» and «Progressi» draw their own summary, «Le mie schede» none (G8), the session is a lesson', (path) => {
+  it.each(['/learn/ripasso', '/learn/progressi', '/learn/schede', '/learn/schede/k1', '/learn/ripasso/sessione'])('leaves %s alone: «Oggi» and «Progressi» draw their own summary, «Le mie schede» none (G8), the session is a lesson', (path) => {
     at(path);
     expect(screen.queryByRole('button', { name: 'Impostazioni dello studio' })).toBeNull();
   });

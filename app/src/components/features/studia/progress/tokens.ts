@@ -1,3 +1,4 @@
+import type { IllustrationName } from '../../../ui/Illustration';
 import type { ConteggiStati, Materia, StatoGiorno } from '../../../../types/studia';
 
 /**
@@ -10,25 +11,21 @@ export const INK_BG = 'bg-primary-900 dark:bg-primary-300';
 export const INK_BORDER = 'border-primary-900 dark:border-primary-300';
 /** Text on an ink fill. */
 export const ON_INK = 'text-white dark:text-slate-950';
-export const SUCCESS_TEXT = 'text-green-600 dark:text-green-400';
+// green-700 in light: 600 was 3,2:1 on white for the goal's count (M1).
+export const SUCCESS_TEXT = 'text-green-700 dark:text-green-400';
 export const MUTED_TEXT = 'text-slate-500 dark:text-slate-400';
 
 /** A tile of the dashboard: the missions, the statistics, a stop of the road. */
-export const TILE = 'rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900';
+// LC23: the prototype's surface (#faf8f4 on the stone page), not white.
+// LC112: 8 px, a box that holds things (`CARD_RADIUS`, the consultant's rule).
+export const TILE = 'rounded-[8px] border border-slate-200 bg-card dark:border-slate-800 dark:bg-slate-900';
 /**
  * A block's heading: the reader's serif, in sentence case. One type language (Gymnasium spec §5.1): headings
- * in Newsreader, labels in Geist; no small capitals and no double rule.
+ * in EB Garamond, labels in Inter; no small capitals and no double rule.
  */
 export const BLOCK_HEADING = 'font-serif text-xl font-medium tracking-tight text-slate-900 dark:text-slate-50';
 
-export const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900';
-
-/** A secondary button: an ink outline, 44 px, a press that gives a little. */
-export const SECONDARY_BUTTON = `min-h-[44px] rounded-xl border px-4 text-sm font-semibold transition-[background-color,scale] active:scale-[0.97] ${INK_BORDER} text-primary-900 hover:bg-primary-50 dark:text-primary-200 dark:hover:bg-primary-900/30 ${FOCUS_RING}`;
-/** A solid ink button, 44 px: the one action of a block («+ Nuova scheda» in an empty list, «Proponi alla comunità», «Invia»). */
-export const INK_BUTTON = `inline-flex min-h-[44px] items-center justify-center rounded-xl px-4 text-sm font-semibold transition-[background-color,opacity,scale] active:scale-[0.97] disabled:opacity-60 hover:bg-primary-800 dark:hover:bg-primary-200 ${INK_BG} ${ON_INK} ${FOCUS_RING}`;
-/** A quiet action under a mission: words in ink, 44 px tall, underlined on hover. */
-export const QUIET_BUTTON = `-mx-2 min-h-[44px] justify-self-start rounded-lg px-2 text-left text-sm font-medium text-primary-900 underline-offset-4 hover:underline dark:text-primary-200 ${FOCUS_RING}`;
+export const FOCUS_RING = 'focus-visible:outline-none ';
 
 const SUBJECT_TOKEN: Record<Materia, string> = {
   DIRITTO_CIVILE: '--category-civil',
@@ -38,16 +35,29 @@ const SUBJECT_TOKEN: Record<Materia, string> = {
   DIRITTO_PROCESSUALE_PENALE: '--category-penal-procedure',
 };
 
+/** Each subject's engraved emblem (LC35): with its name, what tells the subjects apart (LC37), more than the hue. */
+export const SUBJECT_ART: Record<Materia, IllustrationName> = {
+  DIRITTO_CIVILE: 'materia-civile',
+  DIRITTO_PENALE: 'materia-penale',
+  DIRITTO_AMMINISTRATIVO: 'materia-amministrativo',
+  DIRITTO_PROCESSUALE_CIVILE: 'materia-proc-civile',
+  DIRITTO_PROCESSUALE_PENALE: 'materia-proc-penale',
+};
+
 /** The subject's hue as a CSS colour, for an inline style: it follows the theme through the variable. */
 export function subjectHue(materia: Materia): string {
   return `hsl(var(${SUBJECT_TOKEN[materia]}))`;
 }
 
-/** The three states, their names and their swatches: the bar here and the road's stops (Gymnasium spec §5.2). */
+/**
+ * The three states, their names and their swatches: the bar here and the road's stops (Gymnasium spec §5.2). One
+ * ordered scale, stone to ink (LC37, Luca: «Sti colori sgargianti sono un pugno all'occhio»): a card goes from new to
+ * consolidated, so its colour goes from light to dark, never orange, blue and green.
+ */
 export const CARD_STATES: { key: keyof ConteggiStati; label: string; swatch: string }[] = [
-  { key: 'nuove', label: 'Nuove', swatch: 'bg-amber-500 dark:bg-amber-400' },
-  { key: 'apprendimento', label: 'In apprendimento', swatch: 'bg-primary-500' },
-  { key: 'consolidate', label: 'Consolidate', swatch: 'bg-emerald-600 dark:bg-emerald-500' },
+  { key: 'nuove', label: 'Nuove', swatch: 'bg-ink-300 dark:bg-ink-700' },
+  { key: 'apprendimento', label: 'In apprendimento', swatch: 'bg-ink-500 dark:bg-ink-400' },
+  { key: 'consolidate', label: 'Consolidate', swatch: 'bg-ink-900 dark:bg-ink-100' },
 ];
 
 /** A day's state in words: the boxes are never read by their look alone. */

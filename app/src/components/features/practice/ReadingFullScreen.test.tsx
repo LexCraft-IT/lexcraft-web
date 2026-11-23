@@ -117,7 +117,7 @@ describe('ReadingFullScreen (spec §8, T19)', () => {
     expect(within(reader()).getByRole('button', { name: 'Giurisprudenza' })).toHaveAttribute('aria-expanded', 'false');
     // a 44 px target (the search page's field above it clears the layout's menu button)
     const back = within(reader()).getByRole('button', { name: 'Pratica' });
-    expect(back).toHaveClass('min-h-[44px]');
+    expect(back).toHaveClass('min-h-11');
 
     fireEvent.click(back);
     expect(s().phoneReader).toBeNull();
@@ -164,7 +164,7 @@ describe('ReadingFullScreen (spec §8, T19)', () => {
     s().openPhoneReader(practiceId, articleRef);
     draw();
     act(() => { s().removePracticeArticle(practiceId, articleRef.kind === 'article' ? articleRef.actId : '', articleRef.kind === 'article' ? articleRef.articleKey : ''); });
-    expect(within(reader()).getByText('Questo testo non è più sul tavolo della pratica.')).toBeInTheDocument();
+    expect(within(reader()).getByText('Questo testo non è più sul tavolo.')).toBeInTheDocument();
     fireEvent.click(within(reader()).getByRole('button', { name: 'Pratica' }));
     expect(s().phoneReader).toBeNull();
   });

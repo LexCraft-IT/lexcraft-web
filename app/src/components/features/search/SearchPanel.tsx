@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-const PDFViewer = lazy(() => import('../../ui/PDFViewer').then(m => ({ default: m.PDFViewer })));
 import { AnnexSwitchDialog } from '../../ui/AnnexSwitchDialog';
+import { PDFViewer } from '../../ui/PDFViewer';
 import type { SearchParams, ArticleData, Norma } from '../../../types';
 import { SearchX, X, Info } from 'lucide-react';
 import { addToHistory } from '../../../services/historyService';
@@ -20,45 +20,30 @@ import { matchesSearchFilters } from '../../../utils/searchFilters';
 import { isTypedSearch } from '../../../hooks/useSearchActions';
 import { Scrivania } from './Scrivania';
 import { BookMark } from '../../ui/BookMark';
-import { deriveVersionInfo, requestIsHistorical } from '../../../utils/versionDisplay';
+import { IconButton } from '../../ui/IconButton';
+import { deriveVersionInfo } from '../../../utils/versionDisplay';
 import { parseSearchDeepLink, SEARCH_PARAM } from '../../../utils/deepLinks';
 import { legalFetch } from '../../../services/legalFetch';
 import { WORKSPACE_AREA_ID } from '../../../utils/workspaceOrigin';
-import { isDesktopViewport, useIsDesktop } from '../../../hooks/useIsDesktop';
-import { besideRefFor, findPracticeArticle, practiceArticleKey } from '../../../utils/practice';
+import { useIsDesktop } from '../../../hooks/useIsDesktop';
+import { besideRefFor, corpusPractices, practiceArticleKey } from '../../../utils/practice';
 import { actKeyOf } from '../dossier/dossierLayout';
 import { PracticeNotice, type PracticeStreaming } from '../practice/PracticeParts';
 import { ReadingRow } from '../practice/ReadingRow';
-import { PracticeBar } from '../practice/PracticeBar';
 import { PracticePhoneView } from '../practice/PracticePhoneView';
+import { ReadingHostContext, type ReadingHost } from '../practice/readingHost';
+import { askerPracticeOf, crossReferenceParams, fetchActPdfUrl, openFromAsker, revealHeldCitation } from '../practice/hostGestures';
 import { dur, ease } from '../../../lib/motion';
-
-/** The practice whose light window or, on a phone, full-screen reader `askerId` names: where a norm
- *  cited in its text is searched and opened. */
-function askerPracticeOf(askerId: string | undefined) {
-  if (!askerId) return undefined;
-  const { practices, phoneReader } = appStore.getState();
-  return practices.find((p) => p.beside.some((b) => b.id === askerId)) ??
-    (phoneReader?.ref.id === askerId ? practices.find((p) => p.id === phoneReader.practiceId) : undefined);
-}
-
-/** A subject opened from a light window or from the phone's reader: beside the window, or in the reader. */
-function openFromAsker(practiceId: string, ref: ReturnType<typeof besideRefFor>, askerId: string): void {
-  const { openBeside, openPhoneReader } = appStore.getState();
-  if (isDesktopViewport()) openBeside(practiceId, ref, askerId);
-  else openPhoneReader(practiceId, ref);
-}
+import { closeNotification, notify } from '../../ui/notifications/notifications';
 
 /** A row a search added to a practice (it was not there before): the annex auto-switch removes
  *  the stray rows of the first search, and only those (spec §5.2). */
 interface CreatedRow { practiceId: string; actId: string; articleKey: string }
-/** The bar of practices floats `bottom-6`: 24 px. */
+/** Where the bar of practices floated, `bottom-6`: 24 px (LC60: the bar is gone; the way back keeps its place). */
 const BAR_OFFSET = 24;
 /** Where the way back floats on a phone: above the feedback button (`bottom-6`, 48 px), which sits
  *  under it. (It also cleared the services pill, now in the user menu, S1.) */
 const PHONE_BACK_OFFSET = 80;
-/** On the desktop before the bar is measured: its least height (`--practice-bar-height`'s 3.75rem). */
-const BAR_MIN_HEIGHT = 60;
 
 /** The rows one search created, named by the search's own params (the object `handleSearch` got). */
 interface CreatedRows { search: SearchParams | null; rows: CreatedRow[] }
@@ -92,11 +77,12 @@ export function SearchPanel() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [loadingProgress, setLoadingProgress] = useState<{ loaded: number; total?: number } | null>(null);
   const {
-    searchTrigger, clearSearchTrigger,
+    searchTrigger, triggerSearch, clearSearchTrigger,
     searchQueue, drainNextSearch,
     pendingDecision, drainPendingDecision,
   } = useAppStore(useShallow(s => ({
     searchTrigger: s.searchTrigger,
+    triggerSearch: s.triggerSearch,
     clearSearchTrigger: s.clearSearchTrigger,
     searchQueue: s.searchQueue,
     drainNextSearch: s.drainNextSearch,
@@ -112,7 +98,7 @@ export function SearchPanel() {
   // One layout per breakpoint (T4, gotcha 26); the practice the current search lands in (its first
   // result decides, the rest follow it); the rows it created.
   const isDesktop = useIsDesktop();
-  const practiceCount = useAppStore((s) => s.practices.length);
+  const practiceCount = useAppStore((s) => corpusPractices(s.practices).length);
   const closePhoneReader = useAppStore((s) => s.closePhoneReader);
   const streamingPracticeRef = useRef<string | null>(null);
   const [streamingPracticeId, setStreamingPracticeId] = useState<string | null>(null);
@@ -130,7 +116,6 @@ export function SearchPanel() {
     if (isDesktop) closePhoneReader();
   }, [isDesktop, closePhoneReader]);
   // The bar of practices floats over the table (§3.4): its height, measured, keeps the column clear.
-  const [practiceBarHeight, setPracticeBarHeight] = useState<number | null>(null);
 
   // R2 (streaming-ux): how many articles the current search is expected to
   // produce. When it's exactly 1, processResult opens the single result's
@@ -310,6 +295,19 @@ export function SearchPanel() {
     // error once the stream ends (M-2). Local to this search run so a later
     // search starts clean.
     let parseFailures = 0;
+    // The articles that came through, and the server's closing line when it ran out of time
+    // (`kind: 'time_budget'`, with the missing articles).
+    let articles = 0;
+    let missing: string[] | null = null;
+    const handleLine = (line: string) => {
+      const result = JSON.parse(line);
+      if (result.kind === 'time_budget') {
+        missing = Array.isArray(result.missing) ? result.missing.map(String) : [];
+        return;
+      }
+      if (!result.error) articles += 1;
+      processResult(result, params.version_date, true, params.tabLabel, params.targetPracticeId, params.filters, params.version);
+    };
 
     try {
       // Always the streaming endpoint
@@ -340,8 +338,7 @@ export function SearchPanel() {
         for (const line of lines) {
           if (line.trim()) {
             try {
-              const result = JSON.parse(line);
-              processResult(result, params.version_date, true, params.tabLabel, params.targetPracticeId, params.filters, params.version);
+              handleLine(line);
             } catch (e) {
               parseFailures += 1;
               console.error("Error parsing line", line, e);
@@ -353,12 +350,36 @@ export function SearchPanel() {
       // Process any remaining data in buffer
       if (buffer.trim()) {
         try {
-          const result = JSON.parse(buffer);
-          processResult(result, params.version_date, true, params.tabLabel, params.targetPracticeId, params.filters, params.version);
+          handleLine(buffer);
         } catch (e) {
           parseFailures += 1;
           console.error("Error parsing final buffer", e);
         }
+      }
+
+      // The stream stopped early (D-323): the server says which articles are missing, and they can be
+      // asked for again.
+      // Set inside `handleLine`, which the compiler's narrowing does not follow.
+      const missingArticles = missing as string[] | null;
+      if (missingArticles && missingArticles.length > 0) {
+        const k = missingArticles.length;
+        const retry: SearchParams = {
+          ...params,
+          article: missingArticles.join(','),
+          targetPracticeId: params.targetPracticeId ?? streamingPracticeRef.current ?? undefined,
+        };
+        const noticeId = notify({
+          type: 'warning',
+          duration: 0,
+          message: `Caricamento interrotto: caricati ${articles} di ${articles + k} articoli. ${k === 1 ? 'Manca 1 articolo.' : `Mancano ${k} articoli.`}`,
+          // Closed first, so it cannot ask twice; then queued, never started over a running search:
+          // «Apri tutto»'s queue runs one search at a time.
+          action: { label: 'Carica i mancanti', onClick: () => {
+            closeNotification(noticeId, 'dismiss');
+            const { searchQueue, triggerMultiSearch } = appStore.getState();
+            triggerMultiSearch([...searchQueue, retry]);
+          } },
+        });
       }
 
       // If any NDJSON lines were malformed, let the user know something was
@@ -532,36 +553,13 @@ export function SearchPanel() {
   }, [searchTrigger, registerSearch]);
 
   const handleCrossReferenceNavigate = useCallback((articleNumber: string, normaData: ArticleData['norma_data'], askerId?: string) => {
-    const params: SearchParams = {
-      act_type: normaData.tipo_atto,
-      act_number: normaData.numero_atto || '',
-      date: normaData.data || '',
-      article: articleNumber,
-      version: (normaData.versione as 'vigente' | 'originale') || 'vigente',
-      version_date: normaData.data_versione || '',
-      annex: normaData.allegato || undefined  // Preserve annex when navigating via cross-reference
-    };
-    // The text in force of an article of the same act already on the table is revealed,
-    // not searched again (T2); a past text of it never stands in for it, so without its row the text
-    // in force is loaded as a new row. A past text's jump asks for its own version, so it searches.
-    // Cited from a light window (`askerId`), the row opens beside that window instead of being
-    // revealed in the table (spec §4.5), and a search it needs starts from the window.
-    if (!requestIsHistorical(normaData)) {
-      const { practices, activePracticeId, revealPracticeRow } = appStore.getState();
-      const askerPractice = askerPracticeOf(askerId);
-      const practice = askerPractice ?? practices.find((p) => p.id === activePracticeId);
-      const act = practice?.acts.find((a) => a.key === actKeyOf(normaData));
-      const articleId = normaData.allegato ? `all${normaData.allegato}:${articleNumber}` : articleNumber;
-      const inForce = act && findPracticeArticle(
-        { ...act, articles: act.articles.filter((a) => !requestIsHistorical(a.norma_data)) }, articleId);
-      if (practice && act && inForce) {
-        if (askerPractice && askerId) {
-          openFromAsker(practice.id, besideRefFor({ kind: 'article', actId: act.id, articleKey: practiceArticleKey(inForce) }), askerId);
-          return;
-        }
-        if (revealPracticeRow(practice.id, act.id, practiceArticleKey(inForce))) return;
-      }
-    }
+    const params = crossReferenceParams(articleNumber, normaData);
+    // An article of the same act already on the table is revealed, or opened beside the window that cited it
+    // (`revealHeldCitation`); otherwise searched, a search a window needs starting from the window.
+    const askerPractice = askerPracticeOf(askerId);
+    const { practices, activePracticeId } = appStore.getState();
+    const practice = askerPractice ?? practices.find((p) => p.id === activePracticeId);
+    if (practice && revealHeldCitation(practice, articleNumber, normaData, askerPractice ? askerId : undefined)) return;
     handleSearch(askerId ? { ...params, besideId: askerId } : params);
   }, [handleSearch]);
 
@@ -569,23 +567,15 @@ export function SearchPanel() {
   const handleViewPdf = async (urn: string) => {
     setPdfState({ isOpen: true, url: null, isLoading: true });
     try {
-      const response = await legalFetch('/export_pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urn })
-      });
-
-      if (!response.ok) throw new Error('Errore generazione PDF');
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      setPdfState({ isOpen: true, url, isLoading: false });
+      setPdfState({ isOpen: true, url: await fetchActPdfUrl(urn), isLoading: false });
     } catch (e) {
       console.error(e);
       setPdfState({ isOpen: false, url: null, isLoading: false });
       setError("Impossibile caricare il PDF.");
     }
   };
+
+  const readingHost = useMemo<ReadingHost>(() => ({ search: triggerSearch }), [triggerSearch]);
 
   const hasTabs = practiceCount > 0;
   const practiceStreaming: PracticeStreaming | null = loadingProgress && streamingPracticeId
@@ -597,49 +587,53 @@ export function SearchPanel() {
       {/* One global control: the back-stack is global, so a per-practice copy would
           sit inside the very place an entry points at. */}
       <ReadingBackControl
-        // It floats above the bar, clear of the act's heading and the windows' headers. Going back
+        // It floats at the column's foot, clear of the act's heading and the windows' headers. Going back
         // already made the practice active and, on a phone, opened the reader on a subject read beside
         // or closed it for a row of the table (`walkBackTo`, in one update).
-        bottomOffset={isDesktop ? (practiceBarHeight ?? BAR_MIN_HEIGHT) + BAR_OFFSET + 12 : PHONE_BACK_OFFSET}
+        bottomOffset={isDesktop ? BAR_OFFSET + 12 : PHONE_BACK_OFFSET}
       />
 
       {/* The table and the bar on the desktop, the phone's table below md; one layout mounted (T4,
           gotcha 26). */}
       {/* Mounted over both layouts: a notice not yet closed survives a change of breakpoint. */}
       <PracticeNotice />
+      {/* The reading's host (LC52 c2): its search gestures are the Corpus's search, drained above, as before. */}
+      <ReadingHostContext.Provider value={readingHost}>
+      {/* The act's PDF opens in the page, above the reading (LC124, L-73). */}
+      <PDFViewer
+        isOpen={pdfState.isOpen}
+        onClose={() => setPdfState(s => ({ ...s, isOpen: false }))}
+        pdfUrl={pdfState.url}
+        isLoading={pdfState.isLoading}
+        className="mb-3"
+      />
       {isDesktop ? (
-        <>
-          <div
-            id={WORKSPACE_AREA_ID}
-            className="w-full"
-            // The column's bottom padding reads it (§3.4); without the bar, its fallback.
-            style={practiceBarHeight === null ? undefined : { ['--practice-bar-height' as string]: `${practiceBarHeight}px` }}
-          >
-            <ReadingRow onViewPdf={handleViewPdf} onCrossReference={handleCrossReferenceNavigate} streaming={practiceStreaming} />
-          </div>
-          <PracticeBar onHeightChange={setPracticeBarHeight} />
-        </>
+        // LC60: no bar of practices: the Ricerca is one reading bench of the session.
+        <div id={WORKSPACE_AREA_ID} className="w-full">
+          <ReadingRow onViewPdf={handleViewPdf} onCrossReference={handleCrossReferenceNavigate} streaming={practiceStreaming} />
+        </div>
       ) : (
         <PracticePhoneView onViewPdf={handleViewPdf} onCrossReference={handleCrossReferenceNavigate} streaming={practiceStreaming} />
       )}
+      </ReadingHostContext.Provider>
 
       {/* «Scrivania»: the page with no practice open (spec 2026-10-18-redesign-inchiostro §5.3.2). */}
       {!hasTabs && !isLoading && <Scrivania />}
 
       {/* Loading Skeleton - Shows while search is in progress */}
       {isLoading && !hasTabs && (
-        <div className="w-full max-w-4xl mx-auto p-12 space-y-8 animate-pulse">
+        <div className="w-full p-12 space-y-8 animate-pulse">
           <div className="space-y-4">
-            <div className="h-10 bg-slate-200 dark:bg-slate-800 rounded-2xl w-1/3" />
-            <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-lg w-1/2" />
+            <div className="h-10 bg-slate-200 dark:bg-slate-800 rounded-[8px] w-1/3" />
+            <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-[8px] w-1/2" />
           </div>
 
           <div className="grid grid-cols-1 gap-6">
             {Array.from({ length: expectedSkeletonCount }, (_, i) => i + 1).map(i => (
-              <div key={i} className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+              <div key={i} className="bg-white dark:bg-slate-900 rounded-[8px] border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
                 <div className="p-8 space-y-6">
                   <div className="flex gap-4 items-center">
-                    <div className="w-12 h-12 bg-slate-200 dark:bg-slate-800 rounded-2xl" />
+                    <div className="w-12 h-12 bg-slate-200 dark:bg-slate-800 rounded-[8px]" />
                     <div className="space-y-2 flex-1">
                       <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-md w-1/4" />
                       <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded-md w-1/6" />
@@ -669,8 +663,8 @@ export function SearchPanel() {
             aria-live="polite"
             aria-atomic="true"
           >
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-4 rounded-2xl shadow-lg flex items-start gap-4">
-              {/* The book breathes while the texts arrive (spec 2026-10-18-redesign-inchiostro §6.3.1). */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-4 rounded-[8px] shadow-lg flex items-start gap-4">
+              {/* The column breathes while the texts arrive (spec 2026-10-18-redesign-inchiostro §6.3.1). */}
               <div className="flex-shrink-0 w-10 h-10 flex items-center justify-center text-primary-600 dark:text-primary-400">
                 <BookMark size={28} breathe />
               </div>
@@ -711,7 +705,7 @@ export function SearchPanel() {
             role="alert"
             aria-live="polite"
           >
-            <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 p-4 rounded-2xl shadow-lg shadow-amber-500/10 flex items-start gap-3">
+            <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/40 p-4 rounded-[8px] shadow-lg shadow-amber-500/10 flex items-start gap-3">
               <Info size={20} className="shrink-0 text-amber-500 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-1">Risultato parziale</h4>
@@ -722,9 +716,7 @@ export function SearchPanel() {
                   {partialErrors.map((message, index) => <li key={`${message}-${index}`}>{message}</li>)}
                 </ul>
               </div>
-              <button onClick={() => setPartialErrors([])} aria-label="Chiudi avviso risultato parziale" className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg focus-ring">
-                <X size={16} />
-              </button>
+              <IconButton size="sm" onClick={() => setPartialErrors([])} aria-label="Chiudi avviso risultato parziale" icon={<X aria-hidden />} className="shrink-0" />
             </div>
           </motion.div>
         )}
@@ -738,20 +730,15 @@ export function SearchPanel() {
             aria-live="assertive"
             aria-atomic="true"
           >
-            <div className="bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/30 p-4 rounded-2xl shadow-lg shadow-red-500/10 flex items-start gap-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500">
+            <div className="bg-white dark:bg-slate-900 border border-red-200 dark:border-red-900/30 p-4 rounded-[8px] shadow-lg shadow-red-500/10 flex items-start gap-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-[8px] bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500">
                 <SearchX size={20} />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-1">Errore di Ricerca</h4>
                 <p className="text-xs font-medium text-slate-500 dark:text-slate-400 leading-relaxed">{error}</p>
               </div>
-              <button
-                onClick={() => setError(null)}
-                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
-              >
-                <X size={16} />
-              </button>
+              <IconButton size="sm" onClick={() => setError(null)} aria-label="Chiudi l’errore" icon={<X aria-hidden />} className="shrink-0" />
             </div>
           </motion.div>
         )}
@@ -766,20 +753,15 @@ export function SearchPanel() {
             exit={{ opacity: 0, y: -20, x: '-50%' }}
             className={cn('fixed top-24 left-1/2 w-full max-w-md px-4', Z_INDEX.searchPanel)}
           >
-            <div className="bg-white dark:bg-slate-900 border border-primary-200 dark:border-primary-900/30 p-4 rounded-2xl shadow-lg shadow-primary-500/10 flex items-start gap-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center text-primary-500">
+            <div className="bg-white dark:bg-slate-900 border border-primary-200 dark:border-primary-900/30 p-4 rounded-[8px] shadow-lg shadow-primary-500/10 flex items-start gap-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-[8px] bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center text-primary-500">
                 <Info size={20} />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mb-1">Navigazione allegato</h4>
                 <p className="text-xs font-medium text-slate-500 dark:text-slate-400 leading-relaxed">{annexToast.message}</p>
               </div>
-              <button
-                onClick={dismissAnnexToast}
-                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
-              >
-                <X size={16} />
-              </button>
+              <IconButton size="sm" onClick={dismissAnnexToast} aria-label="Chiudi l’avviso" icon={<X aria-hidden />} className="shrink-0" />
             </div>
           </motion.div>
         )}
@@ -795,15 +777,6 @@ export function SearchPanel() {
         annexNumber={autoSwitchDialog.annexNumber}
       />
 
-      {/* PDF Viewer Modal — loaded only when explicitly opened */}
-      <Suspense fallback={null}>
-        <PDFViewer
-          isOpen={pdfState.isOpen}
-          onClose={() => setPdfState(s => ({ ...s, isOpen: false }))}
-          pdfUrl={pdfState.url}
-          isLoading={pdfState.isLoading}
-        />
-      </Suspense>
     </>
   );
 }

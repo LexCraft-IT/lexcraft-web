@@ -1,12 +1,12 @@
 import { Heart, Eye, MoreHorizontal, Flag, Edit, EyeOff, History, Lightbulb, MessageSquare, Trash2, FolderPlus } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
 import type { SharedEnvironment, EnvironmentCategory } from '../../../types';
 import { formatDistanceToNow } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { FORUM_CATEGORIES } from '../../../utils/forumCategories';
 import { tagLabel } from '../../../utils/tagLabel';
-import { TOUCH_TARGET_RESPONSIVE } from '../../../constants/interactions';
+import { Button } from '../../ui/Button';
 import { cn } from '../../../lib/utils';
+import { MenuButton, type MenuItem } from '../../ui/MenuButton';
 
 interface SharedEnvironmentCardProps {
   environment: SharedEnvironment;
@@ -15,7 +15,8 @@ interface SharedEnvironmentCardProps {
   onReport: (id: string) => void;
   onSuggest?: (env: SharedEnvironment) => void;
   onEdit?: (env: SharedEnvironment) => void;
-  onDelete?: (env: SharedEnvironment) => void;
+  /** With the menu's button, which the confirmation grows from and gives the focus back to (LC85). */
+  onDelete?: (env: SharedEnvironment, origin: HTMLElement | null) => void;
   onWithdraw?: (env: SharedEnvironment) => void;
   onRepublish?: (env: SharedEnvironment) => void;
   onViewVersions?: (env: SharedEnvironment) => void;
@@ -56,26 +57,28 @@ export function SharedEnvironmentCard({
   showOwnerActions = false,
   isFirst = false,
 }: SharedEnvironmentCardProps) {
-  const [showMenu, setShowMenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
   const hue = categoryHue(environment.category);
   const titleId = `forum-card-${environment.id}`;
   const isWithdrawn = !environment.isActive;
   const hasPendingSuggestions = (environment.pendingSuggestionsCount ?? 0) > 0;
 
-  // Close menu on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowMenu(false);
-      }
-    };
-    if (showMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showMenu]);
+  const ownerItems: MenuItem[] = environment.isOwner && showOwnerActions ? [
+    ...(onEdit ? [{ label: 'Modifica', icon: Edit, onSelect: () => onEdit(environment) }] : []),
+    ...(onViewVersions ? [{ label: 'Versioni', icon: History, onSelect: () => onViewVersions(environment) }] : []),
+    ...(isWithdrawn && onRepublish
+      ? [{ label: 'Ripubblica', icon: Eye, iconClassName: 'text-green-600 dark:text-green-400', onSelect: () => onRepublish(environment) }]
+      : []),
+    ...(!isWithdrawn && onWithdraw
+      ? [{ label: 'Ritira', icon: EyeOff, iconClassName: 'text-amber-600 dark:text-amber-400', onSelect: () => onWithdraw(environment) }]
+      : []),
+    // The confirmation grows from the «⋯», which has the focus back by then (LC85, K1b).
+    ...(onDelete ? [{ label: 'Elimina', icon: Trash2, danger: true, onSelect: (_e: unknown, trigger: HTMLButtonElement | null) => onDelete(environment, trigger) }] : []),
+  ] : [];
+  const otherItems: MenuItem[] = environment.isOwner ? [] : [
+    ...(onSuggest ? [{ label: 'Suggerisci contenuto', icon: Lightbulb, onSelect: () => onSuggest(environment) }] : []),
+    { label: 'Segnala', icon: Flag, danger: true, onSelect: () => onReport(environment.id) },
+  ];
+  const menuItems = [...ownerItems, ...otherItems];
 
   // Timestamp: prefer `updatedAt` when it differs meaningfully from
   // `createdAt` (Prisma initializes them equal; we treat a delta < 1s as
@@ -100,16 +103,18 @@ export function SharedEnvironmentCard({
       data-shared-env={environment.id}
       aria-labelledby={titleId}
       className={cn(
-        'group relative flex h-full flex-col rounded-xl border',
+        // Resting depth only (LC30): the card is not a link, and a hover lift would make a stacking context that traps the
+        // «⋯» menu under the next card.
+        'group relative flex h-full flex-col rounded-[8px] border',
         // Withdrawn: a dashed edge on a quieter paper, and the badge — no opacity, which would trap the «⋯» menu in a
         // stacking context of its own and fade the text under AA.
         isWithdrawn
           ? 'border-dashed border-slate-400 bg-slate-50 dark:border-slate-600 dark:bg-slate-900/60'
-          : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900',
+          : 'border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900',
       )}
     >
       {/* The category's hue down the leading edge, from its token; no clipping on the card, so the «⋯» menu can hang out. */}
-      <span aria-hidden="true" className="absolute -bottom-px -left-px -top-px w-1 rounded-l-xl" style={{ backgroundColor: hue }} />
+      <span aria-hidden="true" className="absolute -bottom-px -left-px -top-px w-1 rounded-l-[8px]" style={{ backgroundColor: hue }} />
 
       <div className="flex flex-1 flex-col p-4 pl-5">
         {/* The title, the badges of the state, the «⋯» menu. */}
@@ -137,115 +142,15 @@ export function SharedEnvironmentCard({
                 Tuo
               </span>
             )}
-            <div className="relative" ref={menuRef}>
-              <button
-                id={isFirst ? 'tour-forum-actions' : undefined}
-                aria-label={`Azioni su «${environment.title}»`}
-                onClick={() => setShowMenu(!showMenu)}
-                className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center md:min-h-0 md:min-w-0 p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            {/* Only the actions the card has here: the user's own card in Explore has none, so no «⋯» (LC103). */}
+            <div id={isFirst ? 'tour-forum-actions' : undefined}>
+              <MenuButton
+                label={`Azioni su «${environment.title}»`}
+                items={menuItems}
+                triggerClassName="min-h-[44px] min-w-[44px] justify-center p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 md:min-h-8 md:min-w-8"
               >
-                <MoreHorizontal size={16} className="text-slate-500" />
-              </button>
-              {showMenu && (
-                <div className="absolute right-0 top-full mt-1 bg-white dark:bg-slate-800 rounded-lg shadow-md border border-slate-200 dark:border-slate-700 py-1 z-10 min-w-[160px]">
-                  {/* Owner actions */}
-                  {environment.isOwner && showOwnerActions && (
-                    <>
-                      {onEdit && (
-                        <button
-                          onClick={() => {
-                            onEdit(environment);
-                            setShowMenu(false);
-                          }}
-                          className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-                        >
-                          <Edit size={14} />
-                          Modifica
-                        </button>
-                      )}
-                      {onViewVersions && (
-                        <button
-                          onClick={() => {
-                            onViewVersions(environment);
-                            setShowMenu(false);
-                          }}
-                          className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-                        >
-                          <History size={14} />
-                          Versioni
-                        </button>
-                      )}
-                      {isWithdrawn && onRepublish && (
-                        <button
-                          onClick={() => {
-                            onRepublish(environment);
-                            setShowMenu(false);
-                          }}
-                          className="w-full px-3 py-2 text-left text-sm text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-2"
-                        >
-                          <Eye size={14} />
-                          Ripubblica
-                        </button>
-                      )}
-                      {!isWithdrawn && onWithdraw && (
-                        <button
-                          onClick={() => {
-                            onWithdraw(environment);
-                            setShowMenu(false);
-                          }}
-                          className="w-full px-3 py-2 text-left text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 flex items-center gap-2"
-                        >
-                          <EyeOff size={14} />
-                          Ritira
-                        </button>
-                      )}
-                      {onDelete && (
-                        <button
-                          onClick={() => {
-                            // The focus goes back to the menu's button, as `MenuButton` does: the confirmation is drawn
-                            // from it and returns the focus there (K1b).
-                            menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-                            onDelete(environment);
-                            setShowMenu(false);
-                          }}
-                          className="w-full px-3 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                        >
-                          <Trash2 size={14} />
-                          Elimina
-                        </button>
-                      )}
-                      <div className="border-t border-slate-200 dark:border-slate-700 my-1" />
-                    </>
-                  )}
-                  {/* Non-owner actions */}
-                  {!environment.isOwner && (
-                    <>
-                      {onSuggest && (
-                        <button
-                          onClick={() => {
-                            onSuggest(environment);
-                            setShowMenu(false);
-                          }}
-                          className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-                        >
-                          <Lightbulb size={14} />
-                          Suggerisci contenuto
-                        </button>
-                      )}
-                      <button
-                        onClick={() => {
-                          onReport(environment.id);
-                          setShowMenu(false);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
-                      >
-                        <Flag size={14} />
-                        Segnala
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
+                <MoreHorizontal size={16} aria-hidden className="text-slate-500" />
+              </MenuButton>
             </div>
           </div>
         </div>
@@ -298,26 +203,24 @@ export function SharedEnvironmentCard({
         {/* As tall as the action, on a card without one too (the user's own), so every foot lines up. */}
         {/* Where the card is too narrow for all three, the action goes under them, whole, at the right. */}
         <div className="mt-auto flex min-h-[3.375rem] flex-wrap items-center gap-x-2 gap-y-2 pt-4">
-          <button
+          {/* `Button` quiet (LC114): on a computer as tall as the action beside it, 36 px, 44 on a phone. */}
+          <Button
             type="button"
+            variant="quiet"
             onClick={() => onLike(environment.id)}
             disabled={isLiking}
             aria-pressed={environment.userLiked}
             aria-label={`Mi piace: ${environment.likeCount}`}
+            icon={<Heart size={18} aria-hidden className={environment.userLiked ? 'fill-current' : ''} />}
             className={cn(
-              'inline-flex min-w-[44px] shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm tabular-nums transition-colors disabled:opacity-50 md:min-w-0',
-              TOUCH_TARGET_RESPONSIVE,
-              // On a computer as tall as the action beside it, not the heart's 18 px.
-              'md:min-h-9',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
+              'min-w-11 shrink-0 gap-1.5 px-2 tabular-nums md:min-w-0',
               environment.userLiked
-                ? 'text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
-                : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800',
+                ? 'text-red-700 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/20 dark:hover:text-red-400'
+                : 'text-slate-600 dark:text-slate-400',
             )}
           >
-            <Heart size={18} aria-hidden className={environment.userLiked ? 'fill-current' : ''} />
             <span aria-hidden>{environment.likeCount}</span>
-          </button>
+          </Button>
           {/* Beside the like, small: how many added it (nothing at 0), and — to its author only, in «I miei
               pubblicati» — how many viewed it. */}
           {(environment.downloadCount > 0 || showOwnerActions) && (
@@ -332,22 +235,20 @@ export function SharedEnvironmentCard({
             </p>
           )}
           {!environment.isOwner && (
-            <button
+            // LC114: quiet, as «Aggiungi» on the packs' cards just below: one action, one look; the card holds it already.
+            <Button
               type="button"
+              variant="quiet"
               onClick={() => onImport(environment)}
               aria-label={`Aggiungi «${environment.title}» ai miei dossier`}
-              className={cn(
-                'ml-auto inline-flex min-w-0 max-w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-primary-600 px-3 py-2 text-sm font-semibold text-primary-700 transition-colors hover:bg-primary-50 dark:border-primary-400 dark:text-primary-300 dark:hover:bg-primary-900/30',
-                TOUCH_TARGET_RESPONSIVE,
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
-              )}
+              icon={<FolderPlus size={16} aria-hidden />}
+              className="ml-auto min-w-0 max-w-full gap-1.5 whitespace-nowrap px-3 font-semibold"
             >
-              <FolderPlus size={16} aria-hidden className="shrink-0" />
               {/* «Aggiungi» on a phone, as the packs' cards say it, the whole words from `sm` (at 320 px they were cut);
                   the name, the button's label, is whole on every width. */}
               <span className="truncate sm:hidden">Aggiungi</span>
               <span className="hidden truncate sm:inline">Aggiungi ai miei dossier</span>
-            </button>
+            </Button>
           )}
         </div>
       </div>

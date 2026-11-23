@@ -25,20 +25,28 @@ interface VersionStatusChipProps {
  */
 export function VersionStatusChip({ chip, onClick }: VersionStatusChipProps) {
     return (
+        // bare-button: the text's status in words beside it, no padding (not a pill, R3), coloured by its tone.
         <button
             type="button"
             onClick={onClick}
             title={chip.title}
-            aria-haspopup="dialog"
+            // The words in full for a screen reader, whichever form is drawn.
+            aria-label={chip.short ? chip.label : undefined}
             className={cn(
-                'inline-flex min-h-[44px] items-center gap-1 rounded-md text-left text-sm transition-colors md:min-h-0 md:gap-1.5',
-                'underline-offset-4 hover:underline',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                // The tabs' ground under the pointer (LC72), on the words alone: no padding, so not a pill (R3).
+                'vlx-hover-tile inline-flex min-h-[44px] items-center gap-1 rounded-md text-left text-sm md:min-h-0 md:gap-1.5',
+                'focus-visible:outline-none ',
                 TONE[chip.tone],
             )}
         >
             <Clock size={14} aria-hidden="true" className="shrink-0" />
-            {chip.label}
+            {/* On a phone the day in figures: the status and the article selector keep one line at 390 px (LC70). */}
+            {chip.short ? (
+                <>
+                    <span className="md:hidden">{chip.short}</span>
+                    <span className="hidden md:inline">{chip.label}</span>
+                </>
+            ) : chip.label}
         </button>
     );
 }

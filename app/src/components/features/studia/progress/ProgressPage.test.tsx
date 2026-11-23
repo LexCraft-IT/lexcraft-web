@@ -11,7 +11,10 @@ const desktop = vi.hoisted(() => ({ value: true }));
 vi.mock('../../../../hooks/useIsDesktop', () => ({ useIsDesktop: () => desktop.value }));
 
 import { studiaService } from '../../../../services/studiaService';
+import { appStore } from '../../../../store/useAppStore';
+import { CARD_GRID_COLUMNS } from '../../../layout/frame';
 import { ProgressPage } from './ProgressPage';
+import { SUBJECT_CARD_HEIGHT } from './SubjectProgress';
 import { xpFields } from '../__fixtures__/xp';
 
 const progress = vi.mocked(studiaService.progress);
@@ -38,7 +41,7 @@ function answer(over: { reviews?: number; newcomer?: boolean; stati?: Progressi[
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={['/studia/progressi']}>
+    <MemoryRouter initialEntries={['/learn/progressi']}>
       <ProgressPage />
     </MemoryRouter>,
   );
@@ -84,16 +87,36 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Il tuo andamento', 'Le schede per stato', 'I prossimi 14 giorni', 'Per materia']);
   });
 
-  it('uses the frame\'s full width (G6): the calendar across it, the states and the coming days side by side, the subjects in two columns', async () => {
-    progress.mockResolvedValue(answer());
-    renderPage();
+  /** The page's columns: the trend across the frame, the states and the coming days side by side, the subjects a grid. */
+  async function expectColumns() {
     await screen.findByRole('region', { name: 'Riepilogo' });
     const block = (name: string) => screen.getByRole('region', { name });
     const pair = block('Le schede per stato').parentElement!;
     expect(pair).toBe(block('I prossimi 14 giorni').parentElement);
     expect(pair).toHaveClass('grid', 'lg:grid-cols-2');
     expect(block('Il tuo andamento').parentElement).not.toBe(pair);
-    expect(within(block('Per materia')).getByRole('list')).toHaveClass('lg:grid-cols-2');
+    // As many subjects a row as cards of 20rem fit (U1), never a count by breakpoint.
+    const subjects = within(block('Per materia')).getByRole('list');
+    expect(subjects).toHaveClass('grid', CARD_GRID_COLUMNS);
+    expect(subjects.className).not.toMatch(/\bgrid-cols-\d/);
+  }
+
+  it('uses the frame\'s full width (G6): the trend across it, the states and the coming days side by side, the subjects a grid of cards of at least 20rem (U1)', async () => {
+    progress.mockResolvedValue(answer());
+    renderPage();
+    await expectColumns();
+  });
+
+  it('keeps the same columns in full screen, which widens the frame instead of narrowing it (U1)', async () => {
+    const before = appStore.getState().settings;
+    appStore.setState({ settings: { ...before, focusMode: true } });
+    try {
+      progress.mockResolvedValue(answer());
+      renderPage();
+      await expectColumns();
+    } finally {
+      appStore.setState({ settings: before });
+    }
   });
 
   it('opens the trend on 30 days on a computer, on 7 on a phone (G7, Bill)', async () => {
@@ -121,6 +144,34 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     expect(screen.getAllByText('Nessuna scheda')).toHaveLength(5);
   });
 
+  // LC112 (the consultant on #619: 1352 px of placeholders against 1086 of content). jsdom draws nothing: what is checked
+  // here is that each placeholder and its content take their height from one place; the pixels are measured in a
+  // browser (the PR says how much).
+  it('holds the content\'s shape while the first read travels, so the page does not shrink as it comes', async () => {
+    let settle: (value: Progressi) => void = () => {};
+    progress.mockImplementation(() => new Promise((resolve) => (settle = resolve)));
+    renderPage();
+    const subjects = screen.getByRole('region', { name: 'Per materia' });
+    const held = subjects.querySelectorAll(`.${CSS.escape(SUBJECT_CARD_HEIGHT)}`);
+    expect(held).toHaveLength(5);
+    // The summary's placeholder has its two rows: the streak and the goal, and the level under them.
+    const summary = screen.getByRole('region', { name: 'Riepilogo' });
+    expect(summary.querySelector('.grid.gap-6 > .flex')?.children).toHaveLength(2);
+    // The trend's place: the header and a drawing of 190 px (230 on a wide card).
+    const trendPlace = screen.getByRole('region', { name: 'Il tuo andamento' }).querySelector('.h-\\[190px\\]');
+    expect(trendPlace).not.toBeNull();
+    settle(answer());
+    const cards = await within(subjects).findAllByRole('button');
+    for (const card of cards) expect(card).toHaveClass(SUBJECT_CARD_HEIGHT);
+  });
+
+  it('draws a newcomer\'s sentence in the chart\'s place, at its placeholder\'s height', async () => {
+    progress.mockResolvedValue(answer({ newcomer: true }));
+    renderPage();
+    const sentence = await screen.findByText('Il primo giorno comincia oggi: qui si disegnano i ripassi di ogni giorno.');
+    expect(sentence.parentElement).toHaveClass('h-[190px]', '@min-[520px]:h-[230px]');
+  });
+
   it('greets nobody as new who has a record: back after more than 26 weeks', async () => {
     progress.mockResolvedValue({ ...answer({ newcomer: true }), serie: { ...answer({ newcomer: true }).serie, record: 12 } });
     renderPage();
@@ -136,11 +187,11 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     renderPage();
     await screen.findByRole('group', { name: /: 14 ripassi in tutto;/ });
     const user = userEvent.setup();
-    const chips = screen.getByRole('group', { name: 'Materia' });
-    await user.click(within(chips).getByRole('button', { name: 'Diritto penale' }));
+    const chips = screen.getByRole('radiogroup', { name: 'Materia' });
+    await user.click(within(chips).getByRole('radio', { name: 'Diritto penale' }));
     await screen.findByRole('group', { name: /: 3 ripassi in tutto;/ });
     // To another subject: its places, not the last subject's numbers.
-    await user.click(within(chips).getByRole('button', { name: 'Diritto civile' }));
+    await user.click(within(chips).getByRole('radio', { name: 'Diritto civile' }));
     expect(screen.queryByRole('group', { name: /^Ripassi al giorno/ })).toBeNull();
     expect(screen.queryByRole('group', { name: /Schede da ripassare/ })).toBeNull();
     settle(answer({ reviews: 7 }));
@@ -148,11 +199,11 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     // A read again of what is on screen (a subject's read failed, «Riprova», then «Tutte le materie» while the day's
     // read travels): the day's last answer stays in the subject's blocks, dimmed.
     progress.mockImplementation((materia?: Materia) => (materia ? Promise.reject({ status: 503 }) : Promise.resolve(answer())));
-    await user.click(within(chips).getByRole('button', { name: 'Diritto penale' }));
+    await user.click(within(chips).getByRole('radio', { name: 'Diritto penale' }));
     const retry = await screen.findByRole('button', { name: 'Riprova' });
     progress.mockImplementation(() => new Promise(() => {}));
     await user.click(retry);
-    await user.click(within(chips).getByRole('button', { name: 'Tutte le materie' }));
+    await user.click(within(chips).getByRole('radio', { name: 'Tutte le materie' }));
     for (const name of ['Il tuo andamento', 'Le schede per stato', 'I prossimi 14 giorni']) {
       const block = screen.getByRole('region', { name });
       expect(block).toHaveAttribute('aria-busy', 'true');
@@ -173,6 +224,11 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     expect(document.querySelectorAll('.motion-safe\\:animate-pulse').length).toBeGreaterThan(4);
     // The trend's place holds the header's and the drawing's heights.
     expect(screen.getByRole('region', { name: 'Il tuo andamento' }).querySelector('.h-\\[190px\\]')).not.toBeNull();
+    // The five subjects' places, in the grid the cards come in (U1): the block's body, under its heading.
+    const places = screen.getByRole('region', { name: 'Per materia' }).querySelector(':scope > div > div[aria-hidden]')!;
+    expect(places.children).toHaveLength(5);
+    expect(places).toHaveClass('grid', CARD_GRID_COLUMNS);
+    expect(places.className).not.toMatch(/\bgrid-cols-\d/);
   });
 
   it('says a failed read with «Riprova», no alert, and reads again', async () => {
@@ -215,7 +271,7 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     renderPage();
     await screen.findByRole('group', { name: /: 14 ripassi in tutto;/ });
     const user = userEvent.setup();
-    await user.click(within(screen.getByRole('group', { name: 'Materia' })).getByRole('button', { name: 'Diritto penale' }));
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Materia' })).getByRole('radio', { name: 'Diritto penale' }));
     expect(progress).toHaveBeenLastCalledWith('DIRITTO_PENALE');
     expect(await screen.findByRole('group', { name: /: 3 ripassi in tutto;/ })).toBeInTheDocument();
     expect(screen.getByText('Andamento, schede per stato e prossimi giorni: solo Diritto penale.')).toBeInTheDocument();
@@ -238,7 +294,7 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     await screen.findByRole('group', { name: /: 14 ripassi in tutto;/ });
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: '6 mesi' }));
-    await user.click(within(screen.getByRole('group', { name: 'Materia' })).getByRole('button', { name: 'Diritto penale' }));
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Materia' })).getByRole('radio', { name: 'Diritto penale' }));
     expect(await screen.findByRole('group', { name: /^Ripassi a settimana negli ultimi 6 mesi: 3 ripassi in tutto;/ })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '6 mesi' })).toHaveAttribute('aria-selected', 'true');
   });
@@ -249,7 +305,7 @@ describe('ProgressPage (Gymnasium spec §5.3)', () => {
     renderPage();
     await screen.findByRole('region', { name: 'Riepilogo' });
     expect(progress).toHaveBeenCalledWith('DIRITTO_CIVILE');
-    expect(within(screen.getByRole('group', { name: 'Materia' })).getByRole('button', { name: 'Diritto civile' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(screen.getByRole('radiogroup', { name: 'Materia' })).getByRole('radio', { name: 'Diritto civile' })).toHaveAttribute('aria-checked', 'true');
   });
 
   describe('the worst case (break-ui): what real data can do to the page', () => {

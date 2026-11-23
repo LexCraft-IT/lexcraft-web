@@ -19,7 +19,7 @@ import { LEGAL_IT_PRIVACY } from '../legalItClients';
 
 const URL_ = 'https://visualex.example:10000/mcp';
 const SCOPES = [
-  { scope: 'dossier:read', label: 'Leggere i tuoi dossier' },
+  { scope: 'dossier:read', label: 'Leggere le tue pratiche' },
   { scope: 'content:delete', label: 'Eliminare dossier, voci e schede' },
 ];
 const writeText = vi.fn();
@@ -39,7 +39,7 @@ afterEach(() => {
 describe('ConnectAiAppPage', () => {
   it("shows the server's MCP address and copies it exactly", async () => {
     render(<ConnectAiAppPage />);
-    const address = await screen.findByRole('region', { name: /l’indirizzo di visualex/i });
+    const address = await screen.findByRole('region', { name: /l’indirizzo di lexcraft/i });
     expect(within(address).getByText(URL_)).toBeInTheDocument();
     fireEvent.click(within(address).getByRole('button', { name: /copia l’indirizzo del server mcp/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(URL_));
@@ -79,7 +79,7 @@ describe('ConnectAiAppPage', () => {
   it("explains what a connected app can do, the server's own scope wording, and the two confirmations for deleting", async () => {
     render(<ConnectAiAppPage />);
     const canDo = await screen.findByRole('region', { name: /cosa può fare/i });
-    expect(within(canDo).getByText('Leggere i tuoi dossier')).toBeInTheDocument();
+    expect(within(canDo).getByText('Leggere le tue pratiche')).toBeInTheDocument();
     expect(within(canDo).getByText('Eliminare dossier, voci e schede')).toBeInTheDocument();
     expect(within(canDo).getByText(/due conferme/i)).toBeInTheDocument();
     expect(within(canDo).getByText(/cestino per 30 giorni/i)).toBeInTheDocument();
@@ -88,7 +88,7 @@ describe('ConnectAiAppPage', () => {
   it('carries the safety note: what a connected app reads, no personal data of clients, only trusted apps', async () => {
     render(<ConnectAiAppPage />);
     const notice = await screen.findByRole('region', { name: 'Dati personali e app AI' });
-    expect(within(notice).getByText(/legge i nomi dei tuoi dossier, i titoli e i riferimenti delle voci/i)).toBeInTheDocument();
+    expect(within(notice).getByText(/legge i nomi delle tue pratiche, i titoli e i riferimenti delle voci, le tue note, il testo degli atti delle tue pratiche, le tue schede e i tuoi percorsi di studio/i)).toBeInTheDocument();
     expect(within(notice).getByText(/non scrivere lì dati personali dei clienti, oppure collega solo app AI di cui ti fidi/i)).toBeInTheDocument();
     expect(within(notice).getByText(/agisce con il tuo account, nei limiti dei permessi/i)).toBeInTheDocument();
   });
@@ -116,7 +116,7 @@ describe('ConnectAiAppPage', () => {
     expect(await screen.findByText(/non è attivo su questo server/i)).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: /come collegare la tua app/i })).toBeNull();
     // mcp-legal-it needs no VisuaLex server, so its commands stay: the VisuaLex part has none.
-    const visualex = screen.getByRole('region', { name: 'VisuaLex' });
+    const visualex = screen.getByRole('region', { name: 'LexCraft' });
     expect(within(visualex).queryByRole('button', { name: /^copia/i })).toBeNull();
     expect(within(screen.getByRole('region', { name: 'mcp-legal-it' })).getAllByRole('button', { name: /^copia/i }).length).toBeGreaterThan(0);
   });
@@ -133,7 +133,7 @@ describe('ConnectAiAppPage', () => {
     writeText.mockRejectedValue(new Error('denied'));
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     render(<ConnectAiAppPage />);
-    const address = await screen.findByRole('region', { name: /l’indirizzo di visualex/i });
+    const address = await screen.findByRole('region', { name: /l’indirizzo di lexcraft/i });
     fireEvent.click(within(address).getByRole('button', { name: /copia l’indirizzo/i }));
     expect(await within(address).findByText(/copialo a mano/i)).toBeInTheDocument();
   });
@@ -159,12 +159,12 @@ describe('ConnectAiAppPage — mcp-legal-it', () => {
     expect(within(parts).getByText(/sono due cose diverse/i)).toBeInTheDocument();
     const links = within(parts).getAllByRole('link');
     expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-      ['VisuaLexOnline, con il tuo account', '#visualex'],
+      ['LexCraftOnline, con il tuo account', '#visualex'],
       ['mcp-legal-itSul tuo computer, senza account', '#mcp-legal-it'],
     ]);
-    expect(screen.getByRole('heading', { level: 2, name: 'VisuaLex' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'LexCraft' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: 'mcp-legal-it' })).toBeInTheDocument();
-    expect(document.getElementById('visualex')).toBe(screen.getByRole('region', { name: 'VisuaLex' }));
+    expect(document.getElementById('visualex')).toBe(screen.getByRole('region', { name: 'LexCraft' }));
     expect(document.getElementById('mcp-legal-it')).toBe(screen.getByRole('region', { name: 'mcp-legal-it' }));
   });
 

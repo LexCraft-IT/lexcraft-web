@@ -12,8 +12,11 @@ export type CloseReason = 'timeout' | 'dismiss' | 'undo' | 'evicted' | 'external
 
 /** At most this many on each edge: a fourth closes the oldest (K1a). */
 export const STACK_MAX = 3;
-/** «Annulla»'s time (K1a: it stays 5 seconds). */
-export const UNDO_MS = 5000;
+/**
+ * «Annulla»'s time, and the least any notification with «Annulla» stays (LC85, the consultant and Papiniano: often it is
+ * the only way back). Held while the pointer is on it or the focus in it (`countdown.ts`). Plain ones may be shorter.
+ */
+export const UNDO_MS = 10000;
 /** How long «Ripristinato» stays after «Annulla». */
 export const RESTORED_MS = 1500;
 
@@ -68,9 +71,11 @@ interface NotificationsState {
   announced: { polite: Announcement | null; assertive: Announcement | null };
   /** The stacks on screen (`NotificationHost`): with none, a notification closes without an exit to wait for. */
   hosts: number;
+  /** The id of the undo held for the shortcut alone (`offerShortcutUndo`), or null. */
+  shortcutUndo: number | null;
 }
 
-export const notificationStore = create<NotificationsState>()(() => ({ entries: [], announced: { polite: null, assertive: null }, hosts: 0 }));
+export const notificationStore = create<NotificationsState>()(() => ({ entries: [], announced: { polite: null, assertive: null }, hosts: 0, shortcutUndo: null }));
 
 const handlers = new Map<number, Handlers>();
 /**
@@ -122,17 +127,19 @@ export function holdNotification(id: number, reason: HoldReason, on: boolean) {
 export function notify(input: NotificationInput): number {
   const id = nextId++;
   const position = input.position ?? 'bottom';
+  // An «Annulla» never shorter than `UNDO_MS`, whatever its caller asked (one that stays until closed stays so).
+  const duration = input.onUndo && input.duration > 0 ? Math.max(input.duration, UNDO_MS) : input.duration;
   const entry: NotificationEntry = {
     id,
     type: input.type,
     message: input.message,
     position,
-    duration: input.duration,
+    duration,
     undoable: Boolean(input.onUndo),
     action: input.action,
     ariaLive: input.ariaLive,
     closing: null,
-    clock: { remaining: input.duration, held: false },
+    clock: { remaining: duration, held: false },
   };
   const own: Handlers = { countdown: null, onUndo: input.onUndo, onClose: input.onClose };
   handlers.set(id, own);
@@ -150,36 +157,38 @@ export function notify(input: NotificationInput): number {
     announced: politeness === 'off' ? s.announced : { ...s.announced, [politeness]: { id, message: input.message } },
   }));
 
-  if (input.duration > 0) {
+  if (duration > 0) {
     own.countdown = startCountdown(
-      input.duration,
+      duration,
       () => closeNotification(id, 'timeout'),
       () => {
         const c = own.countdown;
         if (c) patch(id, { clock: { remaining: c.remaining(), held: c.held() } });
       },
     );
-    if (own.countdown.held()) patch(id, { clock: { remaining: input.duration, held: true } });
+    if (own.countdown.held()) patch(id, { clock: { remaining: duration, held: true } });
   }
   return id;
 }
 
 /**
- * `entry` drawn where `after` is (just after it in the list, which the stack shows newest first), or where `after`
- * stood if it is gone already (`undoneSlots`); else at the end, the newest.
+ * `entry` drawn where `after` is: just before it in the list, which the stack shows newest first, so it takes its slot
+ * and nothing moves once `after` has gone (LC85, Papiniano: «Ripristinato» was drawn over it, then dropped 63 px); or
+ * where `after` stood if it is gone already (`undoneSlots`); else at the end, the newest.
  */
 function placeAfter(entries: NotificationEntry[], entry: NotificationEntry, after: number | undefined): NotificationEntry[] {
   if (after === undefined) return [...entries, entry];
-  let at = entries.findIndex((e) => e.id === after);
-  if (at < 0 && undoneSlots.has(after)) {
-    const before = undoneSlots.get(after);
-    at = before === null ? -1 : entries.findIndex((e) => e.id === before);
-    if (before !== null && at < 0) return [...entries, entry];
-  } else if (at < 0) {
-    return [...entries, entry];
+  const at = entries.findIndex((e) => e.id === after);
+  if (at >= 0) {
+    undoneSlots.delete(after);
+    return [...entries.slice(0, at), entry, ...entries.slice(at)];
   }
+  if (!undoneSlots.has(after)) return [...entries, entry];
+  const before = undoneSlots.get(after);
   undoneSlots.delete(after);
-  return [...entries.slice(0, at + 1), entry, ...entries.slice(at + 1)];
+  const slot = before === null ? -1 : entries.findIndex((e) => e.id === before);
+  if (before !== null && slot < 0) return [...entries, entry];
+  return [...entries.slice(0, slot + 1), entry, ...entries.slice(slot + 1)];
 }
 
 /** A stack on screen counts itself while it is mounted (`NotificationHost`). */
@@ -198,7 +207,9 @@ export function resetNotifications() {
   handlers.forEach((h) => h.countdown?.stop());
   handlers.clear();
   undoneSlots.clear();
-  notificationStore.setState({ entries: [], announced: { polite: null, assertive: null } });
+  // Forgotten, not carried out: the logout carries it out first (`settleShortcutUndo`), while the token is there.
+  shortcutHeld = null;
+  notificationStore.setState({ entries: [], announced: { polite: null, assertive: null }, shortcutUndo: null });
   // Told last, the list already empty: what they held ends (an «Annulla» resolves as not standing, its undo not run).
   told.forEach((h) => h.onClose?.('dropped'));
 }
@@ -211,4 +222,66 @@ export function latestUndoable(entries = notificationStore.getState().entries): 
 /** Says `message` in the live region, as a notification arriving would (the shortcut's «Annullato: …»). */
 export function announce(message: string, politeness: 'polite' | 'assertive' = 'polite') {
   notificationStore.setState((s) => ({ announced: { ...s.announced, [politeness]: { id: nextId++, message } } }));
+}
+
+/**
+ * An undo with no notification (A4, the owner's correction of 5 November 2026: a gesture on a highlight says nothing,
+ * and Ctrl+Z — ⌘Z on a Mac — undoes it, with no time limit): one at a time, the last gesture's. The next one takes its
+ * place and settles it — what it held is carried out (a highlight's removals sent). The shortcut runs it while it is
+ * newer than the newest «Annulla» on screen and `ready` says it can be undone (its text on screen).
+ */
+export interface ShortcutUndoInput {
+  /** What the gesture did: «Annullato: <message>» is said once it is undone. */
+  message: string;
+  /** Whether it can be undone now; meanwhile the key goes by. */
+  ready?: () => boolean;
+  /** False when there was nothing left to take back (a creation that failed): the key goes on, to an «Annulla». */
+  undo: () => boolean | void;
+  /** Its place taken by the next (`asThePageGoes` false), or the account leaving (true): what it held is carried out. */
+  settle?: (asThePageGoes: boolean) => void;
+}
+
+let shortcutHeld: (ShortcutUndoInput & { id: number }) | null = null;
+
+/** Holds `input` for the shortcut, in the place of the one held before, which is settled; returns its id. */
+export function offerShortcutUndo(input: ShortcutUndoInput): number {
+  const before = shortcutHeld;
+  // From the notifications' own count: the shortcut tells which of the two is newer by it.
+  const id = nextId++;
+  shortcutHeld = { ...input, id };
+  notificationStore.setState({ shortcutUndo: id });
+  before?.settle?.(false);
+  return id;
+}
+
+/** Takes it back without undoing or settling it (what it held was carried out another way: the page hidden). */
+export function withdrawShortcutUndo(id: number) {
+  if (shortcutHeld?.id !== id) return;
+  shortcutHeld = null;
+  notificationStore.setState({ shortcutUndo: null });
+}
+
+/** The account leaves: the undo held is carried out now, as the page goes, while the session's token is still there. */
+export function settleShortcutUndo() {
+  const held = shortcutHeld;
+  if (!held) return;
+  withdrawShortcutUndo(held.id);
+  held.settle?.(true);
+}
+
+/** Whether the undo held for the shortcut can be undone now (its text on screen). */
+export function shortcutUndoReady(): boolean {
+  return shortcutHeld !== null && (shortcutHeld.ready?.() ?? true);
+}
+
+/**
+ * Ctrl+Z (⌘Z) on the undo held for the shortcut, when it is newer than the notification `than` names (the newest
+ * «Annulla» on screen) and ready: undone, and what it undid returned; else null — also when it found nothing to take
+ * back, which leaves it gone and the key to the «Annulla».
+ */
+export function runShortcutUndo(than?: number): string | null {
+  const held = shortcutHeld;
+  if (!held || (than !== undefined && held.id < than) || !shortcutUndoReady()) return null;
+  withdrawShortcutUndo(held.id);
+  return held.undo() === false ? null : held.message;
 }

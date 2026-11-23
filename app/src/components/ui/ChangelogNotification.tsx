@@ -1,13 +1,15 @@
-import { useRef, type FocusEvent } from 'react';
+import { useRef, type CSSProperties, type FocusEvent } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { Sparkles, X } from 'lucide-react';
+import { Newspaper, X } from 'lucide-react';
 import { useVersionCheck } from '../../hooks/useVersionCheck';
 import { Modal } from './Modal';
 import { cn } from '../../lib/utils';
 import { spring } from '../../lib/motion';
+import { CARD_RADIUS, CONTROL_RADIUS } from './controlStyles';
 import { ACTIVE, FOCUS_RING, TRANSITION } from '../../constants/interactions';
 import { newsSince, parseNote, type Inline, type VersionNews } from '../../content/novita/releaseNotes';
 import { focusPage } from '../../utils/focusPage';
+import { FOOT_STACK_BOTTOM, footBarStore } from './notifications/footBar';
 
 /**
  * The version's news (R1): a toast when the app is at a version this browser has not seen, and «Vedi»
@@ -19,10 +21,13 @@ import { focusPage } from '../../utils/focusPage';
  * with the focus on the body), to the page's `<main>` (`focusPage`), not the body. A screen reader hears the news from
  * a status region present from the first render (a region that arrives with its text is often not read).
  */
-export function ChangelogNotification() {
+export function ChangelogNotification({ inBar = false }: { inBar?: boolean } = {}) {
   const { currentVersion, hasNewVersion, lastSeenVersion, dismissNotification, showChangelog, setShowChangelog } =
     useVersionCheck();
   const still = useReducedMotion();
+  // A bar held at the window's foot (Work's views on a phone, «Sposta l'evidenziazione»): the news rises over it, as
+  // the notifications do (LC101; it had a place of its own and covered the views' bar).
+  const footRoom = footBarStore((s) => s.room);
   // Where the focus was before it entered the toast: «Vedi» and the X go with it.
   const returnFocusRef = useRef<HTMLElement | null>(null);
 
@@ -51,26 +56,45 @@ export function ChangelogNotification() {
         {shown && !showChangelog ? `Novità in v${currentVersion}` : ''}
       </div>
 
+      {/* LC21: from lg the news is a quiet word in the top bar, not a card floating over the page; reading it is dismissing it. */}
+      {inBar && shown && (
+        <button
+          type="button"
+          onClick={() => setShowChangelog(true)}
+          className={cn(
+            'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-slate-300 px-3 text-xs font-semibold text-slate-700',
+            'hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800',
+            TRANSITION,
+            FOCUS_RING,
+          )}
+        >
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-600 dark:bg-amber-400" />
+          Novità in v{currentVersion}
+        </button>
+      )}
+
       <AnimatePresence>
-        {shown && !showChangelog && (
+        {!inBar && shown && !showChangelog && (
           <motion.div
             initial={away}
             animate={still ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
             exit={away}
             transition={spring.snappy}
             className={cn(
-              'fixed z-[60] flex items-center gap-3 py-2 pl-4 pr-2 rounded-xl border w-max max-w-[calc(100vw-2rem)] md:max-w-md',
-              'bottom-4 left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:bottom-8 md:right-8',
+              'fixed z-[60] flex items-center gap-3 py-2 pl-4 pr-2 border w-max max-w-[calc(100vw-2rem)] md:max-w-md', CARD_RADIUS,
+              'left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0 md:right-8',
+              FOOT_STACK_BOTTOM,
               'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800',
               'text-slate-900 dark:text-slate-100 shadow-lg'
             )}
+            style={footRoom > 0 ? ({ '--foot-bar': `${footRoom}px` } as CSSProperties) : undefined}
             onFocus={rememberFocus}
           >
             <div
-              className="shrink-0 size-9 rounded-lg bg-toga-50 dark:bg-toga-900/30 flex items-center justify-center"
+              className={cn('shrink-0 size-9 bg-toga-50 dark:bg-toga-900/30 flex items-center justify-center', CONTROL_RADIUS)}
               aria-hidden="true"
             >
-              <Sparkles size={18} className="text-toga-600 dark:text-toga-300" />
+              <Newspaper size={18} className="text-toga-600 dark:text-toga-300" />
             </div>
 
             <div className="flex-1 min-w-0">
@@ -82,7 +106,7 @@ export function ChangelogNotification() {
               type="button"
               onClick={() => setShowChangelog(true)}
               className={cn(
-                'shrink-0 min-h-11 px-4 rounded-lg text-sm font-medium',
+                'shrink-0 min-h-11 px-4 text-sm font-medium', CONTROL_RADIUS,
                 'bg-toga-600 text-white hover:bg-toga-700',
                 'dark:bg-toga-400 dark:text-ink-950 dark:hover:bg-toga-300',
                 TRANSITION,
@@ -97,7 +121,7 @@ export function ChangelogNotification() {
               type="button"
               onClick={dismiss}
               className={cn(
-                'shrink-0 inline-flex size-11 items-center justify-center rounded-lg',
+                'shrink-0 inline-flex size-11 items-center justify-center', CONTROL_RADIUS,
                 'text-slate-500 hover:text-slate-800 hover:bg-slate-100',
                 'dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800',
                 TRANSITION,

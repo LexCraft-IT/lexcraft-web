@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ShieldAlert, Upload } from 'lucide-react';
 import { Button } from '../../ui/Button';
-import { Modal } from '../../ui/Modal';
+import { Expand } from '../../ui/Expand';
+import { CARD_RADIUS, CONTROL_BORDER } from '../../ui/controlStyles';
+import { cn } from '../../../lib/utils';
+import { Select } from '../../ui/Select';
+import { Input } from '../../ui/Input';
+import { Textarea } from '../../ui/Textarea';
 import { TOUCH_TARGET_RESPONSIVE } from '../../../constants/interactions';
 import type { Dossier, EnvironmentCategory, SharedEnvironmentContent } from '../../../types';
 import { sharedEnvironmentService } from '../../../services/sharedEnvironmentService';
@@ -30,16 +35,15 @@ const DESCRIPTION_MAX = 500;
 const TAGS_MAX = 10;
 const TAG_MAX = 30;
 
-const INPUT = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
-const LINK_BUTTON = `rounded px-2 text-sm font-medium text-primary-600 hover:underline dark:text-primary-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${TOUCH_TARGET_RESPONSIVE}`;
 
-// The owner's wording (14 October 2026, question 186), with his added sentence on manuals.
+// The owner's wording (14 October 2026, question 186), with his added sentence on manuals. LC60: what travels, first.
 const WARNING = [
+  'Si pubblicano le fonti della pratica, non i suoi atti né le istruzioni per Claude; delle note e delle evidenziazioni, solo quelle che spunti qui sopra.',
   'Chiunque abbia un account VisuaLex potrà leggerlo e scaricarne una copia: il titolo, la descrizione, le voci, le note e le evidenziazioni spuntate qui sopra, con il tuo nome utente.',
-  'Le note appartengono all’articolo, non al dossier: controlla anche quelle scritte per altre pratiche.',
+  'Le note appartengono all’articolo, non alla pratica: controlla anche quelle scritte per altre pratiche.',
   'Non pubblicare dati personali dei clienti o di altre persone, né fatti di una pratica che le rendano riconoscibili.',
   'Non copiare testi di manuali o commentari.',
-  'Se ritiri il dossier, chi l’ha già scaricato ne conserva la copia.',
+  'Se ritiri la pratica, chi l’ha già scaricata ne conserva la copia.',
 ];
 
 /** A text with the personal data the machine found marked, every character kept (plain text, never HTML). */
@@ -63,11 +67,37 @@ function fieldFlags(text: string): string | null {
 type Load = { status: 'loading' } | { status: 'ready'; marks: Map<string, PdfMarks>; leftOut: string | null } | { status: 'error' };
 
 /**
- * «Pubblica nel Forum» from the dossier, in one dialog (spec 2026-10-13-environments-into-forum, D3–D5): the
- * fields, the preview of exactly what becomes public, the privacy check. Also «Aggiorna la versione pubblicata»,
- * the same dialog over the copy already in the Forum.
+ * «Pubblica nel Forum» from the dossier, in the page (LC125, L-73): a space under the header (`Expand`), never over the
+ * content. The focus lands on the space, never in a field; Esc closes it, but not while the server works, and the focus
+ * goes back to the command. The form is `PublishDossierForm`; the Forum's own «Pubblica un dossier» holds it in its
+ * space (`PublishDossierPicker`, LC138).
  */
-export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublished, onAlreadyPublished }: Props) {
+export function PublishDossierDialog({ open, className, ...form }: Props & { open: boolean; className?: string }) {
+  const headingId = useId();
+  // While the server works, Esc does not close: the outcome would have nowhere to be said.
+  const [busy, setBusy] = useState(false);
+  return (
+    <Expand open={open} onClose={busy ? undefined : form.onClose} role="region" aria-labelledby={headingId} className={cn('bg-card', CARD_RADIUS, CONTROL_BORDER, className)}>
+      {/* Closed, `Expand` draws nothing: opened again, the fields start from the dossier (or the Forum's copy). */}
+      <div className="p-4 md:p-5">
+        <PublishDossierForm {...form} headingId={headingId} busy={busy} setBusy={setBusy} />
+      </div>
+    </Expand>
+  );
+}
+
+/**
+ * The publication's form (spec 2026-10-13-environments-into-forum, D3–D5): the fields, the preview of exactly what
+ * becomes public, the privacy check, and its buttons. Also «Aggiorna la versione pubblicata», the same form over the
+ * copy already in the Forum. Its holder keeps `busy`, so it can refuse to close while the server works.
+ */
+export function PublishDossierForm({ dossier, otherDossiers, onClose, onPublished, onAlreadyPublished, onFailed, headingId, busy, setBusy }: Props & {
+  headingId: string;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+  /** The server refused it: the error is in the form (the Forum's space shows it again if it was closed meanwhile). */
+  onFailed?: () => void;
+}) {
   const updating = dossier.published ?? null;
   const updatingId = updating?.sharedEnvironmentId ?? null;
   const [title, setTitle] = useState(dossier.title.slice(0, TITLE_MAX));
@@ -77,14 +107,12 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [included, setIncluded] = useState<Set<string> | null>(null);
   const [checked, setChecked] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyUnread, setCopyUnread] = useState(false);
   // An update's starting ticks are the published copy's: `undefined` while it is read, `null` when it could not be.
   const [publishedCopy, setPublishedCopy] = useState<SharedEnvironmentContent | null | undefined>(undefined);
   // Fields the user changed: the published copy's values never overwrite them.
   const touched = useRef(false);
-  const titleRef = useRef<HTMLInputElement>(null);
   // The items as the dialog opened: the dossier is read again every minute (`useDossierRefresh`), and
   // the marks are read once, not two requests per entry each time.
   const openedItems = useRef(dossier.items);
@@ -177,6 +205,7 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
         await sharedEnvironmentService.updateWithVersion(updatingId, {
           title: title.trim(), description: description.trim() || null, category, tags, content,
         });
+        setBusy(false);
         onPublished('Versione pubblicata aggiornata');
       } else {
         await sharedEnvironmentService.publish({
@@ -189,11 +218,13 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
           includeHighlights: sendable.includeHighlights,
           sourceDossierId: dossier.id,
         });
+        setBusy(false);
         onPublished('Dossier pubblicato nel Forum');
       }
     } catch (err) {
       setError(getErrorMessage(err) || 'Pubblicazione non riuscita. Riprova.');
       setBusy(false);
+      onFailed?.();
       // Already in the Forum (another tab, a double click): read the dossier again, the dialog becomes an update.
       if ((err as { status?: number } | null)?.status === 409) onAlreadyPublished();
     }
@@ -204,28 +235,14 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
   const tagsFlag = fieldFlags(tagsInput);
 
   return (
-    <Modal
-      isOpen
-      onClose={() => { if (!busy) onClose(); }}
-      title={updating ? 'Aggiorna la versione pubblicata' : 'Pubblica nel Forum'}
-      icon={<Upload size={20} />}
-      size="lg"
-      closeOnBackdrop={false}
-      initialFocusRef={titleRef}
-      footer={(
-        <>
-          <Button variant="secondary" size="sm" className={TOUCH_TARGET_RESPONSIVE} disabled={busy} onClick={onClose}>
-            Annulla
-          </Button>
-          <Button size="sm" className={TOUCH_TARGET_RESPONSIVE} disabled={!canPublish} loading={busy} onClick={() => void submit()}>
-            {updating ? 'Aggiorna' : 'Pubblica'}
-          </Button>
-        </>
-      )}
-    >
+    <div>
+      <h2 id={headingId} className="mb-4 flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-slate-50">
+        <Upload size={18} aria-hidden />
+        {updating ? 'Aggiorna la versione pubblicata' : 'Pubblica nel Forum'}
+      </h2>
       <div className="space-y-5">
         {copyUnread && (
-          <p role="alert" className="rounded-lg bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <p role="alert" className="rounded-md bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
             Non riesco a leggere la versione pubblicata: controlla titolo, descrizione, categoria, tag e quali note ed
             evidenziazioni includere prima di aggiornare.
           </p>
@@ -233,7 +250,7 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
         <div className="grid gap-3">
           <div>
             <label htmlFor="publish-title" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Titolo nel Forum</label>
-            <input id="publish-title" ref={titleRef} value={title} maxLength={TITLE_MAX} onChange={(e) => edit(setTitle)(e.target.value)} className={INPUT} aria-describedby="publish-title-help" />
+            <Input id="publish-title" value={title} maxLength={TITLE_MAX} onChange={(e) => edit(setTitle)(e.target.value)} aria-describedby="publish-title-help" />
             <p id="publish-title-help" className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               {titleError ?? 'È il nome che vedranno gli altri: non usare il nome di una pratica o di un cliente.'}
             </p>
@@ -241,19 +258,19 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
           </div>
           <div>
             <label htmlFor="publish-description" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Descrizione</label>
-            <textarea id="publish-description" value={description} maxLength={DESCRIPTION_MAX} rows={2} onChange={(e) => edit(setDescription)(e.target.value)} className={`${INPUT} resize-none`} />
+            <Textarea id="publish-description" value={description} maxLength={DESCRIPTION_MAX} rows={2} onChange={(e) => edit(setDescription)(e.target.value)} className="resize-none" />
             {descriptionFlag && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">{descriptionFlag}</p>}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label htmlFor="publish-category" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Categoria</label>
-              <select id="publish-category" value={category} onChange={(e) => edit(setCategory)(e.target.value as EnvironmentCategory)} className={`${INPUT} min-h-[44px] md:min-h-0`}>
+              <Select id="publish-category" value={category} onChange={(e) => edit(setCategory)(e.target.value as EnvironmentCategory)}>
                 {FORUM_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-              </select>
+              </Select>
             </div>
             <div>
               <label htmlFor="publish-tags" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Tag (separati da virgola)</label>
-              <input id="publish-tags" value={tagsInput} onChange={(e) => edit(setTagsInput)(e.target.value)} className={INPUT} />
+              <Input id="publish-tags" value={tagsInput} onChange={(e) => edit(setTagsInput)(e.target.value)} />
               {tagsError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{tagsError}</p>}
               {tagsFlag && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">{tagsFlag}</p>}
             </div>
@@ -275,7 +292,7 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
                 {entries.length} {entries.length === 1 ? 'voce' : 'voci'} · {notes.filter((r) => ticked.has(r.id)).length} di {notes.length} note · {highlights.filter((r) => ticked.has(r.id)).length} di {highlights.length} evidenziazioni
               </p>
               {flaggedRows > 0 && (
-                <p className="rounded-lg bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                <p className="rounded-md bg-amber-50 p-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
                   Il controllo automatico ha trovato possibili dati personali in {flaggedRows} {flaggedRows === 1 ? 'elemento spuntato' : 'elementi spuntati'}: sono evidenziati qui sotto.
                 </p>
               )}
@@ -317,22 +334,30 @@ export function PublishDossierDialog({ dossier, otherDossiers, onClose, onPublis
           )}
         </section>
 
-        <section aria-labelledby="publish-warning" className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+        <section aria-labelledby="publish-warning" className="flex items-start gap-2 rounded-[8px] bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
           <ShieldAlert size={18} className="mt-0.5 shrink-0" aria-hidden />
           <div className="space-y-1">
-            <h3 id="publish-warning" className="font-semibold">Stai per rendere pubblico questo dossier.</h3>
-            {dossier.kind !== 'studio' && <p className="font-medium">È un dossier di lavoro: controlla con attenzione titolo e note.</p>}
+            <h3 id="publish-warning" className="font-semibold">Stai per rendere pubblica questa pratica.</h3>
+            {dossier.kind !== 'studio' && <p className="font-medium">È una pratica di lavoro: controlla con attenzione titolo e note.</p>}
             {WARNING.map((line) => <p key={line}>{line}</p>)}
             <label className={`mt-2 flex items-start gap-2 font-medium ${TOUCH_TARGET_RESPONSIVE}`}>
-              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500" />
+              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600 focus-visible:outline-none " />
               Ho controllato: non contiene dati personali
             </label>
           </div>
         </section>
 
         {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        <div className="flex justify-end gap-3">
+          <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>
+            Annulla
+          </Button>
+          <Button type="button" disabled={!canPublish} loading={busy} onClick={() => void submit()}>
+            {updating ? 'Aggiorna' : 'Pubblica'}
+          </Button>
+        </div>
       </div>
-    </Modal>
+    </div>
   );
 }
 
@@ -349,21 +374,21 @@ function RowGroup({ heading, hint, rows, ticked, onToggle, onAll }: {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{heading}</h4>
-        <div className="flex gap-1">
-          <button type="button" className={LINK_BUTTON} onClick={() => onAll(true)}>Tutte</button>
-          <button type="button" className={LINK_BUTTON} onClick={() => onAll(false)}>Nessuna</button>
+        <div className="flex gap-4">
+          <Button type="button" variant="link" onClick={() => onAll(true)}>Tutte</Button>
+          <Button type="button" variant="link" onClick={() => onAll(false)}>Nessuna</Button>
         </div>
       </div>
       {hint && <p className="text-xs text-slate-500 dark:text-slate-400">{hint}</p>}
       <ul className="mt-1 space-y-2">
         {rows.map((row) => (
           <li key={row.id}>
-            <label className={`flex items-start gap-2 rounded-lg border border-slate-200 p-2 text-sm dark:border-slate-700 ${TOUCH_TARGET_RESPONSIVE}`}>
+            <label className={`flex items-start gap-2 rounded-md border border-slate-200 p-2 text-sm dark:border-slate-700 ${TOUCH_TARGET_RESPONSIVE}`}>
               <input
                 type="checkbox"
                 checked={ticked.has(row.id)}
                 onChange={(e) => onToggle(row, e.target.checked)}
-                className="mt-0.5 h-4 w-4 shrink-0 accent-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                className="mt-0.5 h-4 w-4 shrink-0 accent-primary-600 focus-visible:outline-none "
               />
               <span className="min-w-0 space-y-0.5">
                 <span className="block text-xs text-slate-500 dark:text-slate-400">{row.label}</span>
@@ -373,7 +398,7 @@ function RowGroup({ heading, hint, rows, ticked, onToggle, onAll }: {
                 {row.text && <span className="block whitespace-pre-wrap break-words text-slate-800 dark:text-slate-200"><Flagged text={row.text} /></span>}
                 {row.overlap.length > 0 && (
                   <span className="block text-xs font-medium text-amber-700 dark:text-amber-300">
-                    Anche nel dossier di lavoro {row.overlap.map((n) => `«${n}»`).join(', ')}
+                    Anche nella pratica di lavoro {row.overlap.map((n) => `«${n}»`).join(', ')}
                   </span>
                 )}
               </span>

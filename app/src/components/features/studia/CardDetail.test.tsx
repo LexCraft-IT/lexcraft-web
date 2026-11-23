@@ -40,6 +40,16 @@ beforeEach(() => {
   withdraw.mockReset();
 });
 
+describe('CardDetail, «Elimina» asks nothing (LC89)', () => {
+  it('deletes at once: the notification offers «Annulla»', () => {
+    const onDelete = vi.fn();
+    render(<CardDetail card={card('BOZZA_PERSONALE')} onEdit={vi.fn()} onDelete={onDelete} onOpenAnchor={vi.fn()} onChanged={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Elimina' }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+});
+
 describe('CardDetail, the actions each state allows', () => {
   it('offers a draft Modifica, Proponi alla comunità and Elimina, and not Ritira', () => {
     renderDetail(card('BOZZA_PERSONALE'));

@@ -1,18 +1,28 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import { Check, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { CARD_RADIUS } from './controlStyles';
 import { Z_INDEX } from '../../constants/zIndex';
+import { MenuSurface } from './MenuSurface';
 
 export interface MenuItem {
   label: string;
-  /** The click that chose it: a key's (Enter, Space) has `detail` 0. */
-  onSelect: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+  /**
+   * The click that chose it (a key's, Enter or Space, has `detail` 0), and the menu's trigger, which has the focus back
+   * by then: what a confirmation the item opens grows from (LC85), the item itself being gone.
+   */
+  onSelect: (event: ReactMouseEvent<HTMLButtonElement>, trigger: HTMLButtonElement | null) => void;
   icon?: LucideIcon;
   /** The icon's own colour (a priority's flag), when it says more than the label's. */
   iconClassName?: string;
   danger?: boolean;
   disabled?: boolean;
   separatorBefore?: boolean;
+  /** A section's title drawn over this item, under its separator (a phone's «⋯» holding a setting among actions). */
+  sectionHeading?: string;
+  /** The item's name when its words alone would not say it (a choice under a `sectionHeading`). */
+  ariaLabel?: string;
   /** A line under the label (the section switcher's). */
   description?: string;
   /** Set on a choice among items (the active section): the item becomes a `menuitemradio`. */
@@ -26,6 +36,8 @@ export interface MenuItem {
 export interface MenuButtonProps {
   /** The trigger's accessible name. */
   label: string;
+  /** The trigger's tooltip, for one with no words of its own (a colour's dot). */
+  title?: string;
   items: MenuItem[];
   /** The trigger's content: an icon, or an icon and a word. */
   children: ReactNode;
@@ -48,9 +60,10 @@ export interface MenuButtonProps {
 /**
  * A button that opens a list of actions (WAI-ARIA menu button): arrows, Home
  * and End move, Escape and Tab close, focus returns to the trigger, a click
- * outside closes. Clicks never reach the card it sits in. The dossier's menus.
+ * outside closes. Clicks never reach the card it sits in. The dossier's menus. The list appears under the trigger,
+ * aligned to its edge, by a fade and a 4 px shift (`MenuSurface`, LC102).
  */
-export function MenuButton({ label, items, children, triggerClassName, align = 'right', placement = 'below', heading, menuClassName, className, onOpen }: MenuButtonProps) {
+export function MenuButton({ label, title, items, children, triggerClassName, align = 'right', placement = 'below', heading, menuClassName, className, onOpen }: MenuButtonProps) {
   // null = closed; otherwise which item takes the focus once the menu is drawn.
   const [openAt, setOpenAt] = useState<'first' | 'last' | null>(null);
   const open = openAt !== null;
@@ -61,6 +74,7 @@ export function MenuButton({ label, items, children, triggerClassName, align = '
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const menuId = useId();
 
+  const above = placement === 'auto' ? opensAbove : placement === 'above';
   const enabled = items.map((item, index) => (item.disabled ? -1 : index)).filter((index) => index >= 0);
   const focusItem = (index: number | undefined) => {
     if (index !== undefined) itemRefs.current[index]?.focus();
@@ -124,35 +138,51 @@ export function MenuButton({ label, items, children, triggerClassName, align = '
     } else if (event.key === 'Tab') close(false);
   };
 
+  // A «⋯» that opens nothing is not drawn (LC103).
+  if (items.length === 0) return null;
+
   return (
-    <div ref={wrapperRef} className={cn('relative', className)} onClick={(e) => e.stopPropagation()}>
+    <div
+      ref={wrapperRef}
+      className={cn('relative', className)}
+      onClick={(e) => e.stopPropagation()}
+      // The focus taken elsewhere (the Cronologia's «/» to its search) closes it, as Tab does (LC103). Only towards an
+      // element: a click on Safari leaves `relatedTarget` null, and the click outside has its own handler.
+      onBlur={(e) => {
+        if (open && e.relatedTarget && !e.currentTarget.contains(e.relatedTarget as Node)) setOpenAt(null);
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
         aria-label={label}
+        title={title}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         onClick={() => (open ? close(false) : openMenu('first'))}
         onKeyDown={onTriggerKey}
         className={cn(
-          'inline-flex items-center gap-2 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+          'inline-flex items-center gap-2 rounded-md transition-colors focus-visible:outline-none ',
           triggerClassName,
         )}
       >
         {children}
       </button>
+      <AnimatePresence>
       {open && (
-        <div
+        <MenuSurface
+          key="menu"
           id={menuId}
           role="menu"
           aria-label={label}
           aria-describedby={heading ? `${menuId}-heading` : undefined}
           onKeyDown={onMenuKey}
+          above={above}
           className={cn(
             Z_INDEX.dropdown,
-            'absolute w-56 rounded-lg border border-slate-200 bg-white py-1 shadow-md dark:border-slate-700 dark:bg-slate-800',
-            (placement === 'auto' ? opensAbove : placement === 'above') ? 'bottom-full mb-1' : 'mt-1',
+            CARD_RADIUS, 'absolute w-56 overflow-y-auto overscroll-contain border border-slate-200 bg-white py-1 shadow-md dark:border-slate-700 dark:bg-slate-800',
+            above ? 'bottom-full mb-1' : 'mt-1',
             align === 'right' ? 'right-0' : 'left-0',
             menuClassName,
           )}
@@ -163,18 +193,27 @@ export function MenuButton({ label, items, children, triggerClassName, align = '
             </p>
           )}
           {items.map((item, index) => (
-            <div key={item.label}>
+            // Two items may share a label (two pratiche of one title, in the Cronologia's «⋯»).
+            <div key={`${index}:${item.label}`}>
               {item.separatorBefore && <div className="my-1 border-t border-slate-200 dark:border-slate-700" aria-hidden />}
+              {/* Seen, not read: the items under it carry it in their `ariaLabel`. */}
+              {item.sectionHeading && (
+                <p aria-hidden className="px-3 pb-1 pt-1.5 text-xs font-medium leading-snug text-slate-500 dark:text-slate-400">
+                  {item.sectionHeading}
+                </p>
+              )}
               <button
                 ref={(el) => { itemRefs.current[index] = el; }}
                 type="button"
                 role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
                 aria-checked={item.checked}
+                aria-label={item.ariaLabel}
                 disabled={item.disabled}
                 tabIndex={-1}
-                onClick={(event) => { close(true); item.onSelect(event); }}
+                onClick={(event) => { close(true); item.onSelect(event, triggerRef.current); }}
                 className={cn(
                   'flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left text-sm md:min-h-0',
+                  // The app's ring drawn inside the item: outside it, the list's scroll would cut its sides off.
                   'focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40',
                   item.danger
                     ? 'text-red-600 hover:bg-red-50 focus-visible:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 dark:focus-visible:bg-red-900/20'
@@ -207,8 +246,9 @@ export function MenuButton({ label, items, children, triggerClassName, align = '
               </button>
             </div>
           ))}
-        </div>
+        </MenuSurface>
       )}
+      </AnimatePresence>
     </div>
   );
 }

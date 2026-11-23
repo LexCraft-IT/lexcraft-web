@@ -27,12 +27,12 @@ beforeEach(() => service.importStudy.mockReset().mockResolvedValue({ dossiers: [
 describe('SharedLinkImport', () => {
   it('draws nothing without ?import=', () => {
     show('');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region')).not.toBeInTheDocument();
   });
 
   it('previews an old link and recovers its dossiers, never its quick norms, then clears the address', async () => {
     const onRecovered = show(`?import=${encode(shared)}`);
-    expect(screen.getByRole('dialog', { name: 'Recupera i dossier' })).toHaveTextContent('Il link condiviso «GDPR» diventa un tuo dossier di studio.');
+    expect(screen.getByRole('region', { name: 'Recupera i dossier' })).toHaveTextContent('Il link condiviso «GDPR» diventa una tua pratica di studio.');
     fireEvent.click(screen.getByRole('button', { name: 'Recupera i dossier' }));
     await waitFor(() => expect(onRecovered).toHaveBeenCalled());
     expect(service.importStudy).toHaveBeenCalledWith(
@@ -44,13 +44,44 @@ describe('SharedLinkImport', () => {
 
   it('treats a link without a dossier that can be listed as unreadable', () => {
     show(`?import=${encode({ name: 'x', dossiers: [{}], quickNorms: [] })}`);
-    expect(screen.getByRole('dialog', { name: 'Link non valido' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Link non valido' })).toBeInTheDocument();
   });
 
   it('says when the link cannot be read', () => {
     show('?import=%%%');
-    expect(screen.getByRole('dialog', { name: 'Link non valido' })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Chiudi' }).at(-1)!);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Link non valido' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Chiudi' }));
+    expect(screen.queryByRole('region')).not.toBeInTheDocument();
+    expect(screen.getByTestId('where')).toHaveTextContent(/^$/);
+  });
+
+  // LC138 (L-73): in the page, drawn open with it; no window, no focus taken.
+  it('is a region of the page, not a dialog, takes no focus, and Esc clears the address', () => {
+    show(`?import=${encode(shared)}`);
+    const region = screen.getByRole('region', { name: 'Recupera i dossier' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(region).not.toHaveFocus();
+    fireEvent.keyDown(region, { key: 'Escape' });
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(screen.getByTestId('where')).toHaveTextContent(/^$/);
+  });
+
+  // #709's review: drawn open with the page it takes no focus, so Esc closes it from anywhere but another space.
+  it('closes on Esc with the focus outside it, unless the focus is inside another space', async () => {
+    render(
+      <MemoryRouter initialEntries={[`/forum?import=${encode(shared)}`]}>
+        <SharedLinkImport onRecovered={vi.fn()} />
+        <div role="region" aria-label="Altro spazio"><button type="button">Dentro</button></div>
+        <button type="button">Fuori</button>
+        <Where />
+      </MemoryRouter>,
+    );
+    screen.getByRole('button', { name: 'Dentro' }).focus();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Dentro' }), { key: 'Escape' });
+    expect(screen.getByRole('region', { name: 'Recupera i dossier' })).toBeInTheDocument();
+    screen.getByRole('button', { name: 'Fuori' }).focus();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Fuori' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^$/));
+    expect(screen.queryByRole('region', { name: 'Recupera i dossier' })).toBeNull();
   });
 });

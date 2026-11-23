@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { cn } from '../../../lib/utils';
@@ -10,20 +10,24 @@ import { invalidateArticleCards } from '../../../utils/articleCardsCache';
 import type { AncoraScheda, Scheda } from '../../../types/studia';
 import { showUndoToast } from '../../../hooks/useUndoableAction';
 import { trashService } from '../../../services/trashService';
+import { Button } from '../../ui/Button';
 import { Toast } from '../../ui/Toast';
 import { CardDetail, type CardDetailProps } from './CardDetail';
 import { CardFilters } from './CardFilters';
 import { CardGroups } from './CardGroups';
 import type { CardFormMode } from './CardForm';
-import { CardFormDialog } from './CardFormDialog';
-import { FOCUS_RING, INK_BUTTON, INK_TEXT, MUTED_TEXT, QUIET_BUTTON, SECONDARY_BUTTON, TILE } from './progress/tokens';
+import { CardFormPanel } from './CardFormPanel';
+import { FOCUS_RING, INK_TEXT, MUTED_TEXT, TILE } from './progress/tokens';
 import type { StudiaOutletContext } from './StudiaPage';
 import { anchorActLabel, searchParamsFromAnchor } from './studiaLabels';
 import { useCardSources } from './useCardSources';
 import { NO_FILTERS, useMyCards, type ActOption, type CardQuery, type FilterState } from './useMyCards';
+import { Illustration } from '../../ui/Illustration';
 
 const SEARCH_DEBOUNCE_MS = 300;
-const LIST_PATH = '/studia/schede';
+const LIST_PATH = '/learn/schede';
+/** The shared trash, where a deleted card is restored (`DossierPage`). */
+const TRASH_PATH = '/pratiche?trash=1';
 
 type ToastState = { message: string; type: 'success' | 'error' } | null;
 
@@ -83,7 +87,7 @@ function useCardDetail(card: Scheda): { card: Scheda; failed: boolean; retry: ()
  * them); from an article, or through Claude, in any case. While the sources have not answered, no way to begin yet:
  * it is not said twice in two ways.
  */
-function NoCardsYet({ sources, onNew }: { sources: boolean | undefined; onNew: () => void }) {
+function NoCardsYet({ sources, onNew, open, panelId }: { sources: boolean | undefined; onNew: () => void; open: boolean; panelId: string }) {
   const search = (
     // In a sentence: 44 px to a finger by its padding, taken back by its margins so no line moves (G8b), as the
     // notes' link in a dossier.
@@ -93,6 +97,8 @@ function NoCardsYet({ sources, onNew }: { sources: boolean | undefined; onNew: (
   );
   return (
     <div className={cn(TILE, 'grid justify-items-stretch gap-3 p-4 md:justify-items-start md:p-6')}>
+      {/* LC35: the empty card drawer, an engraving. */}
+      <Illustration name="learn-schede-vuote" className="h-24 w-24 justify-self-center md:justify-self-start" />
       <p className={cn('font-serif text-xl leading-snug md:text-2xl', INK_TEXT)}>Non hai ancora schede.</p>
       <p className="max-w-prose text-sm text-slate-700 dark:text-slate-200">
         {/* The citation on one line: non-breaking spaces. */}
@@ -101,9 +107,9 @@ function NoCardsYet({ sources, onNew }: { sources: boolean | undefined; onNew: (
       </p>
       {sources === undefined ? null : sources ? (
         <>
-          <button type="button" aria-haspopup="dialog" onClick={onNew} className={cn(INK_BUTTON, 'w-full px-6 md:w-auto')}>
+          <Button type="button" aria-expanded={open} aria-controls={panelId} onClick={onNew} className="w-full px-6 md:w-auto">
             Scrivi la prima scheda
-          </button>
+          </Button>
           <p className="max-w-prose text-sm text-slate-700 dark:text-slate-200">
             Puoi anche aprire un articolo dalla {search} e scegliere «+ Nuova scheda» sotto il testo, o chiedere a Claude di scriverne.
           </p>
@@ -152,7 +158,7 @@ function withActsOf(
 /**
  * «Le mie schede»: the user's cards by subject and institute, behind a sticky filter row, across the page's width as a
  * grid of tiles (G8); with a card selected, the list in one column and the card beside it (a phone shows one or the
- * other). The selection is the route: `/studia/schede/:id`. «+ Nuova scheda», beside the page's title (`StudiaPage`'s
+ * other). The selection is the route: `/learn/schede/:id`. «+ Nuova scheda», beside the page's title (`StudiaPage`'s
  * slot) and in the empty list, opens the form with no article — only while the sources answer (`useCardSources`).
  */
 export function MyCardsView() {
@@ -224,9 +230,14 @@ export function MyCardsView() {
   // undefined: still being read; null: it is not there.
   const selected = listed ?? (fetched && fetched.id === id ? fetched.card : undefined);
 
-  const [form, setForm] = useState<{ mode: CardFormMode; open: boolean } | null>(null);
-  const openNew = () => setForm({ mode: { kind: 'create' }, open: true });
-  const formOpen = form?.open === true;
+  // The form opens in the page (L-73): a new card under the title's action, an edit over the card's detail.
+  const [form, setForm] = useState<CardFormMode | null>(null);
+  const openNew = () => setForm({ kind: 'create' });
+  const closeForm = () => setForm(null);
+  const formOpen = form !== null;
+  const createPanelId = useId();
+  // An edit belongs to its card: another card opened, or none, closes it (the window it was covered the list).
+  if (form?.kind === 'edit' && form.card.id !== id) setForm(null);
   useEffect(() => {
     if (formOpen || !focusAfterCreate.current) return;
     focusAfterCreate.current = false;
@@ -242,15 +253,28 @@ export function MyCardsView() {
   };
 
   const handleSaved = (savedId: string) => {
-    if (form?.mode.kind === 'create') focusAfterCreate.current = true;
+    if (form?.kind === 'create') focusAfterCreate.current = true;
+    setForm(null);
+    setToast({ message: 'Scheda salvata', type: 'success' });
     setFetched(null);
     void refresh();
     navigate(`${LIST_PATH}/${encodeURIComponent(savedId)}`);
   };
 
-  // No confirmation: the card goes to the trash for 30 days and the notification's «Annulla» takes it back out (K1a).
+  // Asked nothing (LC89, L-80): the card goes to the trash for 30 days, the notification's «Annulla» takes it back out
+  // (K1a) and «Apri il cestino» leads to where it can be restored once the notification is gone.
   // One trash call per card: a double click on «Elimina» must not send a second one.
   const deleting = useRef<string | null>(null);
+  // Where the focus goes once the deleted card's detail is gone: the next card of the list (else the one before), or
+  // the page's title, never the body (LC89). undefined: no deletion pending.
+  const focusAfterDelete = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (id || focusAfterDelete.current === undefined) return;
+    const next = focusAfterDelete.current;
+    focusAfterDelete.current = undefined;
+    const link = next ? document.querySelector<HTMLElement>(`a[href="${LIST_PATH}/${encodeURIComponent(next)}"]`) : null;
+    (link ?? document.querySelector<HTMLElement>('h1[data-section-title]'))?.focus();
+  }, [id]);
   const deleteCard = async (card: Scheda) => {
     if (deleting.current === card.id) return;
     deleting.current = card.id;
@@ -277,6 +301,7 @@ export function MyCardsView() {
             void refresh();
           },
           message: 'Scheda nel cestino',
+          link: { label: 'Apri il cestino', onClick: () => navigate(TRASH_PATH) },
         });
       } else if (outcome.moved.includes(card.id)) {
         setToast({ message: 'Scheda nel cestino', type: 'success' });
@@ -291,6 +316,9 @@ export function MyCardsView() {
         // The router moves off the card as a transition: until it lands, the card is known to be gone,
         // so the new list that lacks it is not read as a reason to fetch it.
         setFetched({ id: card.id, card: null });
+        const order = groups.flatMap((group) => group.istituti.flatMap((institute) => institute.cards.map((c) => c.id)));
+        const at = order.indexOf(card.id);
+        focusAfterDelete.current = at < 0 ? null : (order[at + 1] ?? order[at - 1] ?? null);
         navigate(LIST_PATH);
       }
       void refresh();
@@ -318,14 +346,15 @@ export function MyCardsView() {
   // With a card open on a computer the list is a column beside it; without one the cards take the page's width.
   const beside = desktop && Boolean(id);
   const newCard = canWrite && (
-    <button ref={newCardButton} type="button" aria-haspopup="dialog" onClick={openNew} className={SECONDARY_BUTTON}>
+    <Button ref={newCardButton} type="button" variant="secondary" aria-expanded={form?.kind === 'create'} aria-controls={createPanelId} onClick={openNew}>
       + Nuova scheda
-    </button>
+    </Button>
   );
 
   return (
     <section className="space-y-4 pb-8">
       {newCard && (actionSlot ? createPortal(newCard, actionSlot) : <div className="flex justify-end">{newCard}</div>)}
+      <CardFormPanel id={createPanelId} mode={form?.kind === 'create' ? form : null} onClose={closeForm} onSaved={handleSaved} />
 
       <div className={cn(beside && 'grid grid-cols-[minmax(0,5fr)_minmax(0,7fr)] items-start gap-6')}>
         {showList && (
@@ -335,28 +364,28 @@ export function MyCardsView() {
               {error && (
                 <div role="alert" className="mb-3 flex flex-wrap items-center gap-x-3 text-sm text-red-700 dark:text-red-400">
                   {error}
-                  <button type="button" onClick={() => void refresh()} className={cn('min-h-[44px] rounded px-1 font-medium underline', FOCUS_RING)}>
+                  <Button type="button" variant="link" onClick={() => void refresh()}>
                     Riprova
-                  </button>
+                  </Button>
                 </div>
               )}
               {loading && cards.length === 0 && !error && <p className={cn('text-sm', MUTED_TEXT)}>Carico le schede…</p>}
               {!loading && !error && cards.length === 0 &&
                 (filtered ? (
-                  <div className="grid justify-items-center gap-1 rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                  <div className="grid justify-items-center gap-1 rounded-[8px] border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-700 dark:border-slate-700 dark:text-slate-200">
                     <p>Nessuna scheda con questi filtri.</p>
-                    <button type="button" onClick={resetFilters} className={cn(QUIET_BUTTON, 'mx-0 justify-self-center underline')}>
+                    <Button type="button" variant="link" onClick={resetFilters}>
                       Azzera i filtri
-                    </button>
+                    </Button>
                   </div>
                 ) : (
-                  <NoCardsYet sources={sources} onNew={openNew} />
+                  <NoCardsYet sources={sources} onNew={openNew} open={form?.kind === 'create'} panelId={createPanelId} />
                 ))}
               <CardGroups groups={groups} selectedId={id} folded={folded} onToggleFold={toggleFold} grid={!beside} />
               {hasMore && (
-                <button type="button" onClick={loadMore} disabled={loading} className={cn(SECONDARY_BUTTON, 'mt-4 w-full disabled:opacity-60')}>
+                <Button type="button" variant="secondary" onClick={loadMore} disabled={loading} className="mt-4 w-full">
                   Mostra altre schede
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -367,13 +396,14 @@ export function MyCardsView() {
             {/* The outline under the page's title: the card's own headings (h3, h4) sit under this, on a phone with no list
                 beside it, on a computer beside the subjects' h2. */}
             <h2 className="sr-only">La scheda scelta</h2>
+            <CardFormPanel mode={form?.kind === 'edit' ? form : null} onClose={closeForm} onSaved={handleSaved} className="mb-4" />
             {selected ? (
               <DetailOf
                 // Its confirmations and pending request belong to this card: another one starts clean.
                 key={selected.id}
                 card={selected}
                 onBack={desktop ? undefined : () => navigate(LIST_PATH)}
-                onEdit={() => setForm({ mode: { kind: 'edit', card: selected }, open: true })}
+                onEdit={() => setForm({ kind: 'edit', card: selected })}
                 onDelete={() => void deleteCard(selected)}
                 onOpenAnchor={openAnchor}
                 onChanged={handleChanged}
@@ -382,9 +412,9 @@ export function MyCardsView() {
               <div className="grid justify-items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
                 <p>{selected === null ? 'Questa scheda non c’è più.' : 'Carico la scheda…'}</p>
                 {!desktop && (
-                  <button type="button" onClick={() => navigate(LIST_PATH)} className={QUIET_BUTTON}>
+                  <Button type="button" variant="link" onClick={() => navigate(LIST_PATH)}>
                     Indietro
-                  </button>
+                  </Button>
                 )}
               </div>
             )}
@@ -392,15 +422,6 @@ export function MyCardsView() {
         )}
       </div>
 
-      {/* Kept mounted: its «Scheda salvata» toast outlives the dialog. */}
-      {form && (
-        <CardFormDialog
-          open={form.open}
-          mode={form.mode}
-          onClose={() => setForm((current) => current && { ...current, open: false })}
-          onSaved={handleSaved}
-        />
-      )}
       <div className={cn('fixed left-0 top-0', Z_INDEX.toast)}>
         <Toast message={toast?.message ?? ''} type={toast?.type ?? 'success'} isVisible={toast !== null} onClose={() => setToast(null)} />
       </div>

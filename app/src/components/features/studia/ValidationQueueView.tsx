@@ -5,7 +5,8 @@ import { cn } from '../../../lib/utils';
 import { Z_INDEX } from '../../../constants/zIndex';
 import { useIsDesktop } from '../../../hooks/useIsDesktop';
 import type { Materia, Scheda } from '../../../types/studia';
-import { FormSelect } from '../../ui/FormSelect';
+import { Button } from '../../ui/Button';
+import { Select } from '../../ui/Select';
 import { Toast } from '../../ui/Toast';
 import { ArticleReadOnly } from './ArticleReadOnly';
 import { MATERIA_LABEL, anchorLabel, cardTitle, normaFromAnchor } from './studiaLabels';
@@ -17,7 +18,7 @@ import type { StudiaOutletContext } from './StudiaPage';
 import { FOCUS_RING, INK_TEXT, MUTED_TEXT, TILE } from './progress/tokens';
 
 const STORAGE_KEY = 'visualex.studia.valida.materia';
-const MEASURE = 'max-w-[60ch]';
+const MEASURE = 'max-w-measure';
 const PART_HEADING = 'mb-1 text-sm font-semibold text-slate-700 dark:text-slate-200';
 /** A state of the queue with nothing to judge: a tile, its sentence in the reader's serif. */
 const STATE_TILE = cn(TILE, 'space-y-1 p-5 md:p-6');
@@ -163,12 +164,12 @@ export function ValidationQueueView() {
     <section className="flex min-h-0 flex-col gap-4">
       <header className="flex flex-wrap items-center justify-end gap-3">
         <div className="w-full md:w-64">
-          <FormSelect aria-label="Materia" value={materia ?? ''} onChange={(e) => chooseMateria(e.target.value)} className="min-h-[44px] rounded-xl">
+          <Select aria-label="Materia" value={materia ?? ''} onChange={(e) => chooseMateria(e.target.value)}>
             <option value="">Tutte le materie</option>
             {MATERIE.map((m) => (
               <option key={m} value={m}>{MATERIA_LABEL[m]}</option>
             ))}
-          </FormSelect>
+          </Select>
         </div>
       </header>
 
@@ -180,20 +181,23 @@ export function ValidationQueueView() {
       )}
       {status === 'forbidden' && (
         <div role="alert" className={cn(STATE_TILE, 'text-sm text-slate-700 dark:text-slate-200')}>
-          <p className={STATE_LINE}>{neverValidator ? 'Questa sezione è riservata ai validatori di VisuaLex Gymnasium' : 'Non sei più tra i validatori'}</p>
+          <p className={STATE_LINE}>{neverValidator ? 'Questa sezione è riservata ai validatori di Learn' : 'Non sei più tra i validatori'}</p>
           <p>Se pensi sia un errore, chiedilo a un amministratore.</p>
         </div>
       )}
       {status === 'error' && (
         <div role="alert" className="flex flex-wrap items-center gap-x-3 py-4 text-sm text-red-700 dark:text-red-400">
           Non riesco a leggere le schede da validare.
-          <button type="button" onClick={() => {
+          <Button
+            type="button"
+            variant="link"
+            onClick={() => {
               votedOn.current = null;
               retry();
             }}
-            className={cn('min-h-[44px] rounded px-1 font-medium underline', FOCUS_RING)}>
+          >
             Riprova
-          </button>
+          </Button>
         </div>
       )}
 
@@ -205,6 +209,7 @@ export function ValidationQueueView() {
               {!desktop && (
                 <section className="mt-5 border-t border-slate-200 pt-2 dark:border-slate-700">
                   <h3>
+                    {/* bare-button: a disclosure's heading row, the article's text under it. */}
                     <button
                       type="button"
                       aria-expanded={openFor === card.id}
@@ -222,16 +227,15 @@ export function ValidationQueueView() {
             {desktop && (
               // Scrolls on its own, and is cut to what is left under the page's heading, the area's strip, the heading with the filter and the vote bar (about 22rem);
               // below lg it pins under the phone's bar (M1).
-              <div className={cn(TILE, 'sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-200 ease-out motion-reduce:transition-none max-h-[calc(100dvh-22rem)] min-w-0 overflow-y-auto p-4')}>
+              <div className={cn(TILE, 'sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-(--dur-pop) ease-out motion-reduce:transition-none max-h-[calc(100dvh-22rem)] min-w-0 overflow-y-auto p-4')}>
                 <AnchoredArticle card={card} showToast={showToast} />
               </div>
             )}
           </div>
-          {/* Pinned to the bottom of the screen at every width, so a long card or a tall article never pushes it out of reach.
-              From md the feedback button floats over its right end: 56 px kept for it, so «Errata» stays clear (G8c). */}
+          {/* Pinned to the bottom of the screen at every width, so a long card or a tall article never pushes it out of reach. */}
           <div
             className={cn(
-              'sticky bottom-0 -mx-4 border-t border-slate-200 bg-slate-50 px-4 py-3 md:-mx-2 md:pl-2 md:pr-14 dark:border-slate-800 dark:bg-slate-950',
+              'sticky bottom-0 -mx-4 border-t border-slate-200 bg-slate-50 px-4 py-3 md:-mx-2 md:px-2 dark:border-slate-800 dark:bg-slate-950',
               Z_INDEX.sticky,
             )}
           >

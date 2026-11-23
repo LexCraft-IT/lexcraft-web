@@ -3,6 +3,9 @@ import type { Annotation } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { AttributionChip } from '../bulletin/AttributionChip';
 import { retiredSectionLabel } from '../../../utils/articleAnnotations';
+import { NoteEditBox } from './NoteEditBox';
+import { Button } from '../../ui/Button';
+import { IconButton } from '../../ui/IconButton';
 
 export interface NoteCardProps {
     note: Annotation;
@@ -27,7 +30,7 @@ export interface NoteCardProps {
 export function NoteCard({ note, isEditing, editingText, onStartEdit, onChangeEdit, onCommitEdit, onCancelEdit, onRemove, onGoTo }: NoteCardProps) {
     const retired = retiredSectionLabel(note.articleId);
     return (
-        <div className="group relative rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2.5 text-sm">
+        <div className="group relative rounded-[8px] border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2.5 text-sm">
             {retired && (
                 <div className="text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1 md:pr-6">{retired}</div>
             )}
@@ -38,24 +41,14 @@ export function NoteCard({ note, isEditing, editingText, onStartEdit, onChangeEd
             )}
 
             {isEditing ? (
-                <textarea
-                    autoFocus
-                    value={editingText}
-                    onChange={(e) => onChangeEdit(e.target.value)}
-                    onBlur={onCommitEdit}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Escape') { e.preventDefault(); onCancelEdit(); }
-                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onCommitEdit(); }
-                    }}
-                    rows={Math.max(2, editingText.split('\n').length)}
-                    className="w-full resize-none rounded-md border border-amber-500/50 bg-white dark:bg-slate-900 px-2 py-1 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
-                />
+                <NoteEditBox value={editingText} onChange={onChangeEdit} onCommit={onCommitEdit} onCancel={onCancelEdit} />
             ) : (
                 <>
+                    {/* bare-button: the note's own text, pressed to edit it in place. */}
                     <button
                         type="button"
                         onClick={onStartEdit}
-                        className="w-full text-left whitespace-pre-wrap text-slate-800 dark:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 rounded"
+                        className="w-full text-left whitespace-pre-wrap text-slate-800 dark:text-slate-200 focus:outline-none rounded-md"
                         title="Clicca per modificare"
                     >
                         {note.text}
@@ -70,23 +63,18 @@ export function NoteCard({ note, isEditing, editingText, onStartEdit, onChangeEd
 
             <div className={cn('flex items-center gap-1', onGoTo ? 'mt-1' : 'mt-1 md:mt-0')}>
                 {onGoTo && (
-                    <button
-                        type="button"
-                        onClick={onGoTo}
-                        className="inline-flex min-h-[44px] items-center gap-1 rounded px-1 text-xs font-medium text-slate-500 transition-colors hover:text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 md:min-h-0 md:py-0.5 dark:text-slate-400 dark:hover:text-primary-400"
-                    >
-                        <LocateFixed size={12} aria-hidden /> Vai al passo
-                    </button>
+                    <Button type="button" variant="link" onClick={onGoTo} icon={<LocateFixed size={12} aria-hidden />} className="gap-1">
+                        Vai al passo
+                    </Button>
                 )}
-                <button
-                    type="button"
+                <IconButton
+                    size="sm"
                     onClick={(e) => { e.stopPropagation(); onRemove(); }}
-                    className="ml-auto flex min-h-[44px] min-w-[44px] items-center justify-center rounded text-slate-400 transition-opacity hover:bg-red-50 hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 md:absolute md:right-1.5 md:top-1.5 md:ml-0 md:min-h-0 md:min-w-0 md:p-1 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 dark:hover:bg-red-900/20"
                     title="Elimina nota"
                     aria-label="Elimina nota"
-                >
-                    <Trash2 size={12} aria-hidden />
-                </button>
+                    icon={<Trash2 aria-hidden />}
+                    className="ml-auto text-slate-400 hover:bg-red-50 hover:text-red-500 md:absolute md:right-1.5 md:top-1.5 md:ml-0 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 dark:hover:bg-red-900/20"
+                />
             </div>
         </div>
     );

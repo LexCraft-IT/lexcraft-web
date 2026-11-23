@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 // ---- mocks (hoisted) ----
 const isMerltEnabledMock = vi.fn();
@@ -36,8 +36,9 @@ vi.mock('../../../pageCode', async (importOriginal) => ({
 }));
 
 import { Sidebar } from '../Sidebar';
+import { coursesSwitchStore } from '../../features/studia/corsi/coursesSwitch';
 
-function renderSidebar(path = '/merlt') {
+function renderSidebar(path = '/labs') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Sidebar
@@ -53,9 +54,11 @@ function renderSidebar(path = '/merlt') {
   );
 }
 
+// The entries' addresses: the logo's link home, over them, is not an entry.
 function navHrefs(): string[] {
   return screen
     .getAllByRole('link')
+    .filter((a) => a.getAttribute('aria-label') !== 'LexCraft')
     .map((a) => a.getAttribute('href'))
     .filter((href): href is string => href !== null);
 }
@@ -69,32 +72,60 @@ beforeEach(() => {
 describe('Sidebar — a page loaded with its route is fetched ahead (P1)', () => {
   it('as its entry is pointed at, touched or focused', () => {
     renderSidebar('/');
-    const dossier = screen.getAllByRole('link', { name: 'Dossier' })[0];
+    const dossier = screen.getAllByRole('link', { name: 'Pratiche' })[0];
     fireEvent.pointerEnter(dossier, { pointerType: 'mouse' });
-    expect(prepared.paths).toEqual(['/dossier']);
-    fireEvent.pointerDown(screen.getByRole('link', { name: 'Analizza documento' }));
-    expect(prepared.paths).toEqual(['/dossier', '/documents']);
-    fireEvent.focus(screen.getByRole('link', { name: /Ricerca/ }));
-    expect(prepared.paths).toEqual(['/dossier', '/documents', '/']);
+    expect(prepared.paths).toEqual(['/pratiche']);
+    fireEvent.pointerDown(screen.getByRole('link', { name: /^Attività/ }));
+    expect(prepared.paths).toEqual(['/pratiche', '/work/scadenziario']);
+    fireEvent.focus(screen.getByRole('link', { name: 'Ricerca' }));
+    expect(prepared.paths).toEqual(['/pratiche', '/work/scadenziario', '/']);
   });
 });
 
 // The MERL-T entries are Academia's, a section offered only in the development mode (sections spec S6, S12).
+describe('Sidebar — the phone\'s drawer (LC98)', () => {
+  it('after an entry, puts the focus on the title of the page reached, as on a computer', async () => {
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <main>
+          <Sidebar
+            theme="light"
+            toggleTheme={vi.fn()}
+            isOpen={true}
+            layout="drawer"
+            closeMobile={vi.fn()}
+            openSettings={vi.fn()}
+            openKeyboardShortcuts={vi.fn()}
+            serviceHealth={{ snapshot: { overall: 'online', services: [], checkedAt: '' }, refresh: vi.fn() }}
+          />
+          <Routes>
+            <Route path="/work/scadenziario" element={<h1 data-page-title="">Attività</h1>} />
+            {/* Another page, another element (as in the app): not the same h1 with new words. */}
+            <Route path="/pratiche" element={<section><h1 data-page-title="">Le pratiche</h1></section>} />
+          </Routes>
+        </main>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'Pratiche' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Le pratiche' })).toHaveFocus());
+  });
+});
+
 describe('Sidebar navigation (MERL-T single entry)', () => {
   it('development mode on → Academia holds "Assistente" (hub) plus "Grafo" (the deliberation surface)', () => {
-    // Slice 3 D1 had a single entry; Slice 4 Decision A (absorb) made /grafo
-    // the Q&A surface and points the sidebar at it too, the hub stays /merlt.
+    // Slice 3 D1 had a single entry; Slice 4 Decision A (absorb) made /labs/grafo
+    // the Q&A surface and points the sidebar at it too, the hub stays /labs.
     account.devMode = true;
     renderSidebar();
     const hrefs = navHrefs();
-    expect(hrefs).toEqual(['/', '/documents', '/merlt', '/grafo']);
+    expect(hrefs).toEqual(['/', '/documents', '/rassegne', '/labs', '/labs/grafo']);
     // exactly one hub entry
-    expect(hrefs.filter((h) => h.startsWith('/merlt'))).toHaveLength(1);
+    expect(hrefs.filter((h) => h === '/labs')).toHaveLength(1);
   });
 
   it('development mode off → no MERL-T entry at all, flag on or not', () => {
     renderSidebar('/');
-    expect(navHrefs()).toEqual(['/', '/documents', '/opus/oggi', '/opus/prossimi', '/opus/ingresso', '/dossier']);
+    expect(navHrefs()).toEqual(['/work/scadenziario', '/', '/pratiche', '/documents', '/work/pseudonimizzatore', '/work/grafo-pratiche']);
   });
 
   it('flag off → no MERL-T entry at all, even in the development mode', () => {
@@ -102,7 +133,29 @@ describe('Sidebar navigation (MERL-T single entry)', () => {
     isMerltEnabledMock.mockReturnValue(false);
     renderSidebar();
     const hrefs = navHrefs();
-    expect(hrefs).toEqual(['/', '/documents']);
-    expect(hrefs.some((h) => h.startsWith('/merlt'))).toBe(false);
+    expect(hrefs).toEqual(['/', '/documents', '/rassegne']);
+    expect(hrefs.some((h) => h.startsWith('/labs'))).toBe(false);
+  });
+});
+
+// «Percorsi», second in «Studia», behind the switch `lingo_courses` (courses spec §6.1, §10.10).
+describe('Sidebar — Gymnasium\'s «Percorsi»', () => {
+  afterEach(() => coursesSwitchStore.setState({ state: 'unknown' }));
+  const studia = () => navHrefs().filter((h) => h.startsWith('/learn') || h === '/pratiche');
+
+  it('is absent while the switch is off or not yet read', () => {
+    for (const state of ['unknown', 'off'] as const) {
+      coursesSwitchStore.setState({ state });
+      const { unmount } = renderSidebar('/learn/ripasso');
+      expect(studia()).toEqual(['/learn/ripasso', '/learn/progressi', '/learn/attivita/scadenziario', '/pratiche', '/learn/schede']);
+      unmount();
+    }
+  });
+
+  it('comes second, Oggi · Percorsi · Progressi · Dossier, once the switch is on', () => {
+    coursesSwitchStore.setState({ state: 'on' });
+    renderSidebar('/learn/ripasso');
+    expect(studia()).toEqual(['/learn/ripasso', '/learn/percorsi', '/learn/progressi', '/learn/attivita/scadenziario', '/pratiche', '/learn/schede']);
+    expect(screen.getByRole('link', { name: 'Percorsi' })).toBeInTheDocument();
   });
 });

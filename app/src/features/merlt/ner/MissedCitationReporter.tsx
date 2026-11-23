@@ -29,7 +29,7 @@ export interface MissedCitationReporterProps {
 /**
  * "Segnala come citazione" (Loop β #2, feedback_type=missed): a small editor
  * anchored on the selection where the user says which norm a reference the
- * detector missed actually cites. Positioned like InlineNoteComposer: the
+ * detector missed actually cites. Positioned as a virtual reference: the
  * anchor is a virtual element built from the captured rect, registered with
  * `setPositionReference` (floating-ui rejects virtual elements passed as
  * `elements.reference`) and hidden until `isPositioned` (gotcha 13); the outer
@@ -104,7 +104,7 @@ export function MissedCitationReporter({ anchorRect, selectedText, onSubmit, onC
                 type="button"
                 onClick={onClose}
                 aria-label="Chiudi"
-                className="-m-1 inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 md:min-h-0 md:min-w-0 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                className="-m-1 inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none md:min-h-0 md:min-w-0 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 <X size={12} />
               </button>

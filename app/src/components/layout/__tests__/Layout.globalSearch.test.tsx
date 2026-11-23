@@ -4,14 +4,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../Sidebar', () => ({ Sidebar: () => null }));
-vi.mock('../../ui/SettingsModal', () => ({ SettingsModal: () => null }));
-vi.mock('../../ui/FeedbackButton', () => ({ FeedbackButton: () => null }));
 vi.mock('../../ui/ChangelogNotification', () => ({ ChangelogNotification: () => null }));
 vi.mock('../../ui/Toast', () => ({ NotificationHost: () => null }));
 // The planner's host reads the tasks from the server: not under test here.
 vi.mock('../../features/planner/PlannerHost', () => ({ PlannerHost: () => null }));
 vi.mock('../../ui/SyncErrorToast', () => ({ SyncErrorToast: () => null }));
-vi.mock('../../ui/KeyboardShortcutsModal', () => ({ KeyboardShortcutsModal: () => null }));
 vi.mock('../../../hooks/useServiceHealth', () => ({ useServiceHealth: () => ({ snapshot: { overall: 'online', services: [], checkedAt: '' }, refresh: vi.fn() }) }));
 vi.mock('../../features/compare/CompareView', () => ({ CompareView: () => null }));
 vi.mock('../../../plugins/PluginSlot', () => ({ PluginSlot: () => null }));
@@ -34,8 +31,10 @@ import { Layout } from '../Layout';
 import { DecisionAddress } from '../../features/decisions/DecisionAddress';
 import { isWorkspaceCovered } from '../../../utils/findWindowControl';
 import { isTypedSearch } from '../../../hooks/useSearchActions';
+import { QuickNormsSection } from '../../features/settings/QuickNormsSection';
 
-const PALETTE_BOX = 'Atto o citazione, es. art 2043 cc';
+// The palette's box: its placeholder is shorter on a phone (jsdom's width), so its start.
+const PALETTE_BOX = /^Norma, sentenza o tema/;
 
 /** The layout over a few pages; each page says which it is, so a test sees where the reader is. */
 function at(path: string) {
@@ -44,10 +43,11 @@ function at(path: string) {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<p>Pagina di ricerca</p>} />
-          <Route path="dossier" element={<p>Pagina dossier</p>} />
+          <Route path="pratiche" element={<p>Pagina dossier</p>} />
           <Route path="history" element={<p>Pagina cronologia</p>} />
-          <Route path="studia" element={<p>Pagina studia</p>} />
+          <Route path="learn" element={<p>Pagina studia</p>} />
           <Route path="sentenze" element={<DecisionAddress />} />
+          <Route path="impostazioni" element={<QuickNormsSection />} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -90,9 +90,9 @@ afterEach(() => {
 
 describe('Layout — ⌘K opens the palette on every page', () => {
   it.each([
-    ['/dossier', 'Pagina dossier'],
+    ['/pratiche', 'Pagina dossier'],
     ['/history', 'Pagina cronologia'],
-    ['/studia', 'Pagina studia'],
+    ['/learn', 'Pagina studia'],
   ])('on %s, at once, without leaving the page', (path, page) => {
     at(path);
     expect(screen.queryByPlaceholderText(PALETTE_BOX)).toBeNull();
@@ -103,7 +103,7 @@ describe('Layout — ⌘K opens the palette on every page', () => {
 
   it('a decision opened from another page lands in the practices, on the search page', async () => {
     const user = userEvent.setup();
-    at('/dossier');
+    at('/pratiche');
     pressCmdK();
     await user.type(screen.getByPlaceholderText(PALETTE_BOX), 'Cass. civ. 10787/2024{Enter}');
     expect(openDecision).toHaveBeenCalledWith(expect.objectContaining({ corte: 'cassazione', numero: 10787, anno: 2024 }), { fromLink: true });
@@ -121,7 +121,7 @@ describe('Layout — ⌘K opens the palette on every page', () => {
 
   it('a topic searched from another page lands in the practices, on the search page', async () => {
     const user = userEvent.setup();
-    at('/studia');
+    at('/learn');
     pressCmdK();
     await user.type(screen.getByPlaceholderText(PALETTE_BOX), 'danno da vacanza rovinata');
     const line = await screen.findByText('Cerca "danno da vacanza rovinata" nelle sentenze della Cassazione');
@@ -134,7 +134,7 @@ describe('Layout — ⌘K opens the palette on every page', () => {
     const norma = { tipo_atto: 'codice civile', urn: 'urn:test' };
     resolveAct.mockResolvedValue({ norma });
     const user = userEvent.setup();
-    at('/dossier');
+    at('/pratiche');
     pressCmdK();
     await user.click(screen.getByRole('option', { name: 'Codice civile · c.c.' }));
     await user.click(screen.getByRole('button', { name: /Apri l'indice e sfoglia/ }));
@@ -142,20 +142,19 @@ describe('Layout — ⌘K opens the palette on every page', () => {
     expect(screen.getByText('Pagina di ricerca')).toBeInTheDocument();
   });
 
-  it('a quick norm used from its manager on another page lands on the search page, as a trigger checked for an annex', async () => {
+  it('a quick norm used from Impostazioni › Norme rapide lands on the search page, as a trigger checked for an annex', async () => {
     const params = { act_type: 'codice civile', act_number: '', date: '', article: '2043', version: 'vigente' as const, version_date: '' };
     appStore.setState({
       quickNorms: [{ id: 'q1', label: 'Danno ingiusto', searchParams: params, createdAt: '', usageCount: 0 }],
-      quickNormsManagerOpen: true,
       selectQuickNorm: vi.fn(),
     });
     const user = userEvent.setup();
-    at('/dossier');
+    at('/impostazioni#norme-rapide');
     await user.click(screen.getByText('Danno ingiusto'));
     expect(triggerSearch).toHaveBeenCalledWith(params);
     expect(isTypedSearch(triggerSearch.mock.calls[0][0])).toBe(false);
     expect(await screen.findByText('Pagina di ricerca')).toBeInTheDocument();
-    appStore.setState({ quickNorms: [], quickNormsManagerOpen: false, selectQuickNorm: original.selectQuickNorm });
+    appStore.setState({ quickNorms: [], selectQuickNorm: original.selectQuickNorm });
   });
 
   it('a quick norm picked in the palette runs as a typed search, and its saved params stay unmarked', async () => {
@@ -187,15 +186,30 @@ describe('Layout — ⌘K opens the palette on every page', () => {
     expect(screen.getByText('Pagina di ricerca')).toBeInTheDocument();
   });
 
-  it('covers the workspace while open, so Cmd/Ctrl+F stays the browser\'s', () => {
+  it('opens in the page, not over it: a band between the bars and the page, which it pushes down (L-75)', () => {
     at('/');
     pressCmdK();
-    expect(isWorkspaceCovered()).toBe(true);
-    const event = new KeyboardEvent('keydown', { key: 'f', metaKey: true, cancelable: true, bubbles: true });
-    act(() => {
-      window.dispatchEvent(event);
-    });
-    expect(event.defaultPrevented).toBe(false);
+    expect(isWorkspaceCovered()).toBe(false);
+    expect(document.querySelector('[data-palette-veil]')).toBeNull();
+    const band = screen.getByRole('region', { name: 'Menu di ricerca' });
+    // In <main>'s column: after the bar, before the scroller holding the page.
+    const root = band.closest('[cmdk-root]')!;
+    expect(root.parentElement).toBe(document.querySelector('main'));
+    expect(root.previousElementSibling).toBe(screen.getByTestId('search-bar'));
+    expect(root.nextElementSibling).toContainElement(screen.getByText('Pagina di ricerca'));
+    expect(band.closest('.fixed')).toBeNull();
+    // The field in the bar, in its slot, where the search page's own field was.
+    expect(screen.getByTestId('search-bar').querySelector('[data-palette-slot]')).toContainElement(screen.getByPlaceholderText(PALETTE_BOX));
+  });
+
+  it('opens nothing under a modal dialog, where the band would be unseen', () => {
+    at('/history');
+    const dialog = document.createElement('div');
+    dialog.setAttribute('aria-modal', 'true');
+    document.body.appendChild(dialog);
+    pressCmdK();
+    expect(appStore.getState().commandPaletteOpen).toBe(false);
+    dialog.remove();
   });
 });
 
@@ -203,18 +217,20 @@ describe('Layout — the search page\'s field', () => {
   it('is drawn on the search page only, above the content', () => {
     at('/');
     expect(screen.getByRole('search', { name: 'Ricerca' })).toBeInTheDocument();
-    expect(screen.getByTestId('search-bar').nextElementSibling).toContainElement(screen.getByText('Pagina di ricerca'));
+    // After the search's band (empty while closed), the page.
+    expect(screen.getByTestId('search-bar').nextElementSibling?.nextElementSibling).toContainElement(screen.getByText('Pagina di ricerca'));
   });
 
-  it('is the phone\'s bar below lg, the menu button beside the field, and ends before the Focus toggle from md', () => {
+  // From lg the bar holds the news, «Commenti» and «Tutto schermo» at its right end (LC21): the field ends before them.
+  it('is the phone\'s bar below lg, the menu button beside the field, and ends before the controls at its right', () => {
     at('/');
     const bar = screen.getByTestId('search-bar');
-    expect(bar).toHaveClass('h-[var(--search-bar-height)]', 'pl-1', 'lg:pl-8', 'md:pr-[3.25rem]', 'lg:pr-[4.5rem]');
+    expect(bar).toHaveClass('h-[var(--search-bar-height)]', 'pl-1', 'lg:pl-8', 'md:pr-[10.5rem]', 'lg:pr-[17rem]');
     expect(bar.firstElementChild).toHaveAccessibleName('Apri il menu');
-    expect(document.querySelector('main')).toHaveClass('[--search-bar-height:calc(3.5rem+env(safe-area-inset-top))]', 'lg:[--search-bar-height:4.5rem]');
+    expect(document.querySelector('main')).toHaveClass('[--search-bar-height:calc(3.5rem+env(safe-area-inset-top))]');
   });
 
-  it.each(['/dossier', '/history'])('is not drawn on %s', (path) => {
+  it.each(['/pratiche', '/history'])('is not drawn on %s', (path) => {
     at(path);
     expect(screen.queryByRole('search', { name: 'Ricerca' })).toBeNull();
   });

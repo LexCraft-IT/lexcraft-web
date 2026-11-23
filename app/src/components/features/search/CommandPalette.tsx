@@ -1,27 +1,38 @@
-import { createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useState, useSyncExternalStore, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useState, useSyncExternalStore, useCallback, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from 'react';
 import { Command, useCommandState } from 'cmdk';
-import { autoUpdate, FloatingFocusManager, FloatingPortal, offset, size, useFloating, useInteractions, useRole } from '@floating-ui/react';
-import { motion, AnimatePresence, useIsPresent, usePresence, useReducedMotion } from 'framer-motion';
-import { ChevronDown, ChevronRight, Gavel, List, Search, Settings2, SlidersHorizontal, Sparkles, Tag, X, Zap } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { motion, useReducedMotion } from 'framer-motion';
+import { BookOpen, ChevronDown, ChevronRight, Gavel, Library, List, Search, Settings2, SlidersHorizontal, Tag, X, Zap } from 'lucide-react';
 import type { SearchParams, CustomAlias, SearchFilters } from '../../../types';
 import { cn } from '../../../lib/utils';
-import { dur, ease, spring } from '../../../lib/motion';
+import { SEARCH_CLOSE, SEARCH_OPEN, dur, ease } from '../../../lib/motion';
 import { parseItalianDate } from '../../../utils/dateUtils';
 import { useAppStore } from '../../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useTour } from '../../../hooks/useTour';
 import { useIsDesktop } from '../../../hooks/useIsDesktop';
-import { ACT_TYPES_REQUIRING_DETAILS } from '../../../constants/actTypes';
+import { isNumberedActType } from '../../../utils/sources/numberedActTypes';
 import { useAliasCatalog, foldAlias } from '../../../hooks/useAliasCatalog';
-import { Z_INDEX } from '../../../constants/zIndex';
-import { FIELD_TEXT, FOCUS_RING, TOUCH_TARGET_RESPONSIVE } from '../../../constants/interactions';
+import { FOCUS_RING } from '../../../constants/interactions';
 import { activeFiltersLabel, countActiveFilters, defaultSearchFilters } from '../../../utils/searchFilters';
-import { SEARCH_FIELD_FORM_ID, returnWordsToSearchField } from '../../../utils/searchFieldControl';
+import { ISLAND_FIELD_FOCUS, ISLAND_LENS, ISLAND_PLACEHOLDER, ISLAND_SHAPE, ISLAND_SURFACE, ISLAND_TEXT, ISLAND_WORDS, SEARCH_FIELD_FORM_ID, SEARCH_ISLAND_ID, returnWordsToSearchField } from '../../../utils/searchFieldControl';
 import { citationSearchParams, useSearchQuery } from '../../../hooks/useSearchQuery';
+import { formatParsedCitation, isSearchReady, type ParsedCitation } from '../../../utils/citationParser';
 import { formatDecisionShort } from '../../../utils/decisionLinks';
 import { Button } from '../../ui/Button';
+import { IconButton } from '../../ui/IconButton';
+import { Input } from '../../ui/Input';
+import { Select } from '../../ui/Select';
 import { isTopmostDialog, openDialog } from '../../ui/dialogStack';
+import { IslandSurface } from '../../ui/IslandSurface';
+import { Expand } from '../../ui/Expand';
+import { useRassegneForTopic } from '../rassegne/useRassegneForTopic';
+import { rememberSearch } from '../rassegne/searchMemory';
+import { provenance } from '../rassegne/rassegnaFilters';
 import { filterPaletteActs, paletteActName, queryMatches, matchRanges } from './paletteActs';
+import { useOpenSettings } from '../settings/settingsRoute';
+import { focusLanding } from '../../../utils/focusPage';
+import { whenIdle } from '../../../lib/idle';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -35,6 +46,8 @@ interface CommandPaletteProps {
   /** Called once a decision or a topic was put in the practices: the host shows the search page, which
    *  alone draws them. */
   onShowSearch?: () => void;
+  /** Open the page «Rassegne» on the search just remembered (`rememberSearch`), with the passage chosen, if any, by id. */
+  onOpenRassegne?: (passo?: string) => void;
 }
 
 type PaletteStep = 'select_act' | 'input_article' | 'input_details';
@@ -44,38 +57,23 @@ const STEP_ORDER: Record<PaletteStep, number> = { select_act: 0, input_details: 
 /** How many favourites and aliases «A portata di mano» shows before the box is typed in. */
 const AT_HAND_ROWS = 6;
 
-/** The panel's height on a computer, at most (40 rem). */
-const PANEL_MAX_HEIGHT = 640;
-
 /** Case-insensitive, for the reason given on `paletteActName`: an act named
  *  by the server ("regolamento ue") must reach the same branch as the same act
  *  picked from the list ("Regolamento UE"), or the palette skips the step that
  *  collects its number and date. */
 function requiresDetails(actValue: string): boolean {
-  const wanted = (actValue || '').toLowerCase();
-  return ACT_TYPES_REQUIRING_DETAILS.some(v => v.toLowerCase() === wanted);
+  return isNumberedActType(actValue);
 }
 
 // One row of the lists: 44 px, a colour change when chosen, never a lift (UI conventions).
-const ROW = 'relative isolate flex min-h-[44px] w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-ink-800 dark:text-ink-100';
+const ROW = 'relative isolate flex min-h-[44px] w-full cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-ink-800 dark:text-ink-100';
 const ROW_ICON = 'shrink-0 text-ink-500 dark:text-ink-400';
 const SUBTLE = 'text-ink-600 dark:text-ink-400';
 // A group's heading, drawn by cmdk (`heading`), which also names the group for a screen reader.
-const GROUP_WITH_HEADING = '[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-ink-600 dark:[&_[cmdk-group-heading]]:text-ink-400';
-const COLUMN_TITLE = 'px-3 pt-3 font-serif text-base font-medium text-ink-900 dark:text-ink-50';
+const GROUP_WITH_HEADING = '[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-ink-600 dark:[&_[cmdk-group-heading]]:text-ink-400';
+// Pietra's type (LC81): a serif title at 18 px and weight 400, as its headings; a group's name 12 px, weight 600.
+const COLUMN_TITLE = 'px-3 pt-3 font-serif text-lg font-normal text-ink-900 dark:text-ink-50';
 const QUIET_LINE = 'px-3 py-2 text-sm text-ink-600 dark:text-ink-400';
-const FIELD_INPUT = cn(
-  'h-11 w-full min-w-0 rounded-lg border border-ink-200 bg-white px-3 text-ink-900 placeholder:text-ink-500',
-  FIELD_TEXT,
-  'dark:border-ink-700 dark:bg-ink-950 dark:text-ink-50 dark:placeholder:text-ink-400',
-  FOCUS_RING,
-);
-const SMALL_INPUT = cn(
-  'min-h-[44px] rounded-lg border border-ink-200 bg-white px-3 text-ink-900 md:min-h-9',
-  FIELD_TEXT,
-  'dark:border-ink-700 dark:bg-ink-950 dark:text-ink-50',
-  FOCUS_RING,
-);
 
 /**
  * The keys cmdk takes for its list wherever they are pressed inside it: Enter (it picks the chosen row
@@ -88,59 +86,35 @@ function keepKeys(event: ReactKeyboardEvent) {
   if (LIST_KEYS.has(event.key) && !(event.target as HTMLElement).hasAttribute('cmdk-input')) event.stopPropagation();
 }
 
-/** What the box holds: the chosen row's tint slides only between rows of one list, never from a row a
- *  letter typed has just filtered away. */
-const ChosenRowScope = createContext('');
+/** The island and its band, one gesture: `SEARCH_OPEN` and `SEARCH_CLOSE` for both (LC132, the frequency rule). */
+const SEARCH_TIMING = { open: SEARCH_OPEN, close: SEARCH_CLOSE };
 
 /**
- * The tint under the row the keyboard (or the pointer) has chosen. One element, carried from row to row
- * (`layoutId`), so the choice slides instead of jumping; under reduced motion it is drawn in place.
+ * The tint under the row the keyboard (or the pointer) has chosen: it is where the key is, in the same frame, with no
+ * slide (LC129: a motion on every arrow delayed the reading).
  */
-function RowHighlight({ value, still }: { value: string; still: boolean }) {
+function RowHighlight({ value }: { value: string }) {
   const chosen = useCommandState((state) => state.value?.toLowerCase() === value.toLowerCase());
-  const scope = useContext(ChosenRowScope);
   if (!chosen) return null;
-  // A tint and an edge in toga: the tint alone is too faint a mark for the row in use.
-  const tint = cn(
-    'absolute inset-0 -z-10 rounded-lg bg-ink-100 dark:bg-ink-800',
-    'before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-toga-600 dark:before:bg-toga-300',
-  );
-  return still
-    ? <span aria-hidden className={tint} />
-    : <motion.span aria-hidden layoutId={`command-palette-chosen-row:${scope}`} transition={spring.snappy} className={tint} />;
+  // A stone tile, as the sidebar's active row (LC32: no edge bar beside it, the anti-slop review).
+  return <span aria-hidden className="absolute inset-0 -z-10 rounded-md bg-ink-200 dark:bg-ink-700" />;
 }
 
 /**
- * A row of the menu (R2): while the box filters, the rows left slide to their places (`layout`) and those filtered out
- * fade away, popped out of the list (`AnimatePresence mode="popLayout"` around a list's rows) — and a row leaving is
- * `disabled` for cmdk, so Enter never picks a row no longer there. Under reduced motion nothing moves.
+ * A row of the menu (R2). While the box filters, the list changes at once: no row slides to its place, none fades in
+ * or out (LC129: they moved at every letter, while one types and reads).
  */
-function PaletteRow({ ref, value, onSelect, still, entering = false, className, children }: {
+function PaletteRow({ ref, value, onSelect, className, children }: {
   ref?: Ref<HTMLDivElement>;
   value: string;
   onSelect: () => void;
-  still: boolean;
-  /** In a list that filters: it fades in when a letter brings it back. */
-  entering?: boolean;
   className?: string;
   children: ReactNode;
 }) {
-  const present = useIsPresent();
   return (
-    // Leaving, it is not an option any more: not for Enter (`disabled`), not for a screen reader (`aria-hidden`).
-    <Command.Item asChild value={value} onSelect={onSelect} disabled={!present} aria-hidden={!present || undefined}>
-      <motion.div
-        ref={ref}
-        layout={still ? false : 'position'}
-        initial={entering && !still ? { opacity: 0 } : false}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0, transition: { duration: dur.press } }}
-        transition={{ layout: spring.snappy, opacity: { duration: dur.press } }}
-        className={cn(ROW, className)}
-      >
-        <RowHighlight value={value} still={still} />
-        {children}
-      </motion.div>
+    <Command.Item ref={ref} value={value} onSelect={onSelect} className={cn(ROW, className)}>
+      <RowHighlight value={value} />
+      {children}
     </Command.Item>
   );
 }
@@ -160,17 +134,6 @@ function Matched({ text, query }: { text: string; query: string }) {
   return <>{parts}</>;
 }
 
-/** The search field's corner radius (`rounded-xl`) and the panel's (`rounded-2xl`): the growth goes from one to the other. */
-const FIELD_RADIUS = 12;
-const PANEL_RADIUS = 16;
-/** The growth: about 280 ms opening, 200 ms closing (the brief's), on the app's curves; no bounce. */
-const GROW_S = 0.28;
-const SHRINK_S = 0.2;
-/** The groups entering: the first four, 30 ms apart, from when the panel is half grown. */
-const GROUPS_ENTERING = 4;
-const GROUP_STAGGER_MS = 30;
-const GROUPS_AT_MS = 140;
-
 /** The visual viewport's height (a phone's keyboard shortens it, `100dvh` does not on iOS); null where it is unknown. */
 const subscribeViewport = (change: () => void) => {
   window.visualViewport?.addEventListener('resize', change);
@@ -181,172 +144,45 @@ const viewportHeight = () => window.visualViewport?.height ?? null;
 const subscribeNothing = () => () => {};
 const noHeight = () => null;
 
-/**
- * The panel growing out of the search page's field (R2), inspired by Animorio's «menu dei comandi», written from
- * scratch with Web Animations and Framer Motion: the same place and width, the height uncovered from the field's down
- * to the panel's (`clip-path`, the corners from the field's to a card's), then the clip goes and the card's shadow
- * shows; the content fades in as it grows. Closing, the same way back (`usePresence`); opened again meanwhile, it grows
- * back from where the closing was. Under reduced motion it only fades.
- */
-function PanelGrowth({ still, fromHeight, className, children }: { still: boolean; fromHeight: number; className: string; children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [isPresent, safeToRemove] = usePresence();
-  // `safeToRemove` is a new function at every render: kept here, it does not start the closing again (one closing,
-  // one animation).
-  const remove = useRef(safeToRemove);
-  useEffect(() => {
-    remove.current = safeToRemove;
-  });
-  // The closing on its way (or just finished, its end held), for a new opening to take over from where it is.
-  const closing = useRef<Animation | null>(null);
-  // An opening whose growth has not started yet (a close or StrictMode's second run before its first frames): when
-  // the panel comes back it is still an opening, with its groups' entrance, though a clip is already set.
-  const opening = useRef(false);
-  // The part hidden at the bottom, as a share of the panel and a length: the panel's own height is set by floating-ui
-  // after it mounts, so it is never measured here. One template, so the two ends interpolate.
-  const clipFor = (share: number, px: number, radius: number) => `inset(0px 0px calc(${share}% - ${px}px) 0px round ${radius}px)`;
-  const asField = clipFor(100, fromHeight, FIELD_RADIUS);
-  const asPanel = clipFor(0, 0, PANEL_RADIUS);
-  const curve = `cubic-bezier(${ease.out.join(', ')})`;
-  // Web Animations with no fill: once over, nothing holds the clip (the shadow outside it shows), and a closing
-  // interrupted by a new opening starts from where it was. (A DOM without them, a test's, draws the panel at once.)
-  const canAnimate = (el: HTMLElement) => typeof el.animate === 'function';
-
-  // Growing: from the field on an opening; from where a closing was, when the panel comes back before it went.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || !isPresent) return;
-    el.style.pointerEvents = '';
-    // Coming back before it went (the layout effects run before the closing's cleanup), or before its removal once
-    // it ended: from where the closing is.
-    let left: { clipPath: string; opacity: string } | null = null;
-    if (closing.current) {
-      const now = getComputedStyle(el);
-      left = { clipPath: now.clipPath, opacity: now.opacity };
-      closing.current.onfinish = null;
-      closing.current.cancel();
-      closing.current = null;
-    }
-    if (still) {
-      el.style.clipPath = '';
-      opening.current = false;
-      const fade = canAnimate(el)
-        ? el.animate([{ opacity: left ? Number(left.opacity) : 0 }, { opacity: 1 }], { duration: dur.pop * 1000, easing: curve })
-        : null;
-      return () => fade?.cancel();
-    }
-    if (left && left.clipPath && left.clipPath !== 'none') el.style.clipPath = left.clipPath;
-    // An opening (nothing left by a closing or a growth cut short): set before the first paint, or the panel would
-    // flash open meanwhile.
-    const held = el.style.clipPath && el.style.clipPath !== 'none' ? el.style.clipPath : '';
-    const isOpening = opening.current || !held;
-    const from = held || asField;
-    if (!canAnimate(el)) {
-      el.style.clipPath = '';
-      return;
-    }
-    el.style.clipPath = from;
-    opening.current = isOpening;
-    // Started once the first frame is drawn: mounting the menu's rows is a long frame, and an animation started before
-    // it would run its time out unseen, the panel appearing whole — and so is the render that brings it back during a
-    // closing: started there, it was nine tenths over by the first frame drawn.
-    let grow: Animation | null = null;
-    let groups: Animation[] = [];
-    const start = () => {
-      // The groups come one after the other as it grows: the first four, 30 ms apart, rising 4 px — on an opening only.
-      opening.current = false;
-      groups = isOpening
-        ? [...el.querySelectorAll<HTMLElement>('[cmdk-group]')].slice(0, GROUPS_ENTERING).map((group, i) =>
-          group.animate(
-            [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
-            { duration: dur.pop * 1000, delay: GROUPS_AT_MS + i * GROUP_STAGGER_MS, easing: curve, fill: 'backwards' },
-          ))
-        : [];
-      grow = el.animate([{ clipPath: from }, { clipPath: asPanel }], { duration: GROW_S * 1000, easing: curve });
-      // Grown, the clip goes: the card's own shadow shows.
-      grow.onfinish = () => {
-        el.style.clipPath = '';
-      };
-    };
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(start);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      // Cut short (a closing, mid-growth): the closing starts from here, not from the field or the full panel.
-      if (grow?.playState === 'running') el.style.clipPath = getComputedStyle(el).clipPath;
-      if (grow) {
-        grow.onfinish = null;
-        grow.cancel();
-      }
-      groups.forEach((animation) => animation.cancel());
-    };
-    // Once per opening (or coming back): the panel's own re-renders do not grow it again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the field's height is read as it opens
-  }, [still, isPresent]);
-
-  // Closing: the same way back, from where it is (a growth cut short included); it takes no pointer meanwhile.
-  useEffect(() => {
-    if (isPresent) return;
-    const el = ref.current;
-    if (!el || !canAnimate(el)) {
-      remove.current?.();
-      return;
-    }
-    el.style.pointerEvents = 'none';
-    const now = getComputedStyle(el).clipPath;
-    const run = still
-      ? el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur.press * 1000, fill: 'forwards' })
-      : el.animate([{ clipPath: now && now !== 'none' ? now : asPanel }, { clipPath: asField }], { duration: SHRINK_S * 1000, easing: `cubic-bezier(${ease.inOut.join(', ')})`, fill: 'forwards' });
-    // Its end is held (`forwards`) until the panel goes: kept in the ref, so a panel brought back before its removal
-    // drops it (a finished closing left on it would clip the panel to the field once the new growth is over).
-    run.onfinish = () => remove.current?.();
-    closing.current = run;
-    return () => {
-      // Taken over by a new opening already (see the growth: a second cancel does nothing), or gone with the panel.
-      run.onfinish = null;
-      run.cancel();
-      if (closing.current === run) closing.current = null;
-    };
-    // Once per closing: the field's height and the curves are read as it starts.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `asField`/`asPanel` are strings rebuilt each render
-  }, [isPresent, still]);
-
-  return (
-    <div ref={ref} className={cn('rounded-2xl shadow-lg', className)}>
-      <motion.div
-        className="flex min-h-0 flex-1 flex-col"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1, transition: { duration: dur.press, delay: still ? 0 : 0.04, ease: ease.out } }}
-      >
-        {children}
-      </motion.div>
-    </div>
-  );
-}
-
-export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, onShowSearch }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, onShowSearch, onOpenRassegne }: CommandPaletteProps) {
   const {
-    quickNorms, selectQuickNorm, settings, openQuickNormsManager,
-    customAliases, trackAliasUsage, openAliasManager, openDecision, openTopicSearch, takeCommandPaletteQuery, commandPaletteQuery
+    quickNorms, selectQuickNorm, settings,
+    customAliases, trackAliasUsage, openDecision, openTopicSearch, takeCommandPaletteQuery, commandPaletteQuery
   } = useAppStore(useShallow(s => ({
     quickNorms: s.quickNorms,
     selectQuickNorm: s.selectQuickNorm,
     settings: s.settings,
-    openQuickNormsManager: s.openQuickNormsManager,
     customAliases: s.customAliases,
     trackAliasUsage: s.trackAliasUsage,
-    openAliasManager: s.openAliasManager,
     openDecision: s.openDecision,
     openTopicSearch: s.openTopicSearch,
     takeCommandPaletteQuery: s.takeCommandPaletteQuery,
     commandPaletteQuery: s.commandPaletteQuery,
   })));
+  const openSettings = useOpenSettings();
   // The box is focused as the palette opens; the first-open tour (driver.js, started 300 ms later)
   // can take that focus, so when the tour ends the box gets it back. Only if the box is still there:
   // the ref is empty once the palette has closed or moved on to another step.
   const boxRef = useRef<HTMLInputElement>(null);
   const numberRef = useRef<HTMLInputElement>(null);
+  // LC81: how the focus came, for the field's frame (`ISLAND_FIELD_FOCUS`), the pill's rule: 1 px from a pointer, 2 px
+  // from the keyboard. Read by a listener on the whole page because a text field always matches `:focus-visible`, a
+  // tap's focus included (the pill, a button, does not): CSS alone cannot tell the two apart. Tab, a shortcut (⌘K), an arrow, or Enter or Space on a control count as the keyboard; the words
+  // typed in the field, an on-screen keyboard's included, do not.
+  const [keyboard, setKeyboard] = useState(false);
+  useEffect(() => {
+    const onPointer = () => setKeyboard(false);
+    const onKey = (event: KeyboardEvent) => {
+      const onControl = !(event.target instanceof HTMLInputElement) && (event.key === 'Enter' || event.key === ' ');
+      if (event.key === 'Tab' || event.metaKey || event.ctrlKey || event.key.startsWith('Arrow') || onControl) setKeyboard(true);
+    };
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
   const { tryStartTour } = useTour({
     theme: settings.theme as 'light' | 'dark',
     onComplete: (tour) => {
@@ -371,6 +207,12 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
   const [filters, setFilters] = useState<SearchFilters>(defaultSearchFilters);
   const isDesktop = useIsDesktop();
   const still = Boolean(useReducedMotion());
+  // LC133: the band's rows drawn ahead, hidden and inert, once the page is idle: the first ⌘K paid their mount (~90 ms).
+  // Its reads stay on `isOpen` (`useAliasCatalog`, `useRassegneForTopic`): nothing is fetched for the hidden band.
+  const [prepared, setPrepared] = useState(false);
+  useEffect(() => whenIdle(() => setPrepared(true)), []);
+  // Opened before the page was idle: kept from then on, so the flag never changes while the band closes.
+  if (isOpen && !prepared) setPrepared(true);
 
   // Which way the step moved, for its slide: forward slides in from the right, back from the left.
   // Adjusted during render (own state, no effect). A step changed while the palette is closed (the reset)
@@ -445,7 +287,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
   );
 
   // What the box names (a decision, a norm, a topic): one reading, shared with the search page's field.
-  const { decisionRef, parsedCitation, citationReady, citationPreview, resolvingRemotely, topic } = useSearchQuery(inputValue);
+  const { decisionRef, parsedCitation, citationReady, citationPreview, resolvingRemotely, topic, refusal, notice, choices } = useSearchQuery(inputValue);
 
   // The box filters every list while it is typed (`paletteActs.ts`: each typed word begins a word of the
   // row). cmdk's own filter is off: it reorders the rows by score, across the two columns.
@@ -527,16 +369,16 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
     }
   }, [selectQuickNorm, onSearch, done]);
 
+  // The quick norms and the aliases are parts of Impostazioni (LC84): the palette closes and the page opens there.
   const handleOpenQuickNormsManager = useCallback(() => {
     done();
-    // Small delay to let the palette close before opening manager
-    setTimeout(() => openQuickNormsManager(), 100);
-  }, [done, openQuickNormsManager]);
+    openSettings('norme-rapide');
+  }, [done, openSettings]);
 
   const handleOpenAliasManager = useCallback(() => {
     done();
-    setTimeout(() => openAliasManager(), 100);
-  }, [done, openAliasManager]);
+    openSettings('alias');
+  }, [done, openSettings]);
 
   const handleSelectAlias = useCallback((alias: CustomAlias) => {
     trackAliasUsage(alias.id);
@@ -580,6 +422,20 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
     onShowSearch?.();
   }, [topic, openTopicSearch, done, onShowSearch]);
 
+  // The reviews' passages on the topic (U3), under the decisions' row: asked only while the first step is shown.
+  const rassegne = useRassegneForTopic(isOpen && step === 'select_act' ? topic : null);
+  const rassegnePage = rassegne && rassegne.answer !== 'error' && rassegne.answer.volumi > 0 && rassegne.answer.total > 0 ? rassegne.answer : null;
+  const handleOpenRassegne = (passo?: string) => {
+    if (!rassegne || !rassegnePage || !topic) return;
+    // The page reads the search from memory: the words never go in an address nor in the history's state.
+    rememberSearch({
+      text: topic, q: rassegne.q, archivio: null, total: rassegnePage.total,
+      archivi: rassegnePage.archivi, items: rassegnePage.items, next: rassegnePage.next_cursor,
+    });
+    done();
+    onOpenRassegne?.(passo);
+  };
+
   const handleOpenDecision = useCallback(() => {
     if (!decisionRef) return;
     openDecision(decisionRef, { fromLink: true });
@@ -587,15 +443,14 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
     onShowSearch?.();
   }, [decisionRef, openDecision, done, onShowSearch]);
 
-  const handleCitationSearch = useCallback(() => {
-    if (!parsedCitation) return;
-
+  // A norm read in the box, or one of the acts an ambiguous name could mean: searched when ready, completed otherwise.
+  const searchCitation = useCallback((parsedCitation: ParsedCitation) => {
     // Track alias usage if citation was resolved from an alias
     if (parsedCitation.fromAlias && parsedCitation.aliasId) {
       trackAliasUsage(parsedCitation.aliasId);
     }
 
-    if (citationReady) {
+    if (isSearchReady(parsedCitation)) {
       onSearch(citationSearchParams(parsedCitation, { filters }));
       done();
     } else if (parsedCitation.act_type) {
@@ -615,12 +470,17 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
         setStep('input_article');
       }
     }
-  }, [parsedCitation, citationReady, onSearch, done, filters, trackAliasUsage]);
+  }, [onSearch, done, filters, trackAliasUsage]);
+  const handleCitationSearch = useCallback(() => {
+    if (parsedCitation) searchCitation(parsedCitation);
+  }, [parsedCitation, searchCitation]);
 
   // The answer Enter was waiting for has come: run it, once.
   const runWhenAnswered = useEffectEvent(() => {
     setWaitingFor(null);
     if (decisionRef) handleOpenDecision();
+    // A reading with a notice is not run unseen: the wait ends on the line, a second Enter opens it (G-577).
+    else if (parsedCitation && notice) return;
     else if (parsedCitation) handleCitationSearch();
     else if (topic) handleSearchTopic();
   });
@@ -690,69 +550,41 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
   /** The crumb in the field, and its name: the act, with its number and year on the article's step. */
   const crumbText = `${selectedActLabel}${step === 'input_article' && actNumber ? ` ${actNumber}${actDate ? `/${actDate.slice(-4)}` : ''}` : ''}`;
 
-  // On a computer the palette drops from the search page's field, as wide as the field, over it;
-  // where no field is on screen (another page, Focus mode) it hangs at the top, centred. The form is
-  // looked up at every render while open, so a field that mounts later (the address /sentenze) or goes
-  // is followed, and passed at render time (gotcha 13).
-  const field = isOpen && isDesktop ? document.getElementById(SEARCH_FIELD_FORM_ID) : null;
-  const anchor = field?.isConnected ? field : null;
-  // The height the panel grows from: the field's, where it grows out of it; a field's height elsewhere (a phone's bar).
-  const growFrom = anchor?.offsetHeight || 44;
-  // A phone: the panel as tall as what the keyboard leaves, and the page under it holds still (the sheet it replaced
-  // did both).
+  // L-75 (Luca, 17 Nov: «Sì, come proponi»): nothing over the page. The field grows out of what opened it, in the bar
+  // that holds it, by the island (`IslandSurface`, LC69/LC81); the lists are a band under the bars, in the page's flow,
+  // that pushes the page down (`Expand`). What it grows from: the top bar's pill (or, on the search page from lg, its
+  // compact field), the phone's pill, the search page's own field below lg. With nothing (a lesson, full screen below
+  // lg) the field is the band's first row and the band only grows.
+  const sourceNow = (): HTMLElement | null => {
+    const field = document.getElementById(SEARCH_FIELD_FORM_ID);
+    const island = isDesktop && field?.isConnected && field.hasAttribute('data-compact') ? field : document.getElementById(SEARCH_ISLAND_ID);
+    if (island?.isConnected) return island;
+    return field?.isConnected ? field : null;
+  };
+  // A phone: the band as tall as what the keyboard leaves under the bar.
   const watchViewport = isOpen && !isDesktop;
   const shownHeight = useSyncExternalStore(
     watchViewport ? subscribeViewport : subscribeNothing,
     watchViewport ? viewportHeight : noHeight,
     noHeight,
   );
-  useEffect(() => {
-    if (!isOpen || isDesktop) return;
-    const before = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = before;
-    };
-  }, [isOpen, isDesktop]);
-  // A dialog on a computer too: the focus stays inside while it is open and goes back where it was
-  // (the field) when it closes. Placed only when the field is there.
-  const { refs, floatingStyles, context } = useFloating({
-    open: isOpen,
-    elements: { reference: anchor },
-    placement: 'bottom-start',
-    strategy: 'fixed',
-    middleware: [
-      // Its top on the field's: the panel's own box takes the field's place.
-      offset(({ rects }) => -rects.reference.height),
-      // As wide as the field; as tall as what it holds, up to the height it always had (Bill: one row is not a
-      // 640 px panel), the window allowing.
-      size({
-        padding: 16,
-        apply({ rects, availableHeight, elements }) {
-          elements.floating.style.width = `${rects.reference.width}px`;
-          elements.floating.style.setProperty('--palette-max-h', `${Math.min(PANEL_MAX_HEIGHT, Math.max(320, availableHeight))}px`);
-        },
-      }),
-    ],
-    whileElementsMounted: autoUpdate,
-  });
-  // The field gone while the menu is open (another page, Focus mode): what `size` wrote on the box goes with it, or
-  // the panel hung at the top would keep the field's width and height.
-  useLayoutEffect(() => {
-    if (anchor || !isDesktop) return;
-    const box = refs.floating.current;
-    box?.style.removeProperty('width');
-    box?.style.removeProperty('--palette-max-h');
-  }, [anchor, isDesktop, refs]);
-  const role = useRole(context, { role: 'dialog' });
   // What had the focus as the palette opened (the field, a button elsewhere): it gets it back.
   // Taken during render as the palette opens (own state, no effect), before the box takes the focus.
   const [wasOpen, setWasOpen] = useState(false);
   const [opener, setOpener] = useState<HTMLElement | null>(null);
+  // Where it opened, kept while it closes: what the field grows from, and the bar's slot it grows in (none: the band's
+  // first row). Read as it opens, as the opener is.
+  const [chosenRow, setChosenRow] = useState('');
+  const [place, setPlace] = useState<{ source: HTMLElement | null; slot: HTMLElement | null }>({ source: null, slot: null });
   if (isOpen !== wasOpen) {
     setWasOpen(isOpen);
     if (isOpen) {
       setOpener(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      // The row chosen in the last opening is not this one's: cmdk lives on between openings now (L-75), so its choice is
+      // ours, and empty again, and cmdk chooses the first row.
+      setChosenRow('');
+      const source = sourceNow();
+      setPlace({ source, slot: source?.closest('[data-palette-bar]')?.querySelector<HTMLElement>('[data-palette-slot]') ?? null });
       setChose(false);
       // Opened again before the reset after a close (200 ms): it starts at its first step all the same, with no
       // words but those handed over.
@@ -766,7 +598,93 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
       if (commandPaletteQuery === null) setInputValue('');
     }
   }
-  const { getFloatingProps } = useInteractions([role]);
+  // The field in the bar, drawn while open and while it goes back into the pill.
+  const [fieldOut, setFieldOut] = useState(isOpen);
+  if (isOpen && !fieldOut) setFieldOut(true);
+  const inBar = place.slot !== null;
+  const overBar = place.slot?.closest('[data-palette-bar="over"]') != null;
+
+  // The bar it grew in gone while open (the page changed under it, /sentenze → /): the field moves to the new bar's slot.
+  // After every render on purpose: the bar goes in a commit of the page, not of this menu; only a detached slot sets.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (!isOpen || !place.slot || place.slot.isConnected) return;
+    const source = sourceNow();
+    setPlace({ source, slot: source?.closest('[data-palette-bar]')?.querySelector<HTMLElement>('[data-palette-slot]') ?? null });
+  });
+
+  const bandRef = useRef<HTMLDivElement>(null);
+  const fieldBoxRef = useRef<HTMLDivElement>(null);
+  // Opened, cmdk's choice is the first row. Its rows mounting chose it; drawn ahead (LC133) none mounts, so it is set here.
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const first = bandRef.current?.querySelector('[cmdk-item]:not([aria-disabled="true"])')?.getAttribute('data-value');
+    if (first) setChosenRow(first);
+  }, [isOpen]);
+  // The field names the chosen row to a screen reader (LC133): cmdk sets `aria-activedescendant` only from its arrows, never
+  // from a controlled value (ours), so the first row and the row after a reopening went unsaid. Its rows redraw on their
+  // own, after this menu's render: their mark is watched.
+  useEffect(() => {
+    const band = bandRef.current;
+    if (!isOpen || !band) return undefined;
+    const name = () => {
+      const id = band.querySelector('[cmdk-item][data-selected="true"]')?.id;
+      if (id) boxRef.current?.setAttribute('aria-activedescendant', id);
+      else boxRef.current?.removeAttribute('aria-activedescendant');
+    };
+    name();
+    const watch = new MutationObserver(name);
+    watch.observe(band, { subtree: true, attributes: true, attributeFilter: ['data-selected'] });
+    return () => watch.disconnect();
+  }, [isOpen]);
+  // A click outside the field and the band closes it, as the veil's did; the page under takes the click as well. So does
+  // the focus going out to the page, by Tab (Papiniano, #599): the same «outside».
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const outside = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      // By the DOM, not the refs: a field drawn anew (a step, a new bar) takes the focus before its ref is set.
+      if (target.closest('#command-menu-root, [data-palette-slot]') || place.source?.contains(target)) return;
+      // A dialog opened over it is its own.
+      if (target.closest('[aria-modal="true"]')) return;
+      onClose();
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('focusin', outside);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('focusin', outside);
+    };
+  }, [isOpen, onClose, place.source]);
+
+  // Closed: the focus goes back to what opened it (the pill, the field), if it was in the field or the band.
+  const openNow = useRef(isOpen);
+  // The address as it opened: a choice that changed it leads to another page, whose title is still to come.
+  const openedAt = useRef('');
+  useLayoutEffect(() => {
+    const was = openNow.current;
+    openNow.current = isOpen;
+    if (isOpen) openedAt.current = `${window.location.pathname}${window.location.search}`;
+    if (isOpen || !was) return;
+    const active = document.activeElement;
+    const ours = !active || active === document.body || bandRef.current?.contains(active) || fieldBoxRef.current?.contains(active);
+    if (!ours) return;
+    // A choice made: the focus goes where it led, not back to the pill (Papiniano, #599: it fell to the body).
+    if (!chose) {
+      // Opened by ⌘K from the page (the body had the focus), it goes back to the search pill it grew from (#559).
+      const pill = place.source?.matches('button') ? place.source : place.source?.querySelector<HTMLElement>('button') ?? null;
+      const back = opener && opener !== document.body && opener.isConnected ? opener : pill?.isConnected ? pill : null;
+      if (back) back.focus({ preventScroll: true });
+      // No choice and no opener to go back to: never moved to the page (LC94), only out of the band as it folds.
+      else if (active instanceof HTMLElement && bandRef.current?.contains(active)) active.blur();
+      return;
+    }
+    if (active instanceof HTMLElement) active.blur();
+    return focusLanding(`${window.location.pathname}${window.location.search}` !== openedAt.current);
+    // Once per closing; the opener is the one taken as it opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Closed: its words go back to the search page's field when no choice was made (R2: one field), the field is
   // emptied after a choice. Only on a closing, not on the first draw.
@@ -827,20 +745,18 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
       : "Scrivi il numero dell'articolo: 2043, 1-bis";
 
   const fieldRow = (
-    <div className="flex items-center gap-2 px-3 pt-2" onKeyDown={keepKeys}>
+    <div className={cn('flex items-center gap-2', inBar ? 'w-full' : 'px-3 pt-2')} onKeyDown={keepKeys}>
       <motion.div key={step} {...stepMotion} className="flex min-w-0 flex-1 items-center gap-3">
         {step === 'select_act' && (
-          // The field's border carries the focus ring (`focus-within`); the box inside draws none, or the
-          // global `input:focus-visible` ring would stand out around it, over the icon.
-          <div className={cn(
-            'flex h-12 min-w-0 flex-1 items-center gap-3 rounded-lg border border-ink-200 bg-white px-3',
-            'focus-within:border-toga-500 focus-within:ring-2 focus-within:ring-toga-500/30',
-            'dark:border-ink-700 dark:bg-ink-950 dark:focus-within:border-toga-400',
-          )}>
-            <Search size={20} aria-hidden className="shrink-0 text-ink-500 dark:text-ink-400" />
+          // LC81: the pill it grew from, the same object: its shape, type, lens, ground and edge, and its focus on the
+          // frame (`ISLAND_FIELD_FOCUS`). The box inside draws none, or the global `input:focus-visible` ring would
+          // stand out around it.
+          <div data-island-field="" data-keyboard={keyboard ? '' : undefined} className={cn('flex-1', ISLAND_SHAPE, ISLAND_SURFACE, ISLAND_FIELD_FOCUS)}>
+            <Search aria-hidden className={ISLAND_LENS} />
             <Command.Input
               ref={boxRef}
-              autoFocus
+              // Drawn ahead in the hidden band, it takes no focus; opened, `Expand` gives it (LC133).
+              autoFocus={isOpen}
               value={inputValue}
               onValueChange={(value) => {
                 // A change of the words drops a wait: a new Enter is needed, even back on the same words.
@@ -850,10 +766,10 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
               }}
               enterKeyHint="search"
               aria-describedby="command-palette-help"
-              placeholder="Atto o citazione, es. art 2043 cc"
-              // 18 px, and never under 16 px: with the text size «piccolo» `text-lg` was 15.75 px, and Safari on an
-              // iPhone zooms into a field under 16 px (`FIELD_TEXT`).
-              className="h-full w-full min-w-0 bg-transparent text-[length:max(1.125rem,16px)] font-medium text-ink-900 outline-none placeholder:font-normal placeholder:text-ink-500 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-ink-50 dark:placeholder:text-ink-400"
+              // LC81: the pill's words, so nothing changes as it grows; the examples are on the line under the field.
+              placeholder={ISLAND_PLACEHOLDER}
+              // The pill's type (16 px at least on a phone: Safari on an iPhone zooms into a field under 16 px).
+              className={cn('h-full w-full min-w-0 bg-transparent outline-none placeholder:text-slate-500 dark:placeholder:text-slate-400', ISLAND_TEXT, ISLAND_WORDS)}
               onKeyDown={(e) => {
                 // The field's order (R2): a decision, then the server still naming the act (the search runs when it
                 // answers), then a norm — unless the arrows chose another row, which Enter then picks.
@@ -877,36 +793,40 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
 
         {step !== 'select_act' && (
           // The crumb in the field (R2): the act chosen, which takes you back a step; Backspace on an empty field too.
-          <button
+          <Button
             type="button"
+            variant="quiet"
             onClick={stepBack}
             aria-label={`Torna indietro: ${crumbText}`}
-            className={cn('inline-flex min-h-[44px] max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-ink-100 px-2 text-sm font-medium text-ink-800 hover:bg-ink-200 md:min-h-9 dark:bg-ink-800 dark:text-ink-100 dark:hover:bg-ink-700', FOCUS_RING)}
+            className="max-w-[45%] shrink-0 gap-1 bg-ink-100 px-2 text-ink-800 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-100 dark:hover:bg-ink-700"
           >
             <span className="truncate">{crumbText}</span>
             <ChevronRight size={14} aria-hidden className="shrink-0" />
-          </button>
+          </Button>
         )}
         {step === 'input_details' && (
           <div className="flex min-w-0 flex-1 gap-2 py-1">
-            <input
-              type="text"
-              ref={numberRef}
-              aria-label="Numero dell'atto"
-              placeholder="Numero, es. 241"
-              value={actNumber}
-              onChange={(e) => setActNumber(e.target.value)}
-              className={cn(FIELD_INPUT, 'flex-[1.5]')}
-              autoFocus
-              onKeyDown={(e) => (e.key === 'Enter' ? handleSubmitDetails() : backOnEmpty(e))}
-            />
-            <input
+            <div className="min-w-0 flex-[1.5]">
+              <Input
+                type="text"
+                ref={numberRef}
+                aria-label="Numero dell'atto"
+                placeholder="Numero, es. 241"
+                value={actNumber}
+                onChange={(e) => setActNumber(e.target.value)}
+                className="px-3"
+                autoFocus
+                onKeyDown={(e) => (e.key === 'Enter' ? handleSubmitDetails() : backOnEmpty(e))}
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <Input
               type="text"
               aria-label="Anno o data dell'atto"
               value={actDate}
               onChange={(e) => setActDate(e.target.value)}
               placeholder="Anno o data"
-              className={cn(FIELD_INPUT, 'flex-1')}
+              className="px-3"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSubmitDetails();
                 // Backspace on an empty date goes back to the number first, while it holds one.
@@ -915,19 +835,20 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
                   numberRef.current?.focus();
                 } else backOnEmpty(e);
               }}
-            />
+              />
+            </div>
           </div>
         )}
 
         {step === 'input_article' && (
           <div className="min-w-0 flex-1 py-1">
-            <input
+            <Input
               type="text"
               aria-label="Numero dell'articolo"
               placeholder="Articolo, es. 12"
               value={article}
               onChange={(e) => setArticle(e.target.value)}
-              className={FIELD_INPUT}
+              className="px-3"
               autoFocus
               onKeyDown={(e) => (e.key === 'Enter' ? handleSubmitArticle() : backOnEmpty(e))}
             />
@@ -936,27 +857,26 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
       </motion.div>
 
       {/* «Chiudi», on a phone too: the panel has no other (R2). */}
-      <button
-        type="button"
+      <IconButton
         onClick={onClose}
         aria-label="Chiudi"
-        className={cn('inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-800 dark:text-ink-400 dark:hover:bg-ink-800 dark:hover:text-ink-100', FOCUS_RING)}
-      >
-        <X size={18} aria-hidden />
-      </button>
+        icon={<X aria-hidden />}
+        // LC81: as tall as the field, a round beside its pill (40 px, 32 from lg), 44 px to the finger.
+        className="relative size-10 min-h-0 min-w-0 shrink-0 rounded-full after:absolute after:-inset-0.5 after:content-[''] md:min-h-0 md:min-w-0 lg:size-8"
+      />
     </div>
   );
 
   // The help line, or what the box was read as, 10 px under the field and on the line of its text: the
-  // field's edge (12 px of row, 1 of border, 12 of padding), then on the first step the icon's 20 px and
-  // the gap's 12. The visible line is aria-hidden: the status region says it.
+  // lens's edge (12 px of row, 1 of border, 12 in), then on the first step the lens's 16 px and a gap of 8, to the
+  // words' 36 px in (`ISLAND_SHAPE`). The visible line is aria-hidden: the status region says it.
   // The line under the box says what no row says: the wait for the server. A decision, a norm or a topic read in the
   // box is its row, the chosen one, with «↵» — a second line saying the same was one too many (Bill).
   const lineSays = step === 'select_act' && preview && (waiting || resolvingRemotely) ? preview : null;
   const fieldLine = (
-    <div aria-hidden className="flex min-h-5 items-center gap-3 pb-3 pl-[25px] pr-4 pt-2.5 text-xs">
+    <div aria-hidden className="flex min-h-5 items-center gap-2 pb-3 pl-[25px] pr-4 pt-2.5 text-xs">
       {step === 'select_act' && (
-        <span className="flex w-5 shrink-0 justify-center">
+        <span className="flex w-4 shrink-0 justify-center">
           {lineSays && <lineSays.icon size={14} className={lineSays.tone} />}
         </span>
       )}
@@ -985,17 +905,36 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
             run: handleCitationSearch,
           }
         : null;
-  const readAsRow = readAs && (
+  // In the flow, never over it (L-73): the server's notice under the reading; for an ambiguous name («art. 1 tua») a
+  // row per act, each opening as it is; for a regional law the API's sentence, with nothing to run (G-577).
+  const readAsRow = readAs ? (
     <Command.Group className="shrink-0 pt-2">
-      <PaletteRow value="lettura del campo" onSelect={readAs.run} still={still} className="min-h-[56px] gap-3 text-base">
+      <PaletteRow value="lettura del campo" onSelect={readAs.run} className="min-h-[56px] gap-3 text-base">
         <readAs.icon size={18} aria-hidden className="shrink-0 text-toga-700 dark:text-toga-300" />
         <span className="min-w-0 flex-1 truncate">
           <span className="font-medium text-ink-900 dark:text-ink-50">{readAs.text}</span>
           <span className="font-medium text-toga-700 dark:text-toga-300"> · {readAs.action} ↵</span>
         </span>
       </PaletteRow>
+      {notice && !decisionRef && <p className={QUIET_LINE}>{notice}</p>}
     </Command.Group>
-  );
+  ) : step !== 'select_act' ? null
+    : choices.length > 0 ? (
+      <Command.Group className="shrink-0 pt-2" heading="Quale atto?">
+        {choices.map(({ citation, display }) => {
+          const act = display ?? formatParsedCitation({ ...citation, article: undefined });
+          const text = citation.article ? `art. ${citation.article}, ${act}` : act;
+          return (
+            <PaletteRow key={text} value={`scelta ${text}`} onSelect={() => searchCitation(citation)} className="min-h-[56px] gap-3 text-base">
+              <Zap size={18} aria-hidden className="shrink-0 text-toga-700 dark:text-toga-300" />
+              <span className="min-w-0 flex-1 truncate font-medium text-ink-900 dark:text-ink-50">{text}</span>
+            </PaletteRow>
+          );
+        })}
+      </Command.Group>
+    )
+    : refusal ? <p className={cn('shrink-0 pt-2', QUIET_LINE)}>{refusal}</p>
+    : null;
 
   // ── «Scegli l'atto» ─────────────────────────────────────────────────────────────────────────────
   // A decision or a norm read in the box is `readAs`'s row, which takes the columns' place.
@@ -1015,16 +954,16 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
           heading={group.heading}
           className={GROUP_WITH_HEADING}
         >
-          <AnimatePresence initial={false} mode="popLayout">
+          <>
             {group.acts.map((act) => (
-              <PaletteRow key={act.value} value={`atto ${act.value}`} onSelect={() => handleSelectAct(act.value)} still={still} entering>
+              <PaletteRow key={act.value} value={`atto ${act.value}`} onSelect={() => handleSelectAct(act.value)}>
                 <span className="min-w-0 flex-1 line-clamp-2">
                   <span className="text-ink-900 dark:text-ink-50"><Matched text={act.name} query={inputValue} /></span>
                   {act.abbreviation && <span className={SUBTLE}> · <Matched text={act.abbreviation} query={inputValue} /></span>}
                 </span>
               </PaletteRow>
             ))}
-          </AnimatePresence>
+          </>
         </Command.Group>
       ))}
     </div>
@@ -1041,23 +980,24 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
         <Command.Group
           id="command-palette-quick-norms"
           heading="Preferiti"
-          // The heading is as tall as «Gestisci» (44 px on a phone), which sits in it and covers no row.
-          className={cn('relative', GROUP_WITH_HEADING, '[&_[cmdk-group-heading]]:flex [&_[cmdk-group-heading]]:min-h-[44px] [&_[cmdk-group-heading]]:items-end md:[&_[cmdk-group-heading]]:min-h-0')}
+          // The heading is 44 px at every width, taller than «Gestisci» (44 on a phone, 36 from md), which sits in it and covers no row.
+          className={cn('relative', GROUP_WITH_HEADING, '[&_[cmdk-group-heading]]:flex [&_[cmdk-group-heading]]:min-h-[44px] [&_[cmdk-group-heading]]:items-end')}
         >
-          <button
+          <Button
             type="button"
+            variant="link"
             onClick={handleOpenQuickNormsManager}
             onKeyDown={keepKeys}
-            className={cn('absolute right-1 top-0 inline-flex items-center rounded px-2 text-xs font-medium text-toga-700 hover:underline md:top-2 dark:text-toga-300', TOUCH_TARGET_RESPONSIVE, FOCUS_RING)}
+            className="absolute right-3 top-0 md:top-1"
           >
             Gestisci
-          </button>
+          </Button>
           {quickNorms.length === 0 ? (
-            <p className={QUIET_LINE}>Nessun preferito: il fulmine su un articolo lo aggiunge qui</p>
+            <p className={QUIET_LINE}>Nessun preferito: «Aggiungi alle norme rapide», nel menu ⋯ di un articolo, lo porta qui</p>
           ) : (
-            <AnimatePresence initial={false} mode="popLayout">
+            <>
               {visibleQuickNorms.map((qn) => (
-                <PaletteRow key={qn.id} value={`preferito ${qn.id}`} onSelect={() => handleSelectQuickNorm(qn.id)} still={still} entering>
+                <PaletteRow key={qn.id} value={`preferito ${qn.id}`} onSelect={() => handleSelectQuickNorm(qn.id)}>
                   <Zap size={14} aria-hidden className="shrink-0 fill-amber-500 text-amber-600 dark:text-amber-400" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-ink-900 dark:text-ink-50"><Matched text={qn.label} query={inputValue} /></span>
@@ -1065,10 +1005,10 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
                   </span>
                 </PaletteRow>
               ))}
-            </AnimatePresence>
+            </>
           )}
           {hiddenQuickNorms > 0 && (
-            <PaletteRow value="preferiti tutti" onSelect={handleOpenQuickNormsManager} still={still} className="text-toga-700 dark:text-toga-300">
+            <PaletteRow value="preferiti tutti" onSelect={handleOpenQuickNormsManager} className="text-toga-700 dark:text-toga-300">
               Tutti i preferiti ({quickNorms.length})
             </PaletteRow>
           )}
@@ -1083,9 +1023,9 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
               +{presetEntries.length} già pronti{presetHint && `: ${presetHint}…`}
             </p>
           )}
-          <AnimatePresence initial={false} mode="popLayout">
+          <>
           {visibleAliases.map((alias) => (
-            <PaletteRow key={alias.id} value={`alias ${alias.id}`} onSelect={() => handleSelectAlias(alias)} still={still} entering>
+            <PaletteRow key={alias.id} value={`alias ${alias.id}`} onSelect={() => handleSelectAlias(alias)}>
               <Tag size={14} aria-hidden className={ROW_ICON} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-ink-900 dark:text-ink-50"><Matched text={alias.trigger} query={inputValue} /></span>
@@ -1093,12 +1033,12 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
               </span>
             </PaletteRow>
           ))}
-          </AnimatePresence>
+          </>
           {/* The door to the manager. Rendered whatever the user owns, on purpose: gated on owning an
               alias, it hid the only way to make the first one. A row of the list, so typing «alias»
               finds it. */}
           {showAliasDoor && (
-            <PaletteRow value="alias gestisci crea scorciatoie" onSelect={handleOpenAliasManager} still={still} className="text-toga-700 dark:text-toga-300">
+            <PaletteRow value="alias gestisci crea scorciatoie" onSelect={handleOpenAliasManager} className="text-toga-700 dark:text-toga-300">
               {hasAliases ? <Settings2 size={14} aria-hidden className="shrink-0" /> : null}
               <span className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
                 {hasAliases ? `Gestisci alias${hiddenAliases > 0 ? ` (${sortedAliases.length})` : ''}` : 'Crea un alias'}
@@ -1111,10 +1051,10 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
       {/* Presets — only while the user is typing, under their own heading. */}
       {visiblePresets.length > 0 && (
         <Command.Group heading="In dotazione · non devi crearli" className={GROUP_WITH_HEADING}>
-          <AnimatePresence initial={false} mode="popLayout">
+          <>
           {visiblePresets.map(([trigger, preset]) => (
-            <PaletteRow key={trigger} value={`preset ${trigger}`} onSelect={() => handleSelectPreset(trigger)} still={still} entering>
-              <Sparkles size={14} aria-hidden className={ROW_ICON} />
+            <PaletteRow key={trigger} value={`preset ${trigger}`} onSelect={() => handleSelectPreset(trigger)}>
+              <Library size={14} aria-hidden className={ROW_ICON} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-ink-900 dark:text-ink-50"><Matched text={trigger} query={inputValue} /></span>
                 <span className={cn('block truncate text-xs', SUBTLE)}>
@@ -1125,14 +1065,13 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
               </span>
             </PaletteRow>
           ))}
-          </AnimatePresence>
+          </>
         </Command.Group>
       )}
     </div>
   );
 
   // ── The body of each step ───────────────────────────────────────────────────────────────────────
-  // `relative`: a row filtered out pops out of the list (`popLayout`, absolute) against its own column, which clips it.
   const scrollColumn = isDesktop ? 'relative min-h-0 overflow-y-auto overscroll-contain custom-scrollbar pb-2' : 'relative pb-2';
   // «A portata di mano» has rows: something saved at rest, or a match while typing.
   const atHandHasRows = typed
@@ -1147,7 +1086,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
       {/* A topic, not a decision or a norm: its own line, over the two columns */}
       {topic && (
         <Command.Group className="shrink-0 pt-2">
-          <PaletteRow value={`cerca-sentenze ${topic}`} onSelect={handleSearchTopic} still={still}>
+          <PaletteRow value={`cerca-sentenze ${topic}`} onSelect={handleSearchTopic}>
             <Gavel size={14} aria-hidden className="shrink-0 text-emerald-700 dark:text-emerald-400" />
             <span className="min-w-0 flex-1 truncate font-medium">
               Cerca "{topic}" nelle sentenze della Cassazione
@@ -1155,7 +1094,30 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
           </PaletteRow>
         </Command.Group>
       )}
-      {readAs ? (
+      {topic && rassegne?.answer === 'error' && (
+        <Command.Group heading="Rassegne" className={cn('shrink-0', GROUP_WITH_HEADING)}>
+          <p className={QUIET_LINE}>Le rassegne non rispondono al momento.</p>
+        </Command.Group>
+      )}
+      {topic && rassegnePage && (
+        <Command.Group heading="Rassegne" className={cn('shrink-0', GROUP_WITH_HEADING)}>
+          {rassegnePage.items.slice(0, 3).map((passo) => (
+            <PaletteRow key={passo.id} value={`rassegna ${passo.id}`} onSelect={() => handleOpenRassegne(passo.id)}>
+              <BookOpen size={14} aria-hidden className={ROW_ICON} />
+              <span className="min-w-0 flex-1">
+                <span className={cn('block truncate text-xs', SUBTLE)}>{provenance(passo).split(' › ')[0]}</span>
+                <span className="line-clamp-2">{passo.testo}</span>
+              </span>
+            </PaletteRow>
+          ))}
+          <PaletteRow value="rassegne tutti i passi" onSelect={() => handleOpenRassegne()}>
+            <List size={14} aria-hidden className={ROW_ICON} />
+            <span className="min-w-0 flex-1 font-medium">Tutti i passi</span>
+            <span className={cn('shrink-0 text-xs', SUBTLE)}>{rassegnePage.total.toLocaleString('it-IT')}</span>
+          </PaletteRow>
+        </Command.Group>
+      )}
+      {readAsRow ? (
         <>
           {readAsRow}
           {/* Under it, only what still matches (a favourite «Art. 2043 c.c.», an alias, an act), in one column. */}
@@ -1220,6 +1182,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
   // ── «Filtri avanzati» and the keys ──────────────────────────────────────────────────────────────
   const filtersBlock = (
     <div className="shrink-0 border-t border-ink-100 dark:border-ink-800" onKeyDown={keepKeys}>
+      {/* bare-button: the filters' disclosure, a row the panel's width with what is set at its right end. */}
       <button
         type="button"
         onClick={() => setShowAdvancedFilters(value => !value)}
@@ -1233,32 +1196,30 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
         </span>
         <span className={cn('flex items-center gap-1 text-xs', activeFilters > 0 ? 'font-medium text-toga-700 dark:text-toga-300' : SUBTLE)}>
           {activeFiltersLabel(filters)}
-          <ChevronDown size={14} aria-hidden className={cn('transition-[rotate] duration-150 motion-reduce:transition-none', showAdvancedFilters && 'rotate-180')} />
+          <ChevronDown size={14} aria-hidden className={cn('transition-[rotate] duration-(--dur-press) motion-reduce:transition-none', showAdvancedFilters && 'rotate-180')} />
         </span>
       </button>
       {showAdvancedFilters && (
         <div id="command-palette-filters" className="flex flex-wrap items-end gap-x-4 gap-y-3 px-4 pb-3 text-xs">
-          <label className={cn('flex flex-col gap-1', SUBTLE)}>
-            Fonte
-            <select
+          <div className="w-40">
+            <Select
+              label="Fonte"
               value={filters.source}
               onChange={(event) => setFilters(previous => ({ ...previous, source: event.target.value as SearchFilters['source'] }))}
-              className={SMALL_INPUT}
             >
               <option value="all">Tutte le fonti</option>
               <option value="normattiva">Normattiva</option>
               <option value="eurlex">EUR-Lex</option>
-            </select>
-          </label>
-          <label className={cn('flex flex-col gap-1', SUBTLE)}>
-            Dall'anno
-            <input type="number" inputMode="numeric" placeholder="1990" value={filters.yearFrom ?? ''} onChange={(event) => setFilters(previous => ({ ...previous, yearFrom: event.target.value ? Number(event.target.value) : undefined }))} className={cn(SMALL_INPUT, 'w-24')} />
-          </label>
-          <label className={cn('flex flex-col gap-1', SUBTLE)}>
-            All'anno
-            <input type="number" inputMode="numeric" placeholder="2024" value={filters.yearTo ?? ''} onChange={(event) => setFilters(previous => ({ ...previous, yearTo: event.target.value ? Number(event.target.value) : undefined }))} className={cn(SMALL_INPUT, 'w-24')} />
-          </label>
+            </Select>
+          </div>
+          <div className="w-24">
+            <Input label="Dall'anno" type="number" inputMode="numeric" placeholder="1990" value={filters.yearFrom ?? ''} onChange={(event) => setFilters(previous => ({ ...previous, yearFrom: event.target.value ? Number(event.target.value) : undefined }))} className="px-3" />
+          </div>
+          <div className="w-24">
+            <Input label="All'anno" type="number" inputMode="numeric" placeholder="2024" value={filters.yearTo ?? ''} onChange={(event) => setFilters(previous => ({ ...previous, yearTo: event.target.value ? Number(event.target.value) : undefined }))} className="px-3" />
+          </div>
           <label className="flex min-h-[44px] items-center gap-2 text-sm text-ink-800 md:min-h-9 dark:text-ink-100">
+            {/* bare-input: a checkbox inside its label, the label the 44 px target. */}
             <input type="checkbox" className="size-4 accent-toga-600" checked={filters.onlyHistorical} onChange={(event) => setFilters(previous => ({ ...previous, onlyHistorical: event.target.checked }))} />
             Solo versioni storiche
           </label>
@@ -1277,104 +1238,77 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
   );
 
   const content = (
-    <ChosenRowScope.Provider value={inputValue}>
     <Command
       id="command-menu-root"
       label="Menu di ricerca"
       shouldFilter={false}
-      className="flex min-h-0 flex-1 flex-col"
+      value={chosenRow}
+      onValueChange={setChosenRow}
+      ref={bandRef}
+      className="shrink-0"
     >
-      <div className="shrink-0">
-        {/* One live region for the whole life of the palette, its text changing: a region that
-            appears already holding its text is often not announced. */}
-        <p role="status" className="sr-only">
-          {decisionRef
-            ? `Sentenza: ${formatDecisionShort(decisionRef)}. Invio per aprire.`
-            : waiting ? 'Cerco l’atto… la ricerca parte appena lo trovo.'
-            : parsedCitation && citationPreview
-              ? `${preview!.text}${preview!.text.endsWith('.') ? '' : '.'} ${citationReady ? 'Premi Invio per cercare.' : 'Premi Invio per completare.'}`
-              : resolvingRemotely
-                ? 'Cerco l’atto…'
-                : topic ? `Cerca "${topic}" nelle sentenze della Cassazione.` : ''}
-        </p>
-        {fieldRow}
-        {fieldLine}
-      </div>
-      {isDesktop ? (
-        <>
-          {body}
-          {filtersBlock}
-          {keysRow}
-        </>
-      ) : (
-        // On a phone the field stays at the top and the rest scrolls under it.
-        <motion.div layoutScroll className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {body}
-          {filtersBlock}
-        </motion.div>
+      {/* One live region for the whole life of the palette, its text changing: a region that
+          appears already holding its text is often not announced. */}
+      <p role="status" className="sr-only">
+        {decisionRef
+          ? `Sentenza: ${formatDecisionShort(decisionRef)}. Invio per aprire.`
+          : waiting ? 'Cerco l’atto… la ricerca parte appena lo trovo.'
+          : parsedCitation && citationPreview
+            ? `${preview!.text}${preview!.text.endsWith('.') ? '' : '.'} ${citationReady ? 'Premi Invio per cercare.' : 'Premi Invio per completare.'}${notice ? ` ${notice}` : ''}`
+            : resolvingRemotely
+              ? 'Cerco l’atto…'
+              : choices.length > 0 ? `Il nome indica ${choices.length} atti: scegli quale.`
+              : refusal ?? (topic ? `Cerca "${topic}" nelle sentenze della Cassazione.` : '')}
+      </p>
+      {/* The field in the bar: it grows out of the pill or the field it opens from, and goes back into it (LC69, LC81).
+          A portal into the bar's own slot, in the page's flow: React's context and events stay the menu's. */}
+      {fieldOut && place.slot && createPortal(
+        <IslandSurface
+          ref={fieldBoxRef}
+          open={isOpen}
+          onClosed={() => setFieldOut(false)}
+          source={place.source}
+          hideSource
+          timing={SEARCH_TIMING}
+          surfaceClassName=""
+          contentClassName="relative flex min-w-0 items-center"
+          className="w-full max-w-3xl"
+        >
+          {fieldRow}
+        </IslandSurface>,
+        place.slot,
       )}
+      {/* The band: under the bars, it grows and pushes the page down; no veil, nothing over the page (L-75). */}
+      <Expand open={isOpen} keepMounted={prepared} followContent={false} timing={SEARCH_TIMING} initialFocusRef={boxRef} role="region" aria-label="Menu di ricerca" data-palette-band="">
+        <div className={cn('border-b border-slate-200 dark:border-slate-800', overBar && 'pt-[calc(3.5rem+env(safe-area-inset-top))]')}>
+          <div
+            style={{ ['--palette-max-h' as string]: isDesktop
+              ? 'min(40rem, calc(100dvh - 12rem))'
+              : `calc(${shownHeight ? `${shownHeight}px` : '100dvh'} - 3.5rem - env(safe-area-inset-top))` }}
+            className={cn('mx-auto flex w-full max-w-3xl flex-col', isDesktop ? 'max-h-[var(--palette-max-h)]' : 'h-[var(--palette-max-h)]')}
+          >
+            <div className="shrink-0">
+              {!inBar && fieldRow}
+              {fieldLine}
+            </div>
+            {isDesktop ? (
+              <>
+                {body}
+                {filtersBlock}
+                {keysRow}
+              </>
+            ) : (
+              // On a phone the field stays at the top and the rest scrolls under it.
+              <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                {body}
+                {filtersBlock}
+              </div>
+            )}
+          </div>
+        </div>
+      </Expand>
     </Command>
-    </ChosenRowScope.Provider>
   );
 
-  return (
-    <FloatingPortal>
-      {/* Covers the workspace: Cmd/Ctrl+F is left to the browser (`isWorkspaceCovered`). Drawn only while
-          open, so the mark goes with the click that closes, not with the panel's fade. */}
-      {isOpen && (
-        <div
-          data-find-overlay=""
-          aria-hidden
-          // `touch-none`: a drag on it does not scroll the page under it (iOS).
-          className={cn('fixed inset-0 touch-none bg-ink-950/20 dark:bg-ink-950/50', Z_INDEX.commandPalette)}
-          onClick={onClose}
-        />
-      )}
-      {/* Outside the presence, so the focus goes back as the palette closes, not once its fade is over. */}
-      <FloatingFocusManager
-        context={context}
-        modal
-        disabled={!isOpen}
-        initialFocus={step === 'select_act' ? boxRef : 0}
-        // Nothing had it (⌘K on the page): the field when it is there, else nowhere — never the page's first control.
-        returnFocus={opener && opener !== document.body ? { current: opener } : anchor !== null}
-      >
-      <AnimatePresence>
-        {isOpen && (
-          // Two elements: the outer is placed by floating-ui, the inner moves (gotcha 10).
-          <div
-            key="command-palette"
-            // eslint-disable-next-line react-hooks/refs -- floating-ui exposes a stable setter, not a ref.current read
-            ref={refs.setFloating}
-            {...getFloatingProps()}
-            aria-label="Menu di ricerca"
-            style={anchor
-              ? floatingStyles
-              : !isDesktop && shownHeight
-                ? { ['--palette-max-h' as string]: `min(40rem, calc(${shownHeight}px - 1rem - env(safe-area-inset-top)))` }
-                : undefined}
-            className={cn(
-              // The box holds the panel's height; only the panel takes the pointer (a shorter step
-              // leaves the rest of the box to the backdrop's click).
-              'pointer-events-none flex flex-col',
-              anchor
-                ? 'fixed'
-                : isDesktop
-                  ? 'fixed inset-x-4 top-16 mx-auto max-w-3xl [--palette-max-h:min(40rem,calc(100dvh-6rem))]'
-                  // A phone: the page's width less 16 px each side, dropping from the bar at the top (R2).
-                  : 'fixed inset-x-4 top-[calc(env(safe-area-inset-top)+0.5rem)] [--palette-max-h:min(40rem,calc(100dvh-1rem-env(safe-area-inset-top)))]',
-              Z_INDEX.commandPalette,
-            )}
-          >
-            {/* The field grows into the panel (R2): `PanelGrowth`. As tall as its content, up to `--palette-max-h`: the
-                lists scroll inside it past that. */}
-            <PanelGrowth still={still} fromHeight={growFrom} className="pointer-events-auto flex min-h-0 max-h-[var(--palette-max-h,40rem)] flex-col overflow-hidden border border-ink-200 bg-white dark:border-ink-700 dark:bg-ink-900">
-              {content}
-            </PanelGrowth>
-          </div>
-        )}
-      </AnimatePresence>
-      </FloatingFocusManager>
-    </FloatingPortal>
-  );
+  return content;
 }

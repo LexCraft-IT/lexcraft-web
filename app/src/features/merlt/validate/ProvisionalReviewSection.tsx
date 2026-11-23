@@ -11,7 +11,7 @@ export interface ProvisionalReviewSectionProps {
 
 /**
  * Slice C wave 2: the "doubtful provisional nodes" review section of
- * /merlt/valida. These are graph nodes the hygiene sweep quarantined (faded but
+ * /labs/valida. These are graph nodes the hygiene sweep quarantined (faded but
  * with human signal) instead of auto-pruning; a reviewer promotes (approve) or
  * discards (reject) the EXISTING node — there is no consensus queue here, the
  * decision applies immediately.
@@ -86,7 +86,7 @@ function ProvisionalReviewCard({
                 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
                 'dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50',
                 'transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2',
+                'focus-visible:outline-none ',
               )}
             >
               {busy ? <Loader2 size={13} className="animate-spin" /> : <ThumbsUp size={13} />}
@@ -101,7 +101,7 @@ function ProvisionalReviewCard({
                 'bg-rose-50 text-rose-700 hover:bg-rose-100',
                 'dark:bg-rose-900/30 dark:text-rose-300 dark:hover:bg-rose-900/50',
                 'transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2',
+                'focus-visible:outline-none ',
               )}
             >
               <Trash2 size={13} />
@@ -120,7 +120,7 @@ function ProvisionalReviewCard({
           <Chip>usi: {item.usage_count ?? 0}</Chip>
           <Chip>feedback+: {item.positive_feedback_count ?? 0}</Chip>
           {item.has_confirmed_citation && <Chip>citato da confermati</Chip>}
-          <Chip>fiducia: {typeof item.trust === 'number' ? item.trust.toFixed(2) : '—'}</Chip>
+          <Chip>fiducia: {typeof item.trust === 'number' ? item.trust.toFixed(2) : 'n.d.'}</Chip>
         </div>
       </div>
     </li>

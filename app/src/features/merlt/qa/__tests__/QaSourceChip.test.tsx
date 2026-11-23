@@ -35,10 +35,10 @@ describe('QaSourceChip', () => {
     expect(screen.getByText('provvisoria')).toBeInTheDocument();
   });
 
-  it('links the label to /grafo with the urn', () => {
+  it('links the label to /labs/grafo with the urn', () => {
     renderChip(seed);
     const link = screen.getByRole('link', { name: /art\. 1453/i });
-    expect(link.getAttribute('href')).toContain('/grafo?urn=');
+    expect(link.getAttribute('href')).toContain('/labs/grafo?urn=');
   });
 
   it('formatRetrievedUrn handles massime and live nodes', () => {
@@ -52,7 +52,7 @@ describe('QaSourceChip', () => {
         <ul>
           <QaSourceChip
             source={seed}
-            cited={{ article_urn: seed.urn, expert: 'literal', relevance: 0.9, excerpt: 'Il debitore...' }}
+            cited={{ article_urn: seed.urn, expert: 'literal', relevance: 0.9, excerpt: 'Il debitore…' }}
             onConfirm={vi.fn()}
             onRate={vi.fn()}
           />

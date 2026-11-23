@@ -1,12 +1,14 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import {
   searchParamsFromNorma, packItemContent, unpackItemContent,
   computeItemCounts, dossierRecency, dossierContainsArticle, normaForDossier,
-  computeNormaGroups, searchParamsFromGroup, tabLabelForGroup, searchesForGroups,
+  computeNormaGroups, searchParamsFromGroup, tabLabelForGroup, searchesForGroups, MAX_ARTICLES_PER_SEARCH,
   dossierItemFromApi, dossierFromApi,
   parseSentenzaContent, decisionCitationOf, sentenzaFromDecision, serverItemFor, itemContentFor, dossierContainsDecision,
   validateImportedDossier, dossierSuggestionPayload, importReport, importCounts, importReasonsText, importToastType,
-  encodeDossierShare, decodeDossierShare,
+  encodeDossierShare, decodeDossierShare, shareableDossier,
 } from './dossierUtils';
 import { buildItemKey } from '../../../utils/normaKeys';
 import type { ArticleData, Dossier, DossierItem, NormaVisitata } from '../../../types';
@@ -230,24 +232,46 @@ describe('searchParamsFromGroup', () => {
   });
 
   it('asks for the text in force, with no Brocardi flag', () => {
-    expect(searchParamsFromGroup(group())).toEqual({
+    expect(searchParamsFromGroup(group())[0]).toEqual({
       act_type: 'codice civile', act_number: '262', date: '1942-03-16', article: '1284,1285',
       version: 'vigente', version_date: '',
     });
   });
 
   it('asks for the past text a group holds', () => {
-    expect(searchParamsFromGroup(group({ versione: 'vigente', data_versione: '2007-12-29' }))).toMatchObject({
+    expect(searchParamsFromGroup(group({ versione: 'vigente', data_versione: '2007-12-29' }))[0]).toMatchObject({
       version: 'vigente', version_date: '2007-12-29',
     });
-    expect(searchParamsFromGroup(group({ versione: 'originale' }))).toMatchObject({
+    expect(searchParamsFromGroup(group({ versione: 'originale' }))[0]).toMatchObject({
       version: 'originale', version_date: '',
     });
   });
 
   it('asks for the annex a group holds, and sends no annex key when it holds none', () => {
-    expect(searchParamsFromGroup(group({ allegato: 'A' }))).toMatchObject({ annex: 'A' });
-    expect(searchParamsFromGroup(group())).not.toHaveProperty('annex');
+    expect(searchParamsFromGroup(group({ allegato: 'A' }))[0]).toMatchObject({ annex: 'A' });
+    expect(searchParamsFromGroup(group())[0]).not.toHaveProperty('annex');
+  });
+
+  it('pages at the API\'s own ceiling, read from the contract that pins it (one number, not two)', () => {
+    let dir = __dirname;
+    while (!existsSync(join(dir, 'conventions', 'contract', 'pins.json'))) {
+      if (dirname(dir) === dir) throw new Error('conventions/contract/pins.json not found above ' + __dirname);
+      dir = dirname(dir);
+    }
+    // The ceiling lives in the API's config; scripts/contract/build.mjs copies it into the contract.
+    const pins = JSON.parse(readFileSync(join(dir, 'conventions', 'contract', 'pins.json'), 'utf8')) as {
+      max_articles_per_request: number;
+    };
+    expect(pins.max_articles_per_request).toBeGreaterThan(0);
+    expect(MAX_ARTICLES_PER_SEARCH).toBe(pins.max_articles_per_request);
+  });
+
+  it('pages a group above the API ceiling, every page with the same act and version', () => {
+    const articles = Array.from({ length: MAX_ARTICLES_PER_SEARCH * 2 + 5 }, (_, i) => String(i + 1));
+    const pages = searchParamsFromGroup(group({ articles, versione: 'originale' }));
+    expect(pages.map((p) => p.article.split(',').length)).toEqual([MAX_ARTICLES_PER_SEARCH, MAX_ARTICLES_PER_SEARCH, 5]);
+    expect(pages.flatMap((p) => p.article.split(','))).toEqual(articles);
+    pages.forEach((p) => expect(p).toMatchObject({ act_type: 'codice civile', version: 'originale' }));
   });
 });
 
@@ -263,10 +287,10 @@ describe('tabLabelForGroup', () => {
   });
   it('adds the day to the title for a group asking for a past text', () => {
     expect(tabLabelForGroup('Pratica', group({ versione: 'vigente', data_versione: '2007-12-29' })))
-      .toBe('Pratica — testo al 29/12/2007');
+      .toBe('Pratica, testo al 29/12/2007');
   });
   it('says "testo originale" for the original text', () => {
-    expect(tabLabelForGroup('Pratica', group({ versione: 'originale' }))).toBe('Pratica — testo originale');
+    expect(tabLabelForGroup('Pratica', group({ versione: 'originale' }))).toBe('Pratica, testo originale');
   });
 });
 
@@ -285,9 +309,9 @@ describe('searchesForGroups', () => {
 
   it('shares one tab among the texts in force and gives a past group a tab of its own', () => {
     const { created, searches } = run([g({}), g({ numero_atto: '1', articles: ['2'] }), g(PAST)]);
-    expect(created).toEqual(['Pratica', 'Pratica — testo al 29/12/2007']);
+    expect(created).toEqual(['Pratica', 'Pratica, testo al 29/12/2007']);
     expect(searches.map((s) => s.targetPracticeId)).toEqual(['tab-1', 'tab-1', 'tab-2']);
-    expect(searches.map((s) => s.tabLabel)).toEqual(['Pratica', 'Pratica', 'Pratica — testo al 29/12/2007']);
+    expect(searches.map((s) => s.tabLabel)).toEqual(['Pratica', 'Pratica', 'Pratica, testo al 29/12/2007']);
     expect(searches[2]).toMatchObject({ version: 'vigente', version_date: '2007-12-29' });
     expect(searches[0]).toMatchObject({ version: 'vigente', version_date: '' });
   });
@@ -299,9 +323,16 @@ describe('searchesForGroups', () => {
     expect(searches.map((x) => x.annex)).toEqual(['A', 'B']);
   });
 
+  it('gives every page of a large group the group\'s tab', () => {
+    const articles = Array.from({ length: MAX_ARTICLES_PER_SEARCH + 1 }, (_, i) => String(i + 1));
+    const { created, searches } = run([g({ articles }), g(PAST)]);
+    expect(created).toEqual(['Pratica', 'Pratica, testo al 29/12/2007']);
+    expect(searches.map((s) => s.targetPracticeId)).toEqual(['tab-1', 'tab-1', 'tab-2']);
+  });
+
   it('creates no shared tab when every group asks for a past text', () => {
     const { created } = run([g(PAST), g({ versione: 'originale' })]);
-    expect(created).toEqual(['Pratica — testo al 29/12/2007', 'Pratica — testo originale']);
+    expect(created).toEqual(['Pratica, testo al 29/12/2007', 'Pratica, testo originale']);
   });
 });
 
@@ -326,6 +357,27 @@ describe('dossierItemFromApi', () => {
   it('reads a note, and an answer from a server without the fields', () => {
     const note = dossierItemFromApi({ ...base, id: 'n', item_type: 'note', content: 'appunto' });
     expect(note).toEqual({ id: 'n', type: 'note', data: 'appunto', addedAt: base.created_at });
+  });
+  it('reads how the application\'s notes stand (D7b): a norm\'s light, a note entry\'s state', () => {
+    const norm = dossierItemFromApi({
+      ...base, id: 'a', item_type: 'norm', content: { tipo_atto: 'codice civile', numero_articolo: '1453' },
+      assistant_notes: { proposed: 2, validated: 0, review: 1 }, assistant_note: null,
+    });
+    expect(norm).toMatchObject({ assistantNotes: { proposed: 2, validated: 0, review: 1 }, assistantNote: null });
+    const note = dossierItemFromApi({
+      ...base, id: 'n', item_type: 'note', content: 'Mia.', created_by: { clientName: 'Claude Code' }, assistant_notes: null,
+      assistant_note: {
+        state: 'review', state_changed_at: '2026-10-25T09:00:00Z', review_comment: 'Manca il comma 2.', original_text: 'Sua.',
+        edited: true, edited_at: '2026-10-25T09:05:00Z', edited_by: { username: 'utente' },
+      },
+    });
+    expect(note).toMatchObject({
+      assistantNotes: null,
+      assistantNote: {
+        state: 'review', stateChangedAt: '2026-10-25T09:00:00Z', reviewComment: 'Manca il comma 2.', originalText: 'Sua.',
+        edited: true, editedAt: '2026-10-25T09:05:00Z', editedBy: { username: 'utente' },
+      },
+    });
   });
 });
 
@@ -460,9 +512,9 @@ describe('an imported dossier', () => {
   });
 
   it('says whether everything came in', () => {
-    expect(importReport(3, 0)).toBe('Dossier importato');
-    expect(importReport(1, 1)).toBe('Dossier importato in parte: 1 voce importata, 1 scartata');
-    expect(importReport(4, 2)).toBe('Dossier importato in parte: 4 voci importate, 2 scartate');
+    expect(importReport(3, 0)).toBe('Pratica importata');
+    expect(importReport(1, 1)).toBe('Pratica importata in parte: 1 voce importata, 1 scartata');
+    expect(importReport(4, 2)).toBe('Pratica importata in parte: 4 voci importate, 2 scartate');
   });
 
   it('a Forum suggestion carries decisions as sentenzaRef, with the citation recomputed', () => {
@@ -530,9 +582,9 @@ describe('an imported dossier is rebuilt from what was checked', () => {
   it('words the counts, and picks the toast type from what came in and what was lost', () => {
     expect(importCounts(1, 2)).toBe('1 voce importata, 2 scartate');
     expect(importReasonsText([])).toBe('');
-    expect(importReasonsText(['Tipo di atto non riconosciuto («legge regionale»)'])).toBe(' — Tipo di atto non riconosciuto («legge regionale»)');
-    expect(importReasonsText(['a', 'b'])).toBe(' — a e un altro motivo');
-    expect(importReasonsText(['a', 'b', 'c'])).toBe(' — a e altri 2 motivi');
+    expect(importReasonsText(['Tipo di atto non riconosciuto («legge regionale»)'])).toBe(': Tipo di atto non riconosciuto («legge regionale»)');
+    expect(importReasonsText(['a', 'b'])).toBe(': a e un altro motivo');
+    expect(importReasonsText(['a', 'b', 'c'])).toBe(': a e altri 2 motivi');
     expect(importToastType(3, 0)).toBe('success');
     expect(importToastType(0, 0)).toBe('success');
     expect(importToastType(2, 1)).toBe('info');
@@ -575,7 +627,7 @@ describe('dossier share links', () => {
 
 describe('dossierFromApi — the kind and the copy in the Forum', () => {
   const api = { id: 'd', name: 'D', is_pinned: false, created_at: '2026-10-14', updated_at: '2026-10-14', items: [] };
-  it('reads a dossier di studio, its published copy and the admin\'s block', () => {
+  it('reads a pratica di studio, its published copy and the admin\'s block', () => {
     const d = dossierFromApi({
       ...api, kind: 'studio', forum_blocked: true,
       published: { shared_environment_id: 'e', version: 3, is_active: false, updated_at: '2026-10-14T10:00:00Z' },
@@ -595,5 +647,21 @@ describe('shareableDossier — what leaves the account', () => {
     expect(decoded).not.toHaveProperty('published');
     expect(decoded).not.toHaveProperty('forumBlocked');
     expect(decoded.kind).toBe('studio');
+  });
+
+  it('carries nothing of how its owner reviewed what an application wrote (D7b)', () => {
+    const d: Dossier = { id: 'd', title: 'T', createdAt: '2026-10-14', items: [
+      { id: 'a', type: 'norma', addedAt: '', data: { tipo_atto: 'codice civile', numero_articolo: '1453' }, assistantNotes: { proposed: 1, validated: 0, review: 1 } },
+      { id: 'n', type: 'note', addedAt: '', data: 'Mia versione.', createdBy: { clientName: 'Claude Code' }, assistantNote: {
+        state: 'review', stateChangedAt: null, reviewComment: 'Troppo generica.', originalText: 'Sua.', edited: true, editedAt: null, editedBy: { username: 'utente' } } },
+    ] } as Dossier;
+    const shared = shareableDossier(d);
+    const decoded = JSON.parse(decodeDossierShare(encodeDossierShare(d)));
+    for (const items of [shared.items, decoded.items]) {
+      expect(items[0]).not.toHaveProperty('assistantNotes');
+      expect(items[1]).not.toHaveProperty('assistantNote');
+    }
+    expect(JSON.stringify(decoded)).not.toContain('Troppo generica.');
+    expect(decoded.items[1]).toMatchObject({ data: 'Mia versione.', createdBy: { clientName: 'Claude Code' } });
   });
 });

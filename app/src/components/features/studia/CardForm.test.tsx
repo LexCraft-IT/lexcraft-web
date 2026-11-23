@@ -64,12 +64,13 @@ beforeEach(() => {
 afterEach(() => setDesktop(false));
 
 describe('CardForm, on a phone', () => {
+  // The shared height (LC97): 44 px on a phone, 36 px from md, as the buttons beside them.
   it('gives every field a 44 px target', async () => {
     setDesktop(false);
     renderForm(fromReader());
     await userEvent.setup().click(screen.getByRole('button', { name: /\+ Ancora/ }));
     for (const field of [screen.getByLabelText('Materia'), screen.getByLabelText('Istituto'), screen.getByRole('combobox', { name: 'Tipo di scheda' }), screen.getByLabelText('Riferimento dell’ancora')]) {
-      expect(field).toHaveClass('min-h-[44px]', 'md:min-h-0');
+      expect(field).toHaveClass('min-h-11', 'md:min-h-9');
     }
   });
 });
@@ -107,19 +108,19 @@ describe('CardForm, opened from an article', () => {
 
   it('shows the kind as a segmented control on desktop, a select on a phone', () => {
     const { unmount } = render(<CardForm mode={fromReader()} onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.getByRole('tab', { name: 'Caso' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Caso' })).toBeInTheDocument();
     unmount();
     setDesktop(false);
     render(<CardForm mode={fromReader()} onSaved={vi.fn()} onCancel={vi.fn()} />);
-    expect(screen.queryByRole('tab', { name: 'Caso' })) .not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Caso' })) .not.toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Tipo di scheda' })).toHaveValue('ISTITUTO_DEFINIZIONE');
   });
 
   it('picks a kind without sending the form', async () => {
     const user = userEvent.setup();
     renderForm(fromReader());
-    await user.click(screen.getByRole('tab', { name: 'Caso' }));
-    expect(screen.getByRole('tab', { name: 'Caso' })).toHaveAttribute('aria-selected', 'true');
+    await user.click(screen.getByRole('radio', { name: 'Caso' }));
+    expect(screen.getByRole('radio', { name: 'Caso' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByText('Scrivi la domanda')).not.toBeInTheDocument();
     expect(create).not.toHaveBeenCalled();
   });

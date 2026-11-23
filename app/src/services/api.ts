@@ -5,6 +5,8 @@ import axios from 'axios';
 import type { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { isAccessTokenExpired } from './authService';
 import { stashReturnTo } from '../utils/returnTo';
+import { forgetUserData } from './sessionEnd';
+import { notify } from '../components/ui/notifications/notifications';
 
 // API base URL - uses relative path to leverage Vite proxy in development
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -31,11 +33,103 @@ const apiClient: AxiosInstance = axios.create({
  */
 let refreshInFlight: Promise<string> | null = null;
 
+/** The requests that send credentials: a 401 there is a wrong password, never an expired session. */
+const CREDENTIAL_URLS = ['/auth/login', '/auth/register'];
+
+/**
+ * The session is over (the server refused the refresh): everything of the person goes, then the tokens, and the
+ * sign-in page opens, which brings the reader back here.
+ */
 export function handleUnauthenticated(): void {
+  forgetUserData();
   localStorage.removeItem('access_token');
   localStorage.removeItem('refresh_token');
   stashReturnTo(`${window.location.pathname}${window.location.search}${window.location.hash}`);
   window.location.href = '/login';
+}
+
+/** Whether an answer refuses the session: 401 or 403. A 429, a 5xx or no answer (undefined) does not. */
+export function isRefusalStatus(status: unknown): boolean {
+  return status === 401 || status === 403;
+}
+
+/**
+ * Whether a failed refresh means the session is over: the server answered and refused it (401, 403), or there
+ * is no refresh token. A server error (5xx), a 429 or no answer at all (network, timeout) does not: the session
+ * stays, the next request tries again (`refreshInFlight` is cleared once a refresh settles).
+ */
+export function isRefreshRefused(error: unknown): boolean {
+  if (axios.isAxiosError(error)) {
+    return isRefusalStatus(error.response?.status);
+  }
+  // `No refresh token`: nothing to refresh with.
+  return true;
+}
+
+/** The plain words a reader gets when a refresh could not reach the server. */
+export const CONNECTION_FAILED_MESSAGE = 'Connessione al server non riuscita. La sessione resta aperta: riprova tra poco.';
+
+/** A server's limit of requests (429). No time promised: the sign-in's limit blocks for 15 minutes, others for one. */
+export const TOO_MANY_REQUESTS_MESSAGE = 'Troppe richieste in poco tempo. Riprova più tardi.';
+
+/** The 429's words, with the wait the server gives in `Retry-After` (seconds) when it gives one. */
+function tooManyRequestsMessage(retryAfter: unknown): string {
+  const seconds = Number(retryAfter);
+  if (!retryAfter || !Number.isFinite(seconds) || seconds <= 0) return TOO_MANY_REQUESTS_MESSAGE;
+  const minutes = Math.ceil(seconds / 60);
+  return `Troppe richieste in poco tempo. Riprova tra ${minutes === 1 ? 'un minuto' : `${minutes} minuti`}.`;
+}
+
+/** No answer at all (network, timeout). */
+export const NO_ANSWER_MESSAGE = 'Il server non risponde. Controlla la connessione e riprova.';
+
+/**
+ * The server's rule for a password at sign-up (apps/server, `registerSchema`: at least 8 characters, one lowercase,
+ * one uppercase, one digit), the same regex, and the words that say it under the field and when it is broken.
+ */
+export const PASSWORD_RULE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+export const PASSWORD_RULE_HINT = 'Almeno 8 caratteri, con una maiuscola, una minuscola e un numero.';
+export const PASSWORD_RULE_ERROR = 'La password deve avere almeno 8 caratteri, con una maiuscola, una minuscola e un numero.';
+const SERVER_PASSWORD_RULE = 'Password must be at least 8 characters with 1 uppercase, 1 lowercase, and 1 number';
+
+/** The server's English answers a reader can meet, in Italian; any other passes as the server wrote it. */
+const SERVER_WORDS: Record<string, string> = {
+  // A weak password, as the server's validation groups it by field (alone, or after the length check).
+  [`Invalid request: password (${SERVER_PASSWORD_RULE})`]: PASSWORD_RULE_ERROR,
+  [`Invalid request: password (Too small: expected string to have >=8 characters; ${SERVER_PASSWORD_RULE})`]: PASSWORD_RULE_ERROR,
+  'Invalid credentials': 'Email o password non corrette.',
+  'User with this email or username already exists': 'Esiste già un account con questa email o questo nome utente.',
+  'Internal server error': 'Errore del server. Riprova tra poco.',
+  'Not found': 'Non trovato.',
+  'Authentication required': 'Accedi per continuare.',
+  'Admin access required': 'Serve un account di amministrazione.',
+};
+
+let lastConnectionNotice = 0;
+
+/** Tells the reader once (at most every 10 s, as many requests may fail together) that the connection failed. */
+export function reportConnectionFailure(): void {
+  const now = Date.now();
+  if (now - lastConnectionNotice < 10_000) return;
+  lastConnectionNotice = now;
+  try {
+    notify({ type: 'error', message: CONNECTION_FAILED_MESSAGE, duration: 6000, ariaLive: 'assertive' });
+  } catch {
+    // no notification host (tests, the sign-in page): the request's own error still reaches its caller
+  }
+}
+
+/**
+ * A failed refresh: a refused one ends the session; any other keeps it, tells the reader, and returns false so
+ * the caller fails the request alone.
+ */
+export function settleRefreshFailure(error: unknown): boolean {
+  if (isRefreshRefused(error)) {
+    handleUnauthenticated();
+    return true;
+  }
+  reportConnectionFailure();
+  return false;
 }
 
 export async function refreshAccessToken(): Promise<string> {
@@ -68,15 +162,19 @@ export async function refreshAccessToken(): Promise<string> {
  * The access token to send now, for a request that does not go through axios (the
  * scraping calls use fetch: see legalFetch.ts). A token past its expiry is refreshed
  * first, through the same single in-flight promise as every other refresh; when the
- * refresh fails the stale token is returned, and the 401 that follows decides.
+ * refresh fails the stale token is returned, and the 401 that follows decides. With
+ * `skewSeconds`, one that expires within them is refreshed too (a removal held for a
+ * `keepalive` fetch, `deferredRemovals.ts`).
  */
-export async function getFreshAccessToken(): Promise<string | null> {
+export async function getFreshAccessToken(skewSeconds?: number): Promise<string | null> {
   const token = localStorage.getItem('access_token');
-  if (token && isAccessTokenExpired() && localStorage.getItem('refresh_token')) {
+  if (token && isAccessTokenExpired(skewSeconds) && localStorage.getItem('refresh_token')) {
     try {
       return await refreshAccessToken();
-    } catch {
-      // Fall through with the stale token.
+    } catch (error) {
+      // Fall through with the stale token. Refused: the 401 that follows ends the session. A server or network
+      // error: the request may fail without a 401, so the reader is told here that the connection failed.
+      if (!isRefreshRefused(error)) reportConnectionFailure();
     }
   }
   return token;
@@ -112,8 +210,9 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-    // If error is 401 and we haven't retried yet, try to refresh token
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // If error is 401 and we haven't retried yet, try to refresh token. Not for the sign-in and the sign-up: their
+    // 401 answers the credentials, and goes to the form as it is (LC14).
+    if (error.response?.status === 401 && !originalRequest._retry && !CREDENTIAL_URLS.includes(originalRequest.url ?? '')) {
       originalRequest._retry = true;
 
       try {
@@ -125,18 +224,26 @@ apiClient.interceptors.response.use(
 
         return apiClient(originalRequest);
       } catch (refreshError) {
-        // Refresh failed, clear tokens and redirect to login
-        handleUnauthenticated();
-        return Promise.reject(refreshError);
+        // Refused: the session ends. A server or network error: the session stays and the reader is told.
+        if (settleRefreshFailure(refreshError)) return Promise.reject(refreshError);
+        const status = axios.isAxiosError(refreshError) ? refreshError.response?.status : undefined;
+        return Promise.reject({ status, message: CONNECTION_FAILED_MESSAGE, data: undefined });
       }
     }
 
     // For other errors, reject with formatted error
     const responseData = error.response?.data as { detail?: string } | undefined;
+    const status = error.response?.status;
     return Promise.reject({
-      status: error.response?.status,
-      message: responseData?.detail || error.message || 'An error occurred',
+      status,
+      // The server's limit answers in English, and axios's own words («Request failed with status code 500»,
+      // «Network Error») are English too: the reader gets Italian, and what to do.
+      message: status === 429
+        ? tooManyRequestsMessage(error.response?.headers?.['retry-after'])
+        : (responseData?.detail && (SERVER_WORDS[responseData.detail] ?? responseData.detail)) || (status ? `Richiesta non riuscita (errore ${status}). Riprova tra poco.` : NO_ANSWER_MESSAGE),
       data: responseData,
+      // The write limiter's wait, in seconds, for a caller that waits and tries again (an import).
+      retryAfter: error.response?.headers?.['retry-after'],
     });
   }
 );

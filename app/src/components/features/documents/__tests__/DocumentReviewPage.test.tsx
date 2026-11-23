@@ -6,13 +6,32 @@ import userEvent from '@testing-library/user-event';
 import { extractCitations } from '../../../../utils/citationMatcher';
 import { DocumentReviewPage } from '../DocumentReviewPage';
 import { PARERE, testFile } from './fixtures';
+import { REGIONAL_LAW_REFUSAL } from '../../../../utils/regionalLaw';
 
 const navigateMock = vi.fn();
 const triggerSearchMock = vi.fn();
-vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
-vi.mock('../../../../store/useAppStore', () => ({
-  useAppStore: (select: (state: { triggerSearch: typeof triggerSearchMock }) => unknown) => select({ triggerSearch: triggerSearchMock }),
+const routerState = vi.hoisted(() => ({ state: null as unknown }));
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => navigateMock,
+  useLocation: () => ({ state: routerState.state }),
+  Link: ({ to, children, className }: { to: string; children: import('react').ReactNode; className?: string }) => <a href={to} className={className}>{children}</a>,
 }));
+const NO_ALIASES: never[] = [];
+vi.mock('../../../../store/useAppStore', () => ({
+  useAppStore: (select: (state: { triggerSearch: typeof triggerSearchMock; customAliases: never[] }) => unknown) =>
+    select({ triggerSearch: triggerSearchMock, customAliases: NO_ALIASES }),
+}));
+// The server, as recorded for the corpus test: the catalog's names, and the readings of /parse_query_batch.
+const server = vi.hoisted(() => ({ fetchActNames: vi.fn(), readOnServer: vi.fn() }));
+vi.mock('../documentServer', () => server);
+const RECORDED = JSON.parse(readFileSync(resolve(__dirname, 'corpus/server.json'), 'utf8')) as {
+  act_names: string[];
+  answers: Record<string, unknown>;
+};
+const answerAsRecorded = async (queries: string[]) => ({
+  answers: new Map(queries.map((q) => [q, RECORDED.answers[q] ?? { recognized: false, parsed: null }])),
+  unanswered: [],
+});
 
 const input = (container: HTMLElement) => container.querySelector<HTMLInputElement>('input[type="file"]')!;
 
@@ -31,22 +50,66 @@ beforeEach(() => {
   // Framer Motion puts the window's scroll back after measuring a height of `auto`; jsdom has no scrollTo.
   window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
   navigateMock.mockReset();
+  routerState.state = null;
   triggerSearchMock.mockReset();
+  server.fetchActNames.mockReset().mockResolvedValue(RECORDED.act_names);
+  server.readOnServer.mockReset().mockImplementation(answerAsRecorded);
+});
+
+describe('DocumentReviewPage — an act sent by its page («Analizza l’atto»)', () => {
+  it('analyses the act at once, under its title, and leads back to it', async () => {
+    routerState.state = { atto: { id: 'a1', titolo: 'Atto di appello', testo: 'Si applica l’art. 2043 c.c. al caso.' } };
+    render(<DocumentReviewPage />);
+    expect(screen.getByRole('link', { name: /Torna all’atto «Atto di appello»/ })).toHaveAttribute('href', '/work/atti/a1');
+    await waitFor(() => expect(screen.getAllByText('Atto di appello').length).toBeGreaterThan(0));
+    expect(screen.queryByText('Testo incollato')).toBeNull();
+  });
+
+  it('does not say the act stays on the computer — its text is on the server — until another document is chosen (LC29)', async () => {
+    routerState.state = { atto: { id: 'a1', titolo: 'Atto di appello', testo: 'Si applica l’art. 2043 c.c. al caso.' } };
+    render(<DocumentReviewPage />);
+    expect(document.body.textContent).not.toMatch(/resta sul tuo computer/);
+    expect(screen.getByText(/l’atto resta tra i tuoi atti\.$/)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: 'Scegli un altro documento' }));
+    await screen.findByRole('button', { name: /Scegli un file/ });
+    expect(document.body.textContent).toMatch(/Il documento resta sul tuo computer/);
+  });
+});
+
+describe('DocumentReviewPage — a regional law to complete (G-577, #650)', () => {
+  it('says why, in the palette\'s words, and offers no «Completa» to make it a State law', async () => {
+    routerState.state = { atto: { id: 'a1', titolo: 'Parere', testo: 'Rileva l’art. 3 della l.r. Toscana 65/2014. Si veda l’art. 5 del contratto.' } };
+    render(<DocumentReviewPage />);
+    const list = await screen.findByRole('list', { name: /Da completare/ });
+    const rows = within(list).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    const [regional, contract] = rows;
+    expect(within(regional).getByText(REGIONAL_LAW_REFUSAL)).toBeInTheDocument();
+    expect(within(regional).queryByRole('button', { name: /^Completa/ })).toBeNull();
+    // The other row to complete keeps its «Completa».
+    expect(within(contract).getByRole('button', { name: /^Completa/ })).toBeInTheDocument();
+    expect(within(contract).queryByText(REGIONAL_LAW_REFUSAL)).toBeNull();
+  });
 });
 
 describe('DocumentReviewPage — before a document', () => {
-  it('has a title with its phrase and says, to a screen reader too, that nothing leaves the browser', () => {
+  it('has a title with its phrase, which says once what stays and what goes (#376 §6.4, G-401; LC29)', () => {
     render(<DocumentReviewPage />);
-    expect(screen.getByRole('heading', { level: 1, name: 'Analizza documento' })).toHaveClass('font-serif');
-    expect(screen.getByText('Trova le norme citate in un atto: il file resta nel tuo browser.')).toBeInTheDocument();
-    const badge = screen.getByText(/^Resta nel tuo browser/);
-    expect(badge).toHaveTextContent('Resta nel tuo browser: il documento non viene inviato al server né salvato.');
+    // «in sviluppo» beside the title, and the line that says what it means (LC47).
+    expect(screen.getByRole('heading', { level: 1, name: 'Analizza documento in sviluppo' })).toHaveClass('font-serif');
+    expect(screen.getByText('Funziona già, ma è ancora in sviluppo: i risultati vanno controllati. Con l’app da scrivania arriverà una lettura più completa, con un modello di IA che gira sul tuo computer.')).toBeInTheDocument();
+    expect(screen.getByText('Trova le norme citate in un atto. Il documento resta sul tuo computer: a LexCraft arrivano solo le citazioni trovate, come in una ricerca.')).toBeInTheDocument();
+    // Once (Luca, LC29: «è duplicato 2 volte, dai, su»): no badge, nothing in the box.
+    expect(document.body.textContent?.match(/resta sul tuo computer/g)).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Scegli un file/ })).not.toHaveTextContent('resta sul tuo computer');
+    // Nothing on the page says any more that nothing leaves the browser.
+    expect(document.body.textContent).not.toMatch(/resta nel tuo browser/i);
   });
 
   it('opens the file picker from the box, with Enter and Space as with a click', async () => {
     const { container } = render(<DocumentReviewPage />);
     const click = vi.spyOn(input(container), 'click');
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
+    const zone = screen.getByRole('button', { name: /Scegli un file/ });
     zone.focus();
     await userEvent.keyboard('{Enter}');
     await userEvent.keyboard(' ');
@@ -56,21 +119,21 @@ describe('DocumentReviewPage — before a document', () => {
 
   it('follows a file over the window and over the box from `dragover` alone, and reads the file let go on it (D6)', async () => {
     render(<DocumentReviewPage />);
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
+    const zone = screen.getByRole('button', { name: /Scegli un file/ });
     const file = testFile([PARERE], 'trascinato.txt');
     const dataTransfer = { types: ['Files'], files: [file], dropEffect: 'none' };
 
-    // Over the window: the dashes run in ink, the sheets fan out.
+    // Over the window: the dashes run in ink.
     fireEvent.dragOver(document.body, { dataTransfer });
     expect(zone).toHaveAttribute('data-phase', 'page');
     expect(zone).toHaveTextContent('Lascia qui il documento');
-    // Over the box: one line, the sheets open wide.
+    // Over the box: one line.
     fireEvent.dragOver(zone, { dataTransfer });
     expect(zone).toHaveAttribute('data-phase', 'over');
     expect(zone).toHaveTextContent('Rilascia per leggerlo');
     // No event for 400 ms (`DRAG_REST_MS`): the file went away.
     await waitFor(() => expect(zone).toHaveAttribute('data-phase', 'idle'));
-    expect(zone).toHaveTextContent('Scegli un documento');
+    expect(zone).toHaveTextContent('Trascina qui il documento');
     // A child of the box is the box: no `dragleave` to fool it.
     fireEvent.dragOver(zone.querySelector('span.font-serif')!, { dataTransfer });
     expect(zone).toHaveAttribute('data-phase', 'over');
@@ -79,18 +142,6 @@ describe('DocumentReviewPage — before a document', () => {
     expect(zone).toHaveAttribute('data-phase', 'idle');
     expect(screen.getByText('trascinato.txt', { selector: '[title]' })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { level: 2, name: 'trascinato.txt' })).toBeInTheDocument();
-  });
-
-  it('throws the ink sheet to the row when a file is let go on the box, not when it is chosen (D6)', async () => {
-    const { container } = render(<DocumentReviewPage />);
-    const flying = () => document.body.querySelector(':scope > div.fixed[aria-hidden]');
-    await userEvent.upload(input(container), testFile([PARERE], 'scelto.txt'));
-    expect(flying()).toBeNull();
-    await screen.findByRole('heading', { level: 2, name: 'scelto.txt' });
-    await userEvent.click(screen.getByRole('button', { name: 'Scegli un altro documento' }));
-    const again = await screen.findByRole('button', { name: /Scegli un documento/ });
-    fireEvent.drop(again, { dataTransfer: { types: ['Files'], files: [testFile([PARERE], 'lasciato.txt')], dropEffect: 'none' } });
-    expect(flying()).not.toBeNull();
   });
 
   it('a file chosen while another is read wins: the older answer is dropped', async () => {
@@ -107,7 +158,7 @@ describe('DocumentReviewPage — before a document', () => {
 
   it('reads the first of several files let go, and says the others were not read (D6)', async () => {
     render(<DocumentReviewPage />);
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
+    const zone = screen.getByRole('button', { name: /Scegli un file/ });
     const files = [testFile([PARERE], 'primo.txt'), testFile(['x'], 'secondo.txt'), testFile(['y'], 'terzo.txt')];
     fireEvent.drop(zone, { dataTransfer: { types: ['Files'], files, dropEffect: 'none' } });
     expect(screen.getByText('Letto il primo dei 3 file: uno alla volta')).toBeInTheDocument();
@@ -116,7 +167,7 @@ describe('DocumentReviewPage — before a document', () => {
 
   it('a text or a link dragged over the page changes nothing, and is not taken', () => {
     render(<DocumentReviewPage />);
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
+    const zone = screen.getByRole('button', { name: /Scegli un file/ });
     for (const types of [['text/plain'], ['text/uri-list', 'text/plain']]) {
       const over = new Event('dragover', { bubbles: true, cancelable: true });
       Object.defineProperty(over, 'dataTransfer', { value: { types, files: [], dropEffect: 'none' } });
@@ -130,7 +181,7 @@ describe('DocumentReviewPage — before a document', () => {
     const removed = vi.spyOn(window, 'removeEventListener');
     const cleared = vi.spyOn(window, 'clearTimeout');
     const { unmount } = render(<DocumentReviewPage />);
-    fireEvent.dragOver(screen.getByRole('button', { name: /Scegli un documento/ }), { dataTransfer: { types: ['Files'], files: [], dropEffect: 'none' } });
+    fireEvent.dragOver(screen.getByRole('button', { name: /Scegli un file/ }), { dataTransfer: { types: ['Files'], files: [], dropEffect: 'none' } });
     unmount();
     expect(removed.mock.calls.map(([type]) => type)).toEqual(expect.arrayContaining(['dragover', 'drop']));
     expect(cleared).toHaveBeenCalled();
@@ -149,7 +200,7 @@ describe('DocumentReviewPage — before a document', () => {
     expect(css).toMatch(/\.group:hover \.vlx-dash, \.group:focus-visible \.vlx-dash \{ animation-play-state: running; \}/);
     expect(css).toMatch(/\.group\[data-tab-hidden\] \.vlx-dash, \.group\[data-tab-hidden\] \.vlx-dash-run \{ animation-play-state: paused; \}/);
     render(<DocumentReviewPage />);
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
+    const zone = screen.getByRole('button', { name: /Scegli un file/ });
     expect(zone).toHaveClass('group');
     expect(zone).not.toHaveAttribute('data-tab-hidden');
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
@@ -158,14 +209,6 @@ describe('DocumentReviewPage — before a document', () => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
     act(() => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(zone).not.toHaveAttribute('data-tab-hidden');
-  });
-
-  it('keeps the promise in sight in every state: the file stays in the browser', () => {
-    render(<DocumentReviewPage />);
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
-    expect(zone).toHaveTextContent('Il file resta nel tuo browser');
-    fireEvent.dragOver(zone, { dataTransfer: { types: ['Files'], files: [], dropEffect: 'none' } });
-    expect(zone).toHaveTextContent('Il file resta nel tuo browser');
   });
 
   it('refuses a file let go outside the box, so the browser does not open it in place of the app', () => {
@@ -178,11 +221,11 @@ describe('DocumentReviewPage — before a document', () => {
 
   it('does not keep the drop wording when the box comes back', async () => {
     const { container } = render(<DocumentReviewPage />);
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
+    const zone = screen.getByRole('button', { name: /Scegli un file/ });
     fireEvent.dragOver(zone, { dataTransfer: { types: ['Files'], files: [], dropEffect: 'none' } });
     await choose(container, PARERE);
     await userEvent.click(screen.getByRole('button', { name: 'Scegli un altro documento' }));
-    expect(await screen.findByRole('button', { name: /Scegli un documento/ })).toHaveTextContent('Scegli un documento');
+    expect(await screen.findByRole('button', { name: /Scegli un file/ })).toHaveTextContent('Trascina qui il documento');
   });
 
   it('says each step on the document\'s row, honestly, and announces it (D6)', async () => {
@@ -219,7 +262,7 @@ describe('DocumentReviewPage — before a document', () => {
     await waitFor(() => expect(container.querySelector('[data-stage="error"]')).toHaveTextContent('Il documento non contiene testo leggibile.'));
     await userEvent.click(screen.getByRole('button', { name: 'Chiudi l’avviso' }));
     await waitFor(() => expect(container.querySelector('[data-stage]')).toBeNull());
-    expect(screen.getByRole('button', { name: /Scegli un documento/ })).toHaveFocus();
+    expect(screen.getByRole('button', { name: /Scegli un file/ })).toHaveFocus();
   });
 
   it('on a phone says to tap, with no word of dragging', () => {
@@ -227,8 +270,8 @@ describe('DocumentReviewPage — before a document', () => {
     window.matchMedia = ((query: string) => ({ matches: query.includes('hover: none'), media: query, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
     try {
       render(<DocumentReviewPage />);
-      const zone = screen.getByRole('button', { name: /Tocca per scegliere un documento/ });
-      expect(zone).not.toHaveTextContent('trascinalo');
+      const zone = screen.getByRole('button', { name: /^Scegli un documento/ });
+      expect(zone).not.toHaveTextContent(/trascina/i);
     } finally {
       window.matchMedia = original;
     }
@@ -306,7 +349,7 @@ describe('DocumentReviewPage — the result', () => {
     expect(again.className).toMatch(/md:min-h-11/);
     expect(again.className).not.toMatch(/md:min-h-9/);
     await userEvent.click(again);
-    const zone = await screen.findByRole('button', { name: /Scegli un documento/ });
+    const zone = await screen.findByRole('button', { name: /Scegli un file/ });
     await waitFor(() => expect(zone).toHaveFocus());
     await waitFor(() => expect(screen.queryByText('6 citazioni in 2 atti', { selector: 'p:not([aria-live])' })).not.toBeInTheDocument());
   });
@@ -344,15 +387,6 @@ describe('DocumentReviewPage — motion', () => {
     delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
   });
 
-  it('under reduced motion throws no sheet when a file is let go (D6)', async () => {
-    reduceMotion(true);
-    render(<DocumentReviewPage />);
-    const zone = screen.getByRole('button', { name: /Scegli un documento/ });
-    fireEvent.drop(zone, { dataTransfer: { types: ['Files'], files: [testFile([PARERE], 'fermo.txt')], dropEffect: 'none' } });
-    expect(document.body.querySelector(':scope > div.fixed[aria-hidden]')).toBeNull();
-    expect(await screen.findByRole('heading', { level: 2, name: 'fermo.txt' })).toBeInTheDocument();
-  });
-
   it('scrolls the text column (not the window) to the citation chosen in the list, and pulses it once', async () => {
     reduceMotion(false);
     const { container } = render(<DocumentReviewPage />);
@@ -385,14 +419,22 @@ describe('DocumentReviewPage — motion', () => {
     expect(animate).not.toHaveBeenCalled();
   });
 
-  it('under reduced motion, jumps to the citation and does not pulse it', async () => {
-    reduceMotion(true);
-    const { container } = render(<DocumentReviewPage />);
-    await choose(container, PARERE);
-    const list = screen.getByRole('complementary', { name: 'Citazioni' });
-    await userEvent.click(within(list).getByText('art. 1455').closest('button')!);
-    expect(scrollTo.mock.calls[0][0]).toMatchObject({ behavior: 'auto' });
-    expect(animate).not.toHaveBeenCalled();
+  // LC117: the ring is measured, not assumed. `animate` is installed, so «not called» says the ring did not run.
+  it.each([[false, 1], [true, 0]])('under reduced motion %s, pulses the citation reached %i times', async (reduce, rings) => {
+    reduceMotion(reduce);
+    const original = HTMLElement.prototype.animate;
+    HTMLElement.prototype.animate = animate as unknown as HTMLElement['animate'];
+    try {
+      const { container } = render(<DocumentReviewPage />);
+      await choose(container, PARERE);
+      const list = screen.getByRole('complementary', { name: 'Citazioni' });
+      await userEvent.click(within(list).getByText('art. 1455').closest('button')!);
+      expect(scrollTo.mock.calls[0][0]).toMatchObject({ behavior: reduce ? 'auto' : 'smooth' });
+      const ringCalls = animate.mock.calls.filter(([frames]) => JSON.stringify(frames).includes('boxShadow'));
+      expect(ringCalls).toHaveLength(rings);
+    } finally {
+      HTMLElement.prototype.animate = original;
+    }
   });
 
   it('lets the text column be scrolled from the keyboard', async () => {
@@ -426,12 +468,12 @@ describe('DocumentReviewPage — the worst cases', () => {
     expect(textBody().className).toMatch(/\[overflow-wrap:anywhere\]/);
   });
 
-  it('sizes both columns to the window less the page\'s foot, which grows under the feedback button (G8c)', async () => {
+  it('sizes both columns to the window less what stands above them and the page\'s 2 rem foot', async () => {
     const { container } = render(<DocumentReviewPage />);
     await choose(container, PARERE);
     const text = screen.getByRole('region', { name: 'Testo del documento' });
     const list = screen.getByRole('complementary', { name: 'Citazioni' });
-    for (const column of [text, list]) expect(column).toHaveClass('lg:h-[calc(100dvh-15rem-var(--page-foot,2rem))]');
+    for (const column of [text, list]) expect(column).toHaveClass('lg:h-[calc(100dvh-17rem)]');
   });
 
   it('wraps a very long file name instead of widening the page, and keeps it whole for the pointer', async () => {
@@ -441,5 +483,132 @@ describe('DocumentReviewPage — the worst cases', () => {
     expect(heading).toHaveAttribute('title', name);
     expect(heading.className).toMatch(/\[overflow-wrap:anywhere\]/);
     expect(heading.className).toMatch(/line-clamp-2/);
+  });
+});
+
+describe('DocumentReviewPage — one recognizer with the search (design 2026-10-29-document-analysis)', () => {
+  const BRIEF = [
+    'Memoria del convenuto, Mario Bianchi.',
+    'Il datore risponde ai sensi dell’art. 82 GDPR e degli artt. 13 e 14 GDPR.',
+    'Visto il d.lgs. 81/2008, l’art. 18 del medesimo decreto impone obblighi di sicurezza.',
+    'L’art. 7 del contratto prevede una penale; restano gli artt. 167 e ss. del Codice privacy.',
+  ].join('\n');
+
+  it('asks the names of the acts once, when the page opens, before any file', async () => {
+    const { container } = render(<DocumentReviewPage />);
+    await waitFor(() => expect(server.fetchActNames).toHaveBeenCalledTimes(1));
+    await choose(container, BRIEF, 'memoria.txt');
+    await userEvent.click(screen.getByRole('button', { name: 'Scegli un altro documento' }));
+    await screen.findByRole('button', { name: /Scegli un file/ });
+    await choose(container, PARERE);
+    expect(server.fetchActNames).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the server only the query strings the browser cannot settle, never the text around them', async () => {
+    const { container } = render(<DocumentReviewPage />);
+    await choose(container, BRIEF, 'memoria.txt');
+    expect(server.readOnServer).toHaveBeenCalledTimes(1);
+    const sent = server.readOnServer.mock.calls[0][0] as string[];
+    // «art. 167 Codice privacy» the client parser reads by itself.
+    expect(sent).toEqual(['art. 82 GDPR', 'art. 13 e 14 GDPR']);
+    for (const query of sent) {
+      expect(query).not.toMatch(/Bianchi|datore|contratto|memoria/i);
+      expect(query.length).toBeLessThanOrEqual(200);
+    }
+  });
+
+  it('lists what the search reads, an inherited article with its act, and counts what is left to complete', async () => {
+    const { container } = render(<DocumentReviewPage />);
+    await choose(container, BRIEF, 'memoria.txt');
+    // art. 82, 13, 14 GDPR; art. 18 d.lgs. 81/2008 «dal contesto»; art. 167 e ss. Codice privacy; «art. 7 del contratto» to complete.
+    expect(visible('5 citazioni in 3 atti · 1 da completare')).toBeInTheDocument();
+    const list = screen.getByRole('complementary', { name: 'Citazioni' });
+    expect(within(list).getByRole('heading', { level: 3, name: /^reg\. \(UE\) 2016\/679\s+3 citazioni$/ })).toBeInTheDocument();
+    expect(within(list).getByRole('heading', { level: 3, name: /^d\.lgs\. 81\/2008\s+1 citazione$/ })).toBeInTheDocument();
+    expect(within(list).getByText('art. 167 e ss.')).toBeInTheDocument();
+    // A list marks each article on its own number.
+    // An inherited one is dashed, one to complete dotted (#376 §5.6).
+    const marks = Array.from(textBody().querySelectorAll('mark')).map((mark) => [mark.textContent, mark.dataset.kind]);
+    expect(marks).toEqual([
+      ['art. 82 GDPR', 'own'], ['artt. 13', 'own'], ['14 GDPR', 'own'], ['art. 18', 'context'], ['art. 7', 'incomplete'],
+      ['artt. 167 e ss. del Codice privacy', 'own'],
+    ]);
+    expect(textBody().querySelector('[data-kind="context"]')!.className).toMatch(/decoration-dashed/);
+    expect(textBody().querySelector('[data-kind="incomplete"]')!.className).toMatch(/decoration-dotted decoration-slate-400/);
+    expect(screen.queryByText(/LexCraft non risponde/)).toBeNull();
+  });
+
+  it('opens an inherited citation with the act its words name («del medesimo decreto»)', async () => {
+    const { container } = render(<DocumentReviewPage />);
+    await choose(container, BRIEF, 'memoria.txt');
+    await userEvent.click(screen.getByRole('button', { name: 'Apri art. 18 d.lgs. 81/2008' }));
+    expect(triggerSearchMock).toHaveBeenCalledWith({
+      act_type: 'decreto legislativo', act_number: '81', date: '2008', article: '18', version: 'vigente', version_date: '',
+    });
+  });
+
+  it('says the batch\'s notice once, in the API\'s words, in the flow of the list (G-577)', async () => {
+    const NOTICE = 'Dal 1° gennaio 2027 si applica il testo unico delle imposte sui redditi (d.lgs. 19 giugno 2026, n. 117, allegato 1).';
+    server.readOnServer.mockImplementationOnce(async (queries: string[]) => {
+      const { answers, unanswered } = await answerAsRecorded(queries);
+      return { answers: new Map([...answers].map(([q, a]) => [q, (a as { recognized?: boolean }).recognized ? { ...a, notice: NOTICE } : a])), unanswered };
+    });
+    const { container } = render(<DocumentReviewPage />);
+    await choose(container, BRIEF, 'memoria.txt');
+    const lines = await screen.findAllByText(NOTICE);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].closest('aside')).toHaveAttribute('aria-labelledby', 'doc-citations');
+  });
+
+  it('when the server is silent, keeps what the browser reads, says so, and asks again with «Riprova» for the rest only', async () => {
+    server.readOnServer.mockImplementationOnce(async (queries: string[]) => ({ answers: new Map(), unanswered: queries }));
+    const { container } = render(<DocumentReviewPage />);
+    await choose(container, BRIEF, 'memoria.txt');
+    const notice = screen.getByRole('status');
+    expect(notice).toHaveTextContent('LexCraft non risponde: ho riconosciuto solo le forme che conosco nel browser.');
+    // What the browser reads stays found; the GDPR's citations wait.
+    expect(visible('2 citazioni in 2 atti · 4 da completare')).toBeInTheDocument();
+    await userEvent.click(within(notice).getByRole('button', { name: 'Riprova' }));
+    await waitFor(() => expect(visible('5 citazioni in 3 atti · 1 da completare')).toBeInTheDocument());
+    expect(server.readOnServer).toHaveBeenCalledTimes(2);
+    expect(server.readOnServer.mock.calls[1][0]).toEqual(['art. 82 GDPR', 'art. 13 e 14 GDPR']);
+    expect(screen.queryByText(/LexCraft non risponde/)).toBeNull();
+  });
+
+  it('stops asking the server for a document that was replaced, and says a fault on the row', async () => {
+    let release: () => void = () => {};
+    server.readOnServer.mockImplementationOnce((_queries: string[], signal: AbortSignal) => new Promise((_resolve, reject) => {
+      release = () => reject(new Error('never'));
+      signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    const { container } = render(<DocumentReviewPage />);
+    await userEvent.upload(input(container), testFile([BRIEF], 'prima.txt'));
+    await waitFor(() => expect(server.readOnServer).toHaveBeenCalledTimes(1));
+    const first = server.readOnServer.mock.calls[0][1] as AbortSignal;
+    await choose(container, PARERE, 'seconda.txt');
+    expect(first.aborted).toBe(true);
+    release();
+
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    server.readOnServer.mockRejectedValueOnce(new TypeError('a bug'));
+    await userEvent.click(screen.getByRole('button', { name: 'Scegli un altro documento' }));
+    await screen.findByRole('button', { name: /Scegli un file/ });
+    await userEvent.upload(input(container), testFile([BRIEF], 'terza.txt'));
+    await waitFor(() => expect(container.querySelector('[data-stage="error"]')).toHaveTextContent('Non è stato possibile cercare le citazioni in questo documento.'));
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('without the catalog, finds what the client knows by itself and says so; «Riprova» asks for the catalog again', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    server.fetchActNames.mockRejectedValueOnce(new Error('offline'));
+    const { container } = render(<DocumentReviewPage />);
+    await choose(container, PARERE);
+    expect(visible('6 citazioni in 2 atti')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('LexCraft non risponde');
+    await userEvent.click(screen.getByRole('button', { name: 'Riprova' }));
+    await waitFor(() => expect(screen.queryByText(/LexCraft non risponde/)).toBeNull());
+    expect(server.fetchActNames).toHaveBeenCalledTimes(2);
+    error.mockRestore();
   });
 });

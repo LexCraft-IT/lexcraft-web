@@ -1,4 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
+import { dur, ease } from '../../../lib/motion';
 import { ArrowLeft } from 'lucide-react';
 import { useAppStore } from '../../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -49,17 +50,19 @@ export function ReadingBackControl({ bottomOffset = 16 }: ReadingBackControlProp
           initial={{ opacity: 0, y: 8, x: '-50%' }}
           animate={{ opacity: 1, y: 0, x: '-50%' }}
           exit={{ opacity: 0, y: 8, x: '-50%' }}
-          transition={{ duration: 0.15, ease: 'easeOut' }}
+          transition={{ duration: dur.press, ease: ease.out }}
           style={{ bottom: bottomOffset }}
           className={cn('fixed left-1/2 px-4', Z_INDEX.structure)}
         >
+          {/* bare-button: the floating way back, a dark pill over the foot of the text. */}
           <button
+            type="button"
             onClick={handleBack}
             className={cn(
               'flex items-center gap-2 px-4 py-2 rounded-full max-w-[min(90vw,26rem)]',
               'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900',
               'text-sm font-medium shadow-lg transition-transform active:scale-95',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+              'focus-visible:outline-none ',
             )}
           >
             <ArrowLeft size={16} className="shrink-0" />

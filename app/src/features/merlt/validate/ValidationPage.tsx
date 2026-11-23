@@ -7,6 +7,7 @@ import { Button } from '../../../components/ui/Button';
 import { PAGE_TITLE } from '../../../components/layout/PageFrame';
 import { Toast } from '../../../components/ui/Toast';
 import { useMerltFeatures } from '../useMerltFeatures';
+import { LabsOff } from '../LabsOff';
 import { ValidationCard, type ValidationCardModel } from './ValidationCard';
 import { ProvisionalReviewSection } from './ProvisionalReviewSection';
 import {
@@ -177,14 +178,14 @@ export function ValidationPage() {
     }
   };
 
-  if (!merltEnabled) return <p className="text-slate-600 dark:text-slate-300">MERL-T non è disponibile.</p>;
+  if (!merltEnabled) return <LabsOff />;
   if (!canValidate) {
     return (
       <div className="space-y-3">
         <p className="text-slate-600 dark:text-slate-300">
           Per validare le proposte della community serve il consenso <strong>Completo</strong>.
         </p>
-        <Link to="/merlt">
+        <Link to="/labs">
           <Button variant="secondary" size="sm">Vai alle impostazioni MERL-T</Button>
         </Link>
       </div>
@@ -194,7 +195,7 @@ export function ValidationPage() {
   return (
     <div className="space-y-6">
       <header>
-        <Link to="/merlt" className="mb-2 inline-flex min-h-[44px] items-center gap-1 rounded text-sm text-slate-500 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 md:min-h-0 dark:text-slate-400 dark:hover:text-slate-200">
+        <Link to="/labs" className="mb-2 inline-flex min-h-[44px] items-center gap-1 rounded text-sm text-slate-500 hover:text-slate-700 focus-visible:outline-none md:min-h-0 dark:text-slate-400 dark:hover:text-slate-200">
           <ArrowLeft size={14} /> MERL-T
         </Link>
         <h1 className={PAGE_TITLE}>Validazione community</h1>

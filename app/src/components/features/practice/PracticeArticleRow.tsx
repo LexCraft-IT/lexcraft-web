@@ -1,16 +1,23 @@
 import { useMemo, type ReactNode } from 'react';
-import { Zap } from 'lucide-react';
+import { useSimpleReading } from './simpleReading';
+import { retryRowText, useRowText } from './useRowText';
+import { RowTextStatus } from './RowTextStatus';
+import { Button } from '../../ui/Button';
+import { Star, Zap } from 'lucide-react';
 import { useAppStore } from '../../../store/useAppStore';
 import type { ArticleData } from '../../../types';
 import { ArticleTabContent } from '../search/ArticleTabContent';
+import { StatusLineEnd } from '../search/statusLineEnd';
 import { articleLabel } from '../dossier/dossierLayout';
 import { getRubricText, parseArticleStructure } from '../../../utils/articleStructure';
 import { historicalItemLabel } from '../../../utils/versionDisplay';
 import { shortNorm } from '../../../utils/sources';
-import { PracticeRowShell, type RowBeside } from './PracticeRowShell';
+import { NotInDossier, PracticeRowShell, type RowBeside } from './PracticeRowShell';
+import { useArticleInDossier } from './inDossier';
 import { articleRowKey, articleWindowId, besideRefFor, practiceArticleKey } from '../../../utils/practice';
 import { useIsDesktop } from '../../../hooks/useIsDesktop';
 import { quickNormParamsOf } from '../../../utils/quickNormParams';
+import { openPracticeWindow } from './practiceSwitch';
 
 export interface PracticeArticleRowProps {
   practiceId: string;
@@ -20,6 +27,10 @@ export interface PracticeArticleRowProps {
   onOpenStudyMode: () => void;
   /** Drawn inside the open row, above the text: the annex suggestion that concerns this article. */
   annexSuggestion?: ReactNode;
+  /** Lettura semplice (LC70): the act's article selector, at the end of the text's status line. */
+  statusEnd?: ReactNode;
+  /** From the act's index, for a row whose text is not read yet (a dossier's «Fonti», LC86). */
+  rubrica?: string | null;
 }
 
 /**
@@ -29,18 +40,23 @@ export interface PracticeArticleRowProps {
  * (`practiceRows`, T15), so a reveal opens it from anywhere.
  */
 export function PracticeArticleRow({
-  practiceId, actId, article, onCrossReference, onOpenStudyMode, annexSuggestion,
+  practiceId, actId, article, onCrossReference, onOpenStudyMode, annexSuggestion, statusEnd, rubrica: indexRubrica = null,
 }: PracticeArticleRowProps) {
+  const { simple } = useSimpleReading();
   const articleKey = practiceArticleKey(article);
   const rowKey = articleRowKey(practiceId, actId, articleKey);
   const isOpen = useAppStore((s) => s.practiceRows[rowKey] === true);
+  const textState = useRowText(practiceId, actId, article, simple || isOpen);
   // Among the quick norms (R3b): its toggle is an entry of the reader's «⋯», so the row says it, open or folded, by the
   // reader's own rule (`isQuickNorm`, so the two never disagree) — for the text in force only: a quick norm opens that one.
   const quickParams = useMemo(() => quickNormParamsOf(article.norma_data), [article.norma_data]);
   const isQuick = useAppStore((s) => s.quickNorms.length > 0 && !historicalItemLabel(article.norma_data) && s.isQuickNorm(quickParams));
   const setRowOpen = useAppStore((s) => s.setRowOpen);
   const removePracticeArticle = useAppStore((s) => s.removePracticeArticle);
-  const openBeside = useAppStore((s) => s.openBeside);
+  // In a dossier's «Lettura» (LC55): in the dossier or not; undefined in the Corpus.
+  const dossier = useArticleInDossier(article.norma_data);
+  // In the Corpus (LC59): «Aggiungi al dossier» through the reader's popover, and the dossiers that hold it.
+  const corpusItem = useMemo(() => ({ norma: article.norma_data }), [article.norma_data]);
   const closeBeside = useAppStore((s) => s.closeBeside);
   const openPhoneReader = useAppStore((s) => s.openPhoneReader);
   const closePhoneReader = useAppStore((s) => s.closePhoneReader);
@@ -50,18 +66,20 @@ export function PracticeArticleRow({
   const isDesktop = useIsDesktop();
   const beside = useMemo<RowBeside>(() => isDesktop ? {
     shown: shownBeside,
-    onOpen: () => openBeside(practiceId, besideRefFor({ kind: 'article', actId, articleKey })),
+    // The overview gives way to the reading view, through the passage (L-62), this row with it: the window takes the focus.
+    onOpen: () => openPracticeWindow(practiceId, besideRefFor({ kind: 'article', actId, articleKey })),
     onClose: () => closeBeside(practiceId, windowId),
   } : {
     shown: false,
     onOpen: () => openPhoneReader(practiceId, besideRefFor({ kind: 'article', actId, articleKey })),
     onClose: closePhoneReader,
-  }, [isDesktop, shownBeside, openBeside, closeBeside, openPhoneReader, closePhoneReader, practiceId, actId, articleKey, windowId]);
+  }, [isDesktop, shownBeside, closeBeside, openPhoneReader, closePhoneReader, practiceId, actId, articleKey, windowId]);
 
   const { norma_data: norma } = article;
   const text = article.article_text || '';
   // From the article's own text: no request (spec §3.2).
-  const rubrica = useMemo(() => (text ? getRubricText(text, parseArticleStructure(text)) : null), [text]);
+  const textRubrica = useMemo(() => (text ? getRubricText(text, parseArticleStructure(text)) : null), [text]);
+  const rubrica = textRubrica ?? indexRubrica;
   // "Testo al 29/12/2007": what was asked for, beside the text, never in it (gotcha 32).
   const historicalLabel = historicalItemLabel(norma);
   // Where a jump out of this row walks back to: the practice, the act, and this row by its key, so
@@ -76,6 +94,59 @@ export function PracticeArticleRow({
   const named = shortNorm(norma)
     + (historicalLabel ? `, ${historicalLabel.charAt(0).toLowerCase()}${historicalLabel.slice(1)}` : '');
 
+  // A bound row's text still coming, or failed (LC54): said in its place, never an empty reader.
+  const reader = textState ? <RowTextStatus state={textState} onRetry={() => retryRowText(practiceId, actId, article)} /> : (
+    <ArticleTabContent
+      data={article}
+      onCrossReferenceNavigate={onCrossReference}
+      onOpenStudyMode={onOpenStudyMode}
+      readingOrigin={readingOrigin}
+      dossierItemId={dossier?.itemId}
+      // The row's header (or, in Lettura semplice of a dossier, the line over the text) has the add (LC61).
+      dossierCommandInRow={!simple || dossier !== undefined}
+    />
+  );
+
+  // Lettura semplice (LC28): the article alone, its own heading in the text («Art. 530 / Sentenza di assoluzione») the
+  // only one; no row heading repeating it, no fold. The reading toolbar pins under the act's heading as in the table.
+  if (simple) {
+    return (
+      <div className="pt-2" style={{ ['--reading-toolbar-top' as string]: 'var(--practice-head, 0px)' }}>
+        {/* No row heading here: the mark and «Aggiungi al dossier» stand over the text; «Togli…» is the act's «⋯». */}
+        {dossier && !dossier.inDossier && (
+          <p className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+            <NotInDossier />
+            {dossier.add && (
+              <Button type="button" variant="quiet" onClick={dossier.add} className="px-2 text-sm">
+                Aggiungi alla pratica
+              </Button>
+            )}
+          </p>
+        )}
+        {/* No row «⋯» here: the star stands over the text with its name (LC58), as the act's commands do. */}
+        {dossier?.inDossier && (
+          <p className="mb-2 text-sm">
+            {/* One name, the state in `aria-pressed` and the star's fill (LC61). */}
+            <Button
+              type="button"
+              variant="quiet"
+              aria-pressed={dossier.important}
+              onClick={dossier.toggleImportant}
+              icon={<Star size={14} aria-hidden className={dossier.important ? 'fill-amber-400 text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'} />}
+              className="gap-1.5 px-2 text-sm hover:bg-amber-50 dark:hover:bg-amber-900/20"
+            >
+              Importante
+            </Button>
+          </p>
+        )}
+        {annexSuggestion}
+        {/* A text still coming has no status line: the selector waits on its own, to the right. */}
+        {textState && statusEnd && <div className="flex justify-end">{statusEnd}</div>}
+        <StatusLineEnd.Provider value={statusEnd ?? null}>{reader}</StatusLineEnd.Provider>
+      </div>
+    );
+  }
+
   return (
     <PracticeRowShell
       rowKey={rowKey}
@@ -86,13 +157,15 @@ export function PracticeArticleRow({
       removeName={named}
       onRemove={() => removePracticeArticle(practiceId, actId, articleKey)}
       beside={beside}
+      dossier={dossier}
+      corpusItem={corpusItem}
       header={(
         <>
           <span className="min-w-0 flex-1 truncate text-sm md:text-[15px]">
             <span className="font-medium text-slate-900 dark:text-white">{articleLabel(norma)}</span>
             {rubrica && (
               <span className="text-slate-500 dark:text-slate-400">
-                {' — '}
+                {' · '}
                 <span>{rubrica}</span>
               </span>
             )}
@@ -113,12 +186,7 @@ export function PracticeArticleRow({
       regionStyle={{ ['--reading-toolbar-top' as string]: 'var(--practice-head, 0px)' }}
     >
       {annexSuggestion}
-      <ArticleTabContent
-        data={article}
-        onCrossReferenceNavigate={onCrossReference}
-        onOpenStudyMode={onOpenStudyMode}
-        readingOrigin={readingOrigin}
-      />
+      {reader}
     </PracticeRowShell>
   );
 }

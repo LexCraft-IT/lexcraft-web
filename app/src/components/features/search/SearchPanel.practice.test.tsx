@@ -73,8 +73,9 @@ import { actKeyOf } from '../dossier/dossierLayout';
 import { searchesIntoOnePractice } from '../dossier/openInPractice';
 import { computeNormaGroups } from '../dossier/dossierUtils';
 import { WORKSPACE_AREA_ID } from '../../../utils/workspaceOrigin';
-import { besideRefFor, practiceArticleKey } from '../../../utils/practice';
+import { besideRefFor, practiceArticleKey, searchTableLabel } from '../../../utils/practice';
 import type { Dossier } from '../../../types';
+import { notificationStore, resetNotifications } from '../../ui/notifications/notifications';
 
 const s = () => appStore.getState();
 const CC = { tipo_atto: 'codice civile', data: '1942-03-16', numero_atto: '262', url: 'urn:nir:stato:regio.decreto:1942-03-16;262' };
@@ -94,10 +95,11 @@ beforeEach(() => {
   env.tree = null;
   env.jumpTo = '';
   env.annex.ENABLED = false;
+  resetNotifications();
   appStore.setState({
     practices: [], activePracticeId: null, practiceRows: {}, pendingReveal: null,
     practiceNotice: null, searchTrigger: null, searchQueue: [], pendingDecision: null,
-    readingBackStack: [], commandPaletteOpen: false, structureWindow: { blockId: null, position: { x: 0, y: 0 } },
+    readingBackStack: [], commandPaletteOpen: false, structureWindow: { blockId: null },
   });
 });
 afterEach(() => {
@@ -167,12 +169,12 @@ describe.each([
 });
 
 describe('SearchPanel with the practices: where a search lands (spec §5.1)', () => {
-  it('a search with no practice creates one named after the act (`shortAct`)', async () => {
+  it('a search with no practice creates one named «Ricerca del …» today (LC68)', async () => {
     env.lines = [ccArticle('2043')];
     panel();
     act(() => { s().triggerSearch(params('2043')); });
     await waitFor(() => expect(s().practices).toHaveLength(1));
-    expect(s().practices[0].label).toBe('c.c.');
+    expect(s().practices[0].label).toBe(searchTableLabel(new Date()));
     expect(s().activePracticeId).toBe(s().practices[0].id);
   });
 
@@ -202,9 +204,10 @@ describe('SearchPanel with the practices: where a search lands (spec §5.1)', ()
   });
 
   it('a citation jump from a row, then the back control, reveals the row left', async () => {
-    env.lines = [ccArticle('2043')];
+    // Two articles: one alone is the simple reading (LC28), whose row does not close.
+    env.lines = [ccArticle('2043'), ccArticle('2044')];
     panel();
-    act(() => { s().triggerSearch(params('2043')); });
+    act(() => { s().triggerSearch(params('2043-2044')); });
     await waitFor(() => expect(readers()).toEqual(['art. 2043']));
     const { id: practiceId, acts } = s().practices[0];
     act(() => {
@@ -358,17 +361,16 @@ describe('SearchPanel with the practices: the rest of the review (round 1)', () 
     expect(s().activePracticeId).toBe(b);
   });
 
-  it('the column\'s bottom padding follows the bar\'s measured height (§3.4)', async () => {
-    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.id === 'tour-practice-bar' ? 138 : 0;
-    });
+  // LC21: the bar is a row above the workspace, in the flow; it covers nothing, so the room it asks is 0.
+  it('draws no bar of practices: the Ricerca is one reading bench of the session (LC60)', async () => {
     const p = s().createPractice('P');
     s().addArticlesToPractice(p, CC, [ccArticle('2043')]);
+    s().createPractice('Altra', { activate: false });
     panel();
     const column = await screen.findByTestId('practice-column');
-    await waitFor(() => expect(document.getElementById(WORKSPACE_AREA_ID)?.style.getPropertyValue('--practice-bar-height')).toBe('138px'));
+    expect(screen.queryByRole('navigation', { name: 'Pratiche' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Nuova pratica' })).toBeNull();
     expect(document.getElementById(WORKSPACE_AREA_ID)?.contains(column)).toBe(true);
-    expect(column.className).toContain('var(--practice-bar-height');
   });
 
   it('the migration\'s notice survives a change of breakpoint until it is closed', async () => {
@@ -461,7 +463,8 @@ describe('SearchPanel with the practices: the phone\'s full-screen reader (spec 
     await screen.findByTestId('reading-full-screen');
     act(() => { s().triggerMultiSearch(searchesIntoOnePractice(dossier, computeNormaGroups(dossier.items), true)); });
     await waitFor(() => expect(screen.queryByTestId('reading-full-screen')).toBeNull());
-    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Ricorso Rossi');
+    // LC68: the table has no name on screen; the one shown is the active one.
+    expect(s().practices.find((x) => x.id === s().activePracticeId)?.label).toBe('Ricorso Rossi');
     await waitFor(() => expect(s().practices.find((x) => x.label === 'Ricorso Rossi')?.acts[0]?.articles).toHaveLength(1));
     expect(s().phoneReader).toBeNull();
   });
@@ -490,6 +493,62 @@ describe('SearchPanel with the practices: the phone\'s full-screen reader (spec 
     expect(s().phoneReader).toBeNull();
     expect(await screen.findByTestId('practice-column')).toBeInTheDocument();
     expect(s().practiceRows[`${p}/${actId}/${practiceArticleKey(ccArticle('1218'))}`]).toBe(true);
+  });
+});
+
+describe('SearchPanel — an interrupted stream (D-323)', () => {
+  const timeBudget = (missing: string[]) => ({
+    error: `Caricamento interrotto: tempo esaurito. Ne mancano ${missing.length}: riprova per quelli.`,
+    kind: 'time_budget',
+    missing,
+  });
+  const notices = () => notificationStore.getState().entries;
+
+  it('the time-budget line raises one lasting warning with N, M and K, not «Risultato parziale»', async () => {
+    s().createPractice('P');
+    env.lines = [ccArticle('1'), ccArticle('2'), timeBudget(['3', '4', '5'])];
+    panel();
+    act(() => { s().triggerSearch(params('1-5')); });
+    await waitFor(() => expect(notices()).toHaveLength(1));
+    expect(notices()[0]).toMatchObject({
+      type: 'warning',
+      duration: 0,
+      message: 'Caricamento interrotto: caricati 2 di 5 articoli. Mancano 3 articoli.',
+      action: { label: 'Carica i mancanti' },
+    });
+    expect(s().practices[0].acts[0].articles).toHaveLength(2);
+    expect(screen.queryByText('Risultato parziale')).toBeNull();
+  });
+
+  it('«Carica i mancanti» asks again for the missing articles only, with the same practice, version and annex', async () => {
+    const target = s().createPractice('Dossier', { custom: true });
+    s().createPractice('Altra');
+    env.stream = (request) => (request.article === '1-3'
+      ? [ccArticle('1'), timeBudget(['2', '3'])]
+      : String(request.article).split(',').map(ccArticle));
+    panel();
+    const asked = { ...params('1-3'), version_date: '2020-01-01', annex: '2', targetPracticeId: target, tabLabel: 'Dossier' };
+    act(() => { s().triggerSearch(asked); });
+    await waitFor(() => expect(notices()).toHaveLength(1));
+    expect(notices()[0].message).toBe('Caricamento interrotto: caricati 1 di 3 articoli. Mancano 2 articoli.');
+    act(() => { notices()[0].action!.onClick(); });
+    // the warning closes on the click, so it cannot ask a second time
+    expect(notices().filter((n) => n.message.startsWith('Caricamento interrotto') && !n.closing)).toEqual([]);
+    await waitFor(() => expect(env.requests).toHaveLength(2));
+    expect(env.requests[1]).toEqual({ ...asked, article: '2,3' });
+    await waitFor(() => expect(s().practices.find((p) => p.id === target)?.acts[0]?.articles).toHaveLength(3));
+  });
+
+  it('a stream with fewer articles than the estimate and no closing line raises no warning: the act may not have them', async () => {
+    s().createPractice('P');
+    env.lines = [ccArticle('1'), ccArticle('2')];
+    panel();
+    act(() => { s().triggerSearch(params('1-5')); });
+    await waitFor(() => expect(s().practices[0].acts[0]?.articles).toHaveLength(2));
+    await waitFor(() => expect(env.requests).toHaveLength(1));
+    // the search has ended (its progress line is gone) and said nothing
+    await waitFor(() => expect(screen.queryByText('Caricamento articoli…')).toBeNull());
+    expect(notices().filter((n) => n.message.startsWith('Caricamento interrotto'))).toEqual([]);
   });
 });
 

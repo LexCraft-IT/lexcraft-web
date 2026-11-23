@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import { Button } from '../../../components/ui/Button';
 import { PAGE_TITLE } from '../../../components/layout/PageFrame';
 import { useMerltFeatures } from '../useMerltFeatures';
+import { LabsOff } from '../LabsOff';
 import { UploadDropzone } from './UploadDropzone';
 import { CandidateReviewList } from './CandidateReviewList';
 import { useExtractionJob } from './useExtractionJob';
@@ -112,16 +113,14 @@ export function ContribPage() {
     setPromotedEntities((prev) => [...prev.filter((p) => p.candidateId !== candidateId), entry]);
   };
 
-  if (!merltEnabled) {
-    return <p className="text-slate-600 dark:text-slate-300">MERL-T non è disponibile.</p>;
-  }
+  if (!merltEnabled) return <LabsOff />;
   if (!canContribute) {
     return (
       <div className="space-y-3">
         <p className="text-slate-600 dark:text-slate-300">
           Per contribuire con i tuoi appunti serve il consenso <strong>Completo</strong>.
         </p>
-        <Link to="/merlt">
+        <Link to="/labs">
           <Button variant="secondary" size="sm">
             Vai alle impostazioni MERL-T
           </Button>
@@ -136,7 +135,7 @@ export function ContribPage() {
   return (
     <div className="space-y-6">
       <header>
-        <Link to="/merlt" className="mb-2 inline-flex min-h-[44px] items-center gap-1 rounded text-sm text-slate-500 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 md:min-h-0 dark:text-slate-400 dark:hover:text-slate-200">
+        <Link to="/labs" className="mb-2 inline-flex min-h-[44px] items-center gap-1 rounded text-sm text-slate-500 hover:text-slate-700 focus-visible:outline-none md:min-h-0 dark:text-slate-400 dark:hover:text-slate-200">
           <ArrowLeft size={14} /> MERL-T
         </Link>
         <h1 className={PAGE_TITLE}>Apprendi dai miei appunti</h1>

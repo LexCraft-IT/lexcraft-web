@@ -1,4 +1,4 @@
-import { Lightbulb, Package, Search, type LucideIcon } from 'lucide-react';
+import { FolderUp, Lightbulb, Search, type LucideIcon } from 'lucide-react';
 import { SegmentedTabs } from '../../ui/SegmentedTabs';
 import { FORUM_PANEL_ID, FORUM_TAB_ORDER, type ForumTab } from './forumSections';
 
@@ -12,7 +12,7 @@ export type { ForumTab } from './forumSections';
  */
 const TABS: Record<ForumTab, { label: string; short: string; icon: LucideIcon }> = {
   explore: { label: 'Esplora', short: 'Esplora', icon: Search },
-  my: { label: 'I miei pubblicati', short: 'Miei', icon: Package },
+  my: { label: 'I miei pubblicati', short: 'Miei', icon: FolderUp },
   suggestions: { label: 'Suggerimenti', short: 'Suggeriti', icon: Lightbulb },
 };
 
@@ -32,14 +32,16 @@ export function ForumTabs({ active, onChange, pendingCount }: ForumTabsProps) {
       value={active}
       onChange={onChange}
       className="w-full sm:w-fit sm:max-w-full"
+      // LC114: the small row (it was 52 px with 6 px corners): 44 px on a phone, the tabs 44 with no taller row round them.
       tabClassName="flex-1 whitespace-nowrap px-2 sm:flex-none sm:px-4"
+      size="sm"
       tabs={FORUM_TAB_ORDER.map((id) => {
         const { label, short, icon: Icon } = TABS[id];
         return {
           id,
           label: (
             <>
-              <Icon size={16} className="hidden sm:block" aria-hidden />
+              <Icon size={14} className="hidden sm:block" aria-hidden />
               {/* One of the two is drawn: the short label on a phone, the whole one from `sm`. A browser leaves the one
                   not displayed out of the tab's name, which is what the reader sees; jsdom, with no CSS, joins both. */}
               <span className="sm:hidden">{short}</span>

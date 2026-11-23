@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { RotateCw } from 'lucide-react';
 import type { NormaVisitata } from '../../../types';
 import type { EuCaseLawAnswer, EuCaseLawDecision } from '../../../types/decisions';
-import { cn } from '../../../lib/utils';
 import { TOUCH_TARGET_RESPONSIVE } from '../../../constants/interactions';
 import { formatDecisionShort } from '../../../utils/decisionLinks';
 import { euCaseLawQuery, eurLexDecisionUrl, hasEuCaseLawList, INFOCURIA_SEARCH_URL } from '../../../utils/euCaseLaw';
@@ -10,6 +9,7 @@ import { searchEuCaseLawCached } from '../../../utils/euCaseLawCache';
 import type { ReadingBackEntry } from '../../../utils/readingBackStack';
 import { Button } from '../../ui/Button';
 import { CaseLawRow } from '../search/caseLaw/CaseLawRow';
+import { sentenzaFromDecision } from '../dossier/dossierUtils';
 import { useCaseLawFilters, useReportCaseLawYears } from '../search/caseLaw/caseLawFiltersContext';
 import { applyCaseLawFilters, isNarrowing } from '../search/caseLaw/caseLawFilter';
 import { rowYear, yearCounts, type YearsOf } from '../search/caseLaw/caseLawYears';
@@ -144,20 +144,9 @@ export function EuCaseLawBlock({ norma, besideId, backEntry }: EuCaseLawBlockPro
       </p>
 
       {opinions.length > 0 && (
-        <button
-          type="button"
-          aria-pressed={showOpinions}
-          onClick={() => setShowOpinions((v) => !v)}
-          className={cn(
-            'rounded-lg border px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
-            TOUCH_TARGET_RESPONSIVE,
-            showOpinions
-              ? 'border-primary-600 bg-primary-600 text-white'
-              : 'border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800',
-          )}
-        >
+        <Button variant={showOpinions ? 'primary' : 'secondary'} size="sm" aria-pressed={showOpinions} onClick={() => setShowOpinions((v) => !v)} className="self-start">
           {`Conclusioni dell’Avvocato generale (${opinions.length})`}
-        </button>
+        </Button>
       )}
 
       {eligible.length === 0 ? (
@@ -199,6 +188,8 @@ export function EuCaseLawBlock({ norma, besideId, backEntry }: EuCaseLawBlockPro
                     externalNote={eurLex ? 'su EUR-Lex' : undefined}
                     besideId={besideId}
                     backEntry={backEntry}
+                    // A judgment, as our reader holds it; an order or an opinion is not a decision we keep.
+                    dossierItem={d.tipo === 'JUDG' ? sentenzaFromDecision(d.identita, { data_decisione: d.data ?? undefined }) : undefined}
                   />
                 );
               })}

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('../../../hooks/useAuth', () => ({ useAuth: () => ({ login: vi.fn(), loading: false, error: null }) }));
+import { PASSWORD_RULE_ERROR } from '../../../services/api';
+
 const register = vi.fn();
 vi.mock('../../../services/authService', () => ({ register: (...args: unknown[]) => register(...args) }));
 
@@ -40,12 +42,12 @@ describe('RegisterForm', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Formato email non valido');
     expect(within(panel()).getByLabelText('Email')).toHaveFocus();
 
-    fill({ email: 'avv@studio.it', password: 'ab', confirm: 'ab' });
+    fill({ email: 'avv@studio.it', password: 'segreta123', confirm: 'segreta123' });
     submit();
-    expect(screen.getByRole('alert')).toHaveTextContent('Password deve essere almeno 3 caratteri');
+    expect(screen.getByRole('alert')).toHaveTextContent(PASSWORD_RULE_ERROR);
     expect(within(panel()).getByLabelText('Password')).toHaveFocus();
 
-    fill({ username: 'av', password: 'abc', confirm: 'abc' });
+    fill({ username: 'av', password: 'Segreta123', confirm: 'Segreta123' });
     submit();
     expect(screen.getByRole('alert')).toHaveTextContent('Username deve essere almeno 3 caratteri');
     expect(within(panel()).getByLabelText('Username')).toHaveFocus();
@@ -54,7 +56,7 @@ describe('RegisterForm', () => {
     submit();
     expect(screen.getByRole('alert')).toHaveTextContent('Username può contenere solo lettere, numeri e underscore');
 
-    fill({ username: 'avv_rossi', confirm: 'abd' });
+    fill({ username: 'avv_rossi', confirm: 'Segreta124' });
     submit();
     expect(screen.getByRole('alert')).toHaveTextContent('Le password non coincidono');
     const confirm = within(panel()).getByLabelText('Conferma password');
@@ -70,7 +72,8 @@ describe('RegisterForm', () => {
     fill({ email: 'avv@studio.it', username: 'avv_rossi', password: 'Segreta123', confirm: 'Segreta123' });
     submit();
     expect(await screen.findByRole('alert')).toHaveTextContent('already exists');
-    await waitFor(() => expect(within(panel()).getByLabelText('Email')).toHaveFocus());
+    // In the commit that enables the form again (a layout effect): no wait needed.
+    expect(within(panel()).getByLabelText('Email')).toHaveFocus();
   });
 
   it('shows one eye for both password fields, a 44 px button with its name', () => {
@@ -93,8 +96,22 @@ describe('RegisterForm', () => {
   it('after signing up, the wait for approval in the same card, and «Torna ad Accedi» back to the tab', async () => {
     renderAuth('/register');
     fill({ email: 'avv@studio.it', username: 'avv_rossi', password: 'Segreta123', confirm: 'Segreta123' });
-    submit();
-    const heading = await screen.findByRole('heading', { name: 'Registrazione completata' });
+    // Where the focus is the moment the confirmation enters the page, in the microtask after React's commit, where
+    // `findByRole`'s own observer finds it. A focus moved by a passive effect is not there yet (it runs in a later
+    // task of React's scheduler): this caught the flake at every run, where the bare `toHaveFocus` lost only a race.
+    let focusWhenShown: Element | null | undefined;
+    const observer = new MutationObserver(() => {
+      if (focusWhenShown === undefined && screen.queryByRole('heading', { name: 'Registrazione completata' })) focusWhenShown = document.activeElement;
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    let heading: HTMLElement;
+    try {
+      submit();
+      heading = await screen.findByRole('heading', { name: 'Registrazione completata' });
+    } finally {
+      observer.disconnect();
+    }
+    expect(focusWhenShown).toBe(heading);
     expect(heading).toHaveFocus();
     expect(within(panel()).getByText('È in attesa di approvazione da parte di un amministratore.')).toBeInTheDocument();
     expect(screen.getByRole('tablist')).toBeInTheDocument();
@@ -120,5 +137,20 @@ describe('RegisterForm', () => {
   it('draws nothing of the old design: no blurred blots, glass or gradient', () => {
     const { container } = renderAuth('/register');
     expect(container.innerHTML).not.toMatch(/blur-3xl|backdrop-blur|bg-gradient|from-blue|to-indigo/);
+  });
+
+  it('says the server\'s password rule under the field, and tells the field (#463)', () => {
+    renderAuth('/register');
+    const field = within(panel()).getByLabelText('Password');
+    expect(field).toHaveAccessibleDescription('Almeno 8 caratteri, con una maiuscola, una minuscola e un numero.');
+  });
+
+  it('says the server\'s refusal of a weak password in Italian, the focus on the password', async () => {
+    register.mockRejectedValueOnce({ status: 400, message: PASSWORD_RULE_ERROR });
+    renderAuth('/register');
+    fill({ email: 'avv@studio.it', username: 'avv_rossi', password: 'Segreta123', confirm: 'Segreta123' });
+    submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent(PASSWORD_RULE_ERROR);
+    await waitFor(() => expect(within(panel()).getByLabelText('Password')).toHaveFocus());
   });
 });

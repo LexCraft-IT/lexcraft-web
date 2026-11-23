@@ -21,7 +21,7 @@ import { sourceLabel, CANON_LABEL, provenanceMeta, urnKind } from './format';
 import type { ConfirmState, QaRetrievedSource, QaSource } from './types';
 
 /**
- * One consulted source (Loop β F.0 Option A): readable label → /grafo, a
+ * One consulted source (Loop β F.0 Option A): readable label → /labs/grafo, a
  * provenance badge + trust, optional per-source relevance feedback, and
  * "ricorda nel grafo" (confirm-source) only on provisional (live_unconfirmed)
  * nodes. Legal lexicon, no scores/bars/gamification.
@@ -65,7 +65,7 @@ function SourceInfo({ source, cited }: { source: QaRetrievedSource; cited?: QaSo
         {...getReferenceProps()}
         type="button"
         aria-label="Dettagli della fonte consultata"
-        className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+        className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none dark:hover:bg-slate-800 dark:hover:text-slate-300"
       >
         <Info size={14} />
       </button>
@@ -137,7 +137,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
   const meta = provenanceMeta(source.provenance);
   // For provisional (live:) nodes the URN is an opaque hash; prefer the
   // underlying Normattiva URL when known — it gives a readable label AND a
-  // navigable /grafo target. A bare live: hash with no source_url isn't
+  // navigable /labs/grafo target. A bare live: hash with no source_url isn't
   // navigable, so we render it as plain text (no broken link).
   const displayUrn = source.urn.startsWith('live:') && source.source_url ? source.source_url : source.urn;
   const label = sourceLabel(source);
@@ -146,7 +146,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
 
   // "Apri" (feature 3, quick-open): norma → the VisuaLex reader (vanilla
   // navigate('/') + triggerSearch mechanism, same as ValidationCard); sentenza
-  // → its source_url when known, else no primary action (only the /grafo jump
+  // → its source_url when known, else no primary action (only the /labs/grafo jump
   // stays, as a secondary affordance).
   const kind = urnKind(displayUrn);
   const normParams = kind.kind === 'norma' ? normRefToSearchParams(displayUrn) : null;
@@ -165,7 +165,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
       <div className="min-w-0">
         {navigable ? (
           <Link
-            to={`/grafo?urn=${encodeURIComponent(displayUrn)}`}
+            to={`/labs/grafo?urn=${encodeURIComponent(displayUrn)}`}
             className="truncate font-medium text-slate-800 hover:text-primary-600 dark:text-slate-200 dark:hover:text-primary-400"
             title={displayUrn}
           >
@@ -187,7 +187,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
           <button
             type="button"
             onClick={openNorma}
-            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-400"
+            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 hover:underline focus-visible:outline-none dark:text-primary-400"
           >
             <BookOpen size={12} /> Apri la norma
           </button>
@@ -196,7 +196,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
           <button
             type="button"
             onClick={openSentenza}
-            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-400"
+            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 hover:underline focus-visible:outline-none dark:text-primary-400"
           >
             <Scale size={12} /> Apri la sentenza
           </button>
@@ -206,10 +206,10 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
       <div className="flex shrink-0 items-center gap-1">
         {navigable && (
           <Link
-            to={`/grafo?urn=${encodeURIComponent(displayUrn)}`}
+            to={`/labs/grafo?urn=${encodeURIComponent(displayUrn)}`}
             aria-label="Apri nel grafo esplorativo"
             title="Apri nel grafo esplorativo"
-            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+            className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none dark:hover:bg-slate-800 dark:hover:text-slate-300"
           >
             <Network size={14} />
           </Link>
@@ -221,7 +221,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
               type="button"
               aria-label={`Segna ${label} come pertinente`}
               onClick={() => onRate(source.urn, true)}
-              className="rounded-md p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              className="rounded-md p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40 focus-visible:outline-none "
             >
               <ThumbsUp size={14} />
             </button>
@@ -229,7 +229,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
               type="button"
               aria-label={`Segna ${label} come non pertinente`}
               onClick={() => onRate(source.urn, false)}
-              className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 focus-visible:outline-none "
             >
               <ThumbsDown size={14} />
             </button>
@@ -241,7 +241,7 @@ export function QaSourceChip({ source, confirmState, onConfirm, onRate, cited }:
             disabled={confirmState === 'pending' || confirmState === 'done'}
             onClick={() => onConfirm(source)}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+              'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none ',
               confirmState === 'done'
                 ? 'border-emerald-200 text-emerald-600 dark:border-emerald-900'
                 : 'border-amber-200 text-amber-700 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400 dark:hover:bg-amber-950/40',

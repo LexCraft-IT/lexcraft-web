@@ -17,6 +17,8 @@ function labelOf(action: BannerAction, banner: BannerData): string {
     switch (action) {
         case 'go_current': return 'Vai al testo attuale';
         case 'copy_citation': return 'Copia citazione';
+        // A past text is a text of Normattiva: an act of the Union has no versions here.
+        case 'copy_link': return 'Copia link Normattiva';
         case 'pick_date': return 'Scegli un’altra data';
         case 'open_next_day':
             return banner.nextDay ? `Vai al testo ${withPreposition('del', formatDateForCitation(banner.nextDay))}` : 'Vai al testo successivo';
@@ -42,7 +44,7 @@ export function VersionBanner({ banner, onAction, variant = 'banner' }: VersionB
         <div
             role={banner.kind === 'unreliable' ? 'alert' : 'status'}
             className={cn(
-                'mb-4 flex gap-3 rounded-lg border p-3 text-sm',
+                'mb-4 flex gap-3 rounded-[8px] border p-3 text-sm',
                 variant === 'state' && 'py-8 flex-col items-center gap-2 text-center',
                 TONE[banner.kind],
             )}

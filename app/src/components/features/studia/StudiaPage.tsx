@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Suspense, useState } from 'react';
+import { useLocation, useOutlet } from 'react-router-dom';
 import { useAuth } from '../../../hooks/useAuth';
 import { pageName } from '../../../features/sections/pageNames';
 import { PageFrame } from '../../layout/PageFrame';
-import { LessonFrame } from './LessonFrame';
+import { ViewSlide } from '../../layout/ViewSlide';
+import { LearnLoading, LessonFrame } from './LessonFrame';
 import { StudyStrip } from './progress/StudyStrip';
 import { useProgress } from './progress/useProgress';
 
@@ -21,13 +22,17 @@ export interface StudiaOutletContext {
  * The view that shows the smaller strip over it: «Da validare». «Oggi» and «Progressi» draw their own, «Le mie schede»
  * none (G8: the streak and the goal were said there a third time), the session is a lesson of its own.
  */
-const underStrip = (pathname: string) => /^\/studia\/valida(\/|$)/.test(pathname);
+const underStrip = (pathname: string) => /^\/learn\/valida(\/|$)/.test(pathname);
 
 /** The views with an action beside the title, which they draw into the frame's slot. */
-const withAction = (pathname: string) => /^\/studia\/schede(\/|$)/.test(pathname);
+const withAction = (pathname: string) => /^\/learn\/schede(\/|$)/.test(pathname);
 
-/** The review session is the lesson, a screen of its own (Gymnasium spec §5.4). */
-const isLesson = (pathname: string) => /^\/studia\/ripasso\/sessione(\/|$)/.test(pathname);
+/** The review session is the lesson, a screen of its own (Gymnasium spec §5.4), and so are a course's module (courses spec §6.5) and the short lesson (LC63). */
+const isLesson = (pathname: string) =>
+  /^\/learn\/ripasso\/sessione(\/|$)/.test(pathname) || /^\/learn\/percorsi\/[^/]+\/(moduli|esami)\/[^/]+\/?$/.test(pathname) || /^\/learn\/lezione\/?$/.test(pathname);
+
+/** The views in the sidebar's order, by their address's first word: the order of their slide (LC98). */
+const VIEW_ORDER = ['ripasso', 'percorsi', 'progressi', 'schede', 'valida'];
 
 /** The streak and the goal over «Da validare» (Gymnasium spec §5.1): the reward stays in sight. */
 function AreaStrip() {
@@ -48,11 +53,10 @@ export function StudiaPage() {
   const { pathname } = useLocation();
   const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
   const context = { validator: loading ? undefined : user ? isValidator : null, actionSlot } satisfies StudiaOutletContext;
+  const outlet = useOutlet(context);
   if (isLesson(pathname)) {
     return (
-      <LessonFrame>
-        <Outlet context={context} />
-      </LessonFrame>
+      <LessonFrame>{outlet}</LessonFrame>
     );
   }
   return (
@@ -64,8 +68,13 @@ export function StudiaPage() {
       className="h-full"
       action={withAction(pathname) ? <div ref={setActionSlot} className="contents" /> : undefined}
     >
-      {underStrip(pathname) && <AreaStrip />}
-      <Outlet context={context} />
+      {/* A view, not an address: a card opened in «Le mie schede», or a course in «Percorsi», stays in its view. */}
+      <ViewSlide view={pathname.split('/')[2] ?? ''} order={VIEW_ORDER}>
+        {/* Only the view waits for its code (LC133): the frame and its title are drawn with the page's first frame. A
+            change of view is the router's transition, so this boundary, once shown, keeps the view left meanwhile. */}
+        {underStrip(pathname) && <AreaStrip />}
+        <Suspense fallback={<LearnLoading />}>{outlet}</Suspense>
+      </ViewSlide>
     </PageFrame>
   );
 }

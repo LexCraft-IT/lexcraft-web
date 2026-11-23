@@ -6,19 +6,24 @@ import * as authService from '../services/authService';
 import { subscribeToUser } from '../services/authEvents';
 import type { UserResponse } from '../types/api';
 import { appStore } from '../store/useAppStore';
+import { loadAssistantFeatures } from '../store/assistantProposals';
 import { getErrorMessage } from '../utils/errors';
-import { clearDecisionCache } from '../utils/decisionFetchCache';
-import { clearDecisionSearchCache } from '../utils/decisionSearchCache';
-import { clearEuCaseLawCache } from '../utils/euCaseLawCache';
-import { clearArticleCardsCache } from '../utils/articleCardsCache';
-import { clearConsentRead } from '../features/merlt/consent/consentRead';
-import { forgetSeenProgress } from '../components/features/studia/progress/seenProgress';
+import { settleShortcutUndo } from '../components/ui/notifications/notifications';
+import { claimBrowserFor, forgetUserData } from '../services/sessionEnd';
+import { isRefusalStatus } from '../services/api';
+// Registers the reset of the in-memory user state with `forgetUserData`, before any request can end a session.
+import '../services/userDataReset';
+
+/** The pauses before asking `/auth/me` again after a 429, a 5xx or no answer: about 15 s in all. */
+const LOAD_USER_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
 
 interface AuthState {
   user: UserResponse | null;
   loading: boolean;
   error: string | null;
   isAuthenticated: boolean;
+  /** `/auth/me` failed once and is being asked again (LC13's retries): the loading screen says so. */
+  retrying?: boolean;
 }
 
 export function useAuth() {
@@ -33,14 +38,18 @@ export function useAuth() {
    * Load current user info on mount
    */
   useEffect(() => {
-    const loadUser = async () => {
+    let unmounted = false;
+    const loadUser = async (attempt = 0): Promise<void> => {
       if (!authService.isAuthenticated()) {
-        setState((prev) => ({ ...prev, loading: false }));
+        // Also when the token went during a retry's pause: no token is never signed in.
+        setState((prev) => ({ ...prev, loading: false, isAuthenticated: false }));
         return;
       }
 
       try {
         const user = await authService.getCurrentUser();
+        // A browser marked as someone else's (their session ended without a sign-out) is emptied first.
+        claimBrowserFor(user.id, { signIn: false });
         setState({
           user,
           loading: false,
@@ -52,18 +61,33 @@ export function useAuth() {
         const store = appStore.getState();
         if (!store.isDataLoaded && !store.isLoadingData) {
           store.fetchUserData();
+          // D7b: whether the server proposes passages at all, once as the app starts, not at each use of this hook.
+          void loadAssistantFeatures();
         }
       } catch (error) {
+        // Only a refusal (401, 403) or a token gone (a refused refresh cleared it) ends the session. A 429, a 5xx or
+        // no answer keeps it: the user is asked again after a pause, still loading, a few times (LC13).
+        const refused = !authService.isAuthenticated() || isRefusalStatus((error as { status?: unknown } | null)?.status);
+        if (!refused && attempt < LOAD_USER_RETRY_DELAYS_MS.length) {
+          if (!unmounted) setState((prev) => ({ ...prev, retrying: true }));
+          await new Promise((resolve) => setTimeout(resolve, LOAD_USER_RETRY_DELAYS_MS[attempt]));
+          if (!unmounted) await loadUser(attempt + 1);
+          return;
+        }
+        // Retries over and the session kept: signed in with no user, which `ProtectedRoute` says in words.
         setState({
           user: null,
           loading: false,
-          error: getErrorMessage(error) || 'Failed to load user',
-          isAuthenticated: false,
+          error: getErrorMessage(error) || 'Non riesco a leggere il tuo account. Riprova tra poco.',
+          isAuthenticated: !refused,
         });
       }
     };
 
     loadUser();
+    return () => {
+      unmounted = true;
+    };
   }, []);
 
   /**
@@ -89,9 +113,9 @@ export function useAuth() {
 
       // Auto-login after registration
       await authService.login({ email, password });
-      // What this browser drew of Gymnasium was the last person's (their points, their level).
-      forgetSeenProgress();
       const currentUser = await authService.getCurrentUser();
+      // What this browser holds of anyone else (a practice, a question to the assistant, Gymnasium's marks) goes.
+      claimBrowserFor(currentUser.id, { signIn: true });
 
       setState({
         user: currentUser,
@@ -105,7 +129,7 @@ export function useAuth() {
       setState((prev) => ({
         ...prev,
         loading: false,
-        error: getErrorMessage(error) || 'Registration failed',
+        error: getErrorMessage(error) || 'Registrazione non riuscita. Riprova tra poco.',
       }));
       throw error;
     }
@@ -116,12 +140,14 @@ export function useAuth() {
    */
   const login = useCallback(async (email: string, password: string) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
+    let signedIn = false;
 
     try {
       await authService.login({ email, password });
-      // What this browser drew of Gymnasium was the last person's (their points, their level).
-      forgetSeenProgress();
+      signedIn = true;
       const user = await authService.getCurrentUser();
+      // What this browser holds of anyone else (a practice, a question to the assistant, Gymnasium's marks) goes.
+      claimBrowserFor(user.id, { signIn: true });
 
       setState({
         user,
@@ -132,13 +158,19 @@ export function useAuth() {
 
       // Fetch user data from API after successful login
       appStore.getState().fetchUserData();
+      void loadAssistantFeatures();
 
       return user;
     } catch (error) {
+      // Signed in, then the account refused (401, 403): the tokens just stored go with the failure, and the form stays,
+      // no redirect (#463). A 429, a 5xx or no answer keep them: the session is not refused (LC13).
+      if (signedIn && isRefusalStatus((error as { status?: unknown } | null)?.status)) {
+        authService.clearTokens();
+      }
       setState((prev) => ({
         ...prev,
         loading: false,
-        error: getErrorMessage(error) || 'Login failed',
+        error: getErrorMessage(error) || 'Accesso non riuscito. Riprova tra poco.',
       }));
       throw error;
     }
@@ -148,15 +180,12 @@ export function useAuth() {
    * Logout user
    */
   const logout = useCallback(() => {
+    // The last gesture on a highlight is carried out (its removals sent) while the token is still there: it said
+    // nothing, so for the reader it is done (A4).
+    settleShortcutUndo();
+    // Everything of the person, from every store and from the browser's storage (`sessionEnd.ts`).
+    forgetUserData();
     authService.logout();
-    // Clear user data from store
-    appStore.getState().clearUserData();
-    clearDecisionCache();
-    clearDecisionSearchCache();
-    clearEuCaseLawCache();
-    clearArticleCardsCache();
-    clearConsentRead();
-    forgetSeenProgress();
     setState({
       user: null,
       loading: false,
@@ -189,7 +218,7 @@ export function useAuth() {
         setState((prev) => ({
           ...prev,
           loading: false,
-          error: getErrorMessage(error) || 'Password change failed',
+          error: getErrorMessage(error) || 'Cambio della password non riuscito. Riprova tra poco.',
         }));
         throw error;
       }

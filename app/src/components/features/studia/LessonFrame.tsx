@@ -1,10 +1,10 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Z_INDEX } from '../../../constants/zIndex';
-import { FOCUS_RING } from './progress/tokens';
+import { IconButton } from '../../ui/IconButton';
 
 const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -62,33 +62,48 @@ export function LessonFrame({ children }: { children: ReactNode }) {
   );
 }
 
+/** Where a lesson loading goes back to: a course's module to its course, the review to Oggi. */
+function lessonHome(pathname: string): string {
+  const course = /^(\/learn\/percorsi\/[^/]+)\/moduli\//.exec(pathname);
+  return course ? course[1] : '/learn/ripasso';
+}
+
 /**
  * What the frame shows while the session's code loads (the route is lazy): the close button and the card's
- * place, so the screen is never blank with no way out. Esc leaves too.
+ * place, so the screen is never blank with no way out. Esc leaves too. `children` take the card's place: a module's
+ * session waiting for the courses' switch says so there.
  */
-export function LessonLoading() {
+export function LessonLoading({ children }: { children?: ReactNode }) {
   const navigate = useNavigate();
+  const home = lessonHome(useLocation().pathname);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') navigate('/studia/ripasso');
+      if (event.key === 'Escape') navigate(home);
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [navigate]);
+  }, [navigate, home]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
-        <button
-          type="button"
-          onClick={() => navigate('/studia/ripasso')}
-          aria-label="Chiudi"
-          className={cn('inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-slate-600 hover:bg-slate-200/60 dark:text-slate-300 dark:hover:bg-slate-800', FOCUS_RING)}
-        >
-          <X size={20} aria-hidden />
-        </button>
+        <IconButton size="lg" onClick={() => navigate(home)} aria-label="Chiudi" icon={<X size={20} aria-hidden />} />
         <div aria-hidden className="h-3 flex-1 rounded-full bg-slate-200 dark:bg-slate-800" />
       </div>
-      <p className="sr-only">Carico il ripasso…</p>
+      {children && <div className="mx-auto w-full max-w-3xl px-4 py-6">{children}</div>}
+      <p className="sr-only">{home === '/learn/ripasso' ? 'Carico il ripasso…' : 'Carico il modulo…'}</p>
     </div>
   );
+}
+
+/** Under this, a wait says nothing (LC112): Learn opened by its address came in some 210 ms, «Caricamento…» a flash. */
+const LEARN_WAIT_SAID_MS = 300;
+
+/** What Learn shows while its page's code loads: nothing for 300 ms, then «Caricamento…». */
+export function LearnLoading() {
+  const [said, setSaid] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setSaid(true), LEARN_WAIT_SAID_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  return said ? <div className="p-6 text-sm text-slate-500">Caricamento…</div> : null;
 }

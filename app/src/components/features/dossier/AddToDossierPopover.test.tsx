@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { useState } from 'react';
 
 vi.mock('../../../services/dossierService', () => ({
   dossierService: {
@@ -42,7 +43,7 @@ beforeEach(() => {
 
 function renderPopover(onAdded = vi.fn(), onDuplicate?: (title: string) => void) {
   render(
-    <AddToDossierPopover isOpen anchorEl={document.body} onClose={() => {}} norma={norma} onAdded={onAdded} onDuplicate={onDuplicate} />,
+    <AddToDossierPopover isOpen onClose={() => {}} norma={norma} onAdded={onAdded} onDuplicate={onDuplicate} />,
   );
   return onAdded;
 }
@@ -90,7 +91,7 @@ describe('AddToDossierPopover', () => {
     const onClose = vi.fn();
     const onDuplicate = vi.fn();
     render(
-      <AddToDossierPopover isOpen anchorEl={document.body} onClose={onClose} norma={norma} onAdded={onAdded} onDuplicate={onDuplicate} />,
+      <AddToDossierPopover isOpen onClose={onClose} norma={norma} onAdded={onAdded} onDuplicate={onDuplicate} />,
     );
     fireEvent.click(screen.getByRole('button', { name: /con duplicato/i }));
     expect(onDuplicate).toHaveBeenCalledWith('Con duplicato');
@@ -100,9 +101,9 @@ describe('AddToDossierPopover', () => {
   });
   it('creates a dossier inline with the server id, then adds', async () => {
     const onAdded = renderPopover();
-    fireEvent.click(screen.getByRole('button', { name: /nuovo dossier/i }));
-    fireEvent.change(screen.getByPlaceholderText(/nome del dossier/i), { target: { value: 'Nuova pratica' } });
-    fireEvent.submit(screen.getByRole('form', { name: /crea dossier/i }));
+    fireEvent.click(screen.getByRole('button', { name: /nuova pratica/i }));
+    fireEvent.change(screen.getByPlaceholderText(/nome della pratica/i), { target: { value: 'Nuova pratica' } });
+    fireEvent.submit(screen.getByRole('form', { name: /crea una pratica/i }));
     await vi.waitFor(() => expect(onAdded).toHaveBeenCalledWith('srv-new', 'Nuova pratica'));
     const created = appStore.getState().dossiers.find(d => d.id === 'srv-new')!;
     expect(created.items).toHaveLength(1);
@@ -111,9 +112,9 @@ describe('AddToDossierPopover', () => {
     sectionStore.setState({ section: 'gymnasium', dossierKind: 'studio' });
     try {
       const onAdded = renderPopover();
-      fireEvent.click(screen.getByRole('button', { name: /nuovo dossier/i }));
-      fireEvent.change(screen.getByPlaceholderText(/nome del dossier/i), { target: { value: 'Nuova pratica' } });
-      fireEvent.submit(screen.getByRole('form', { name: /crea dossier/i }));
+      fireEvent.click(screen.getByRole('button', { name: /nuova pratica/i }));
+      fireEvent.change(screen.getByPlaceholderText(/nome della pratica/i), { target: { value: 'Nuova pratica' } });
+      fireEvent.submit(screen.getByRole('form', { name: /crea una pratica/i }));
       await vi.waitFor(() => expect(onAdded).toHaveBeenCalled());
       expect(appStore.getState().dossiers.find(d => d.id === 'srv-new')!.kind).toBe('studio');
     } finally {
@@ -131,7 +132,7 @@ describe('AddToDossierPopover with a decision', () => {
 
   it('adds the decision as a sentenza item', () => {
     const onAdded = vi.fn();
-    render(<AddToDossierPopover isOpen anchorEl={document.body} onClose={() => {}} sentenza={sentenza} onAdded={onAdded} />);
+    render(<AddToDossierPopover isOpen onClose={() => {}} sentenza={sentenza} onAdded={onAdded} />);
     fireEvent.click(screen.getByRole('button', { name: /pratica recente/i }));
     const items = appStore.getState().dossiers.find(d => d.id === 'recent')!.items;
     expect(items[items.length - 1]).toMatchObject({ type: 'sentenza', data: sentenza });
@@ -148,9 +149,87 @@ describe('AddToDossierPopover with a decision', () => {
       ] },
     ] });
     const onDuplicate = vi.fn();
-    render(<AddToDossierPopover isOpen anchorEl={document.body} onClose={() => {}} sentenza={sentenza} onAdded={vi.fn()} onDuplicate={onDuplicate} />);
+    render(<AddToDossierPopover isOpen onClose={() => {}} sentenza={sentenza} onAdded={vi.fn()} onDuplicate={onDuplicate} />);
     expect(screen.getByRole('button', { name: /con un articolo/i })).not.toHaveTextContent(/già presente/i);
     fireEvent.click(screen.getByRole('button', { name: /con la sentenza/i }));
     expect(onDuplicate).toHaveBeenCalledWith('Con la sentenza');
+  });
+
+  it('LC61: its title is the command\'s, «1 elemento» is singular, a long name is whole in the tooltip, «già presente» is not faded', () => {
+    const long = 'Ricorso per decreto ingiuntivo Rossi contro Bianchi, secondo grado';
+    appStore.setState({ dossiers: [...appStore.getState().dossiers, { id: 'long', title: long, createdAt: '2026-03-01T00:00:00Z', items: [] }] });
+    renderPopover();
+    expect(screen.getByRole('heading', { name: 'Aggiungi alla pratica' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Pratica recente/ })).toHaveTextContent('1 elemento');
+    expect(screen.getByRole('button', { name: /Pratica recente/ })).not.toHaveTextContent('1 elementi');
+    expect(screen.getByText(long)).toHaveAttribute('title', long);
+    expect(screen.getByText(long)).not.toHaveClass('truncate');
+    const present = screen.getByRole('button', { name: /Con duplicato/ });
+    expect(present).not.toHaveClass('opacity-60');
+    expect(screen.getByText('già presente').className).toMatch(/text-emerald-800/);
+  });
+
+  it('LC61: the new practice\'s name field has a label', () => {
+    renderPopover();
+    fireEvent.click(screen.getByRole('button', { name: /Nuova pratica/ }));
+    expect(screen.getByRole('textbox', { name: 'Nome della nuova pratica' })).toBeInTheDocument();
+  });
+
+  it('LC61: every control is 44 px to the touch on a phone', () => {
+    renderPopover();
+    fireEvent.click(screen.getByRole('button', { name: /Nuova pratica/ }));
+    const controls = [
+      screen.getByRole('button', { name: 'Chiudi' }),
+      screen.getByRole('button', { name: /Pratica recente/ }),
+      screen.getByRole('textbox', { name: 'Nome della nuova pratica' }),
+      screen.getByRole('button', { name: 'Crea e aggiungi' }),
+    ];
+    // The rows and the field keep their own 44 px; the buttons take `Button`'s (`min-h-11` below md, LC106).
+    for (const control of controls) expect(control.className).toMatch(/min-h-\[44px\]|min-h-11/);
+  });
+});
+
+describe('AddToDossierPopover in the page (LC125, L-73)', () => {
+  function Host({ onAdded }: { onAdded: (id: string, title: string) => void }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" aria-expanded={open} onClick={() => setOpen(true)}>Aggiungi alla pratica</button>
+        <AddToDossierPopover isOpen={open} onClose={() => setOpen(false)} norma={norma} onAdded={onAdded} />
+      </>
+    );
+  }
+
+  it('opens under its command as a region, takes the focus, and Esc gives it back', () => {
+    render(<Host onAdded={vi.fn()} />);
+    const command = screen.getByRole('button', { name: 'Aggiungi alla pratica' });
+    command.focus();
+    fireEvent.click(command);
+    const region = screen.getByRole('region', { name: 'Aggiungi alla pratica' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(command.nextElementSibling).toBe(region);
+    expect(document.activeElement).toBe(region);
+    fireEvent.keyDown(region, { key: 'Escape' });
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(document.activeElement).toBe(command);
+  });
+
+  it('saves for real: the article goes into the dossier chosen and the space closes', () => {
+    const onAdded = vi.fn();
+    render(<Host onAdded={onAdded} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi alla pratica' }));
+    fireEvent.click(screen.getByRole('button', { name: /pratica vecchia/i }));
+    expect(appStore.getState().dossiers.find((d) => d.id === 'old')!.items).toMatchObject([{ type: 'norma', data: norma }]);
+    expect(onAdded).toHaveBeenCalledWith('old', 'Pratica vecchia');
+    expect(screen.queryByRole('region')).toBeNull();
+  });
+
+  it('Esc in the new practice\'s name closes the name, not the space', () => {
+    render(<Host onAdded={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiungi alla pratica' }));
+    fireEvent.click(screen.getByRole('button', { name: /Nuova pratica/ }));
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Nome della nuova pratica' }), { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Nome della nuova pratica' })).toBeNull();
+    expect(screen.getByRole('region', { name: 'Aggiungi alla pratica' })).toBeInTheDocument();
   });
 });

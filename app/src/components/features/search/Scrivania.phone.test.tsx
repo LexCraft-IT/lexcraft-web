@@ -1,7 +1,7 @@
 // The Scrivania on a phone (M1): no keyboard shortcut on a touch screen, the examples as pills in one sideways row,
 // the page's 16 px margin, the block centred when it is shorter than the window.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { appStore } from '../../../store/useAppStore';
 import { HIDDEN_SCROLLBAR } from '../../../constants/interactions';
@@ -26,26 +26,47 @@ describe('the Scrivania on a phone', () => {
     expect(row).not.toHaveClass('flex-wrap');
     const pills = within(row).getAllByRole('button');
     expect(pills.map((p) => p.textContent)).toEqual(['Art. 2043 c.c.', 'Art. 5 GDPR', 'Art. 1 Costituzione']);
-    for (const pill of pills) expect(pill).toHaveClass('shrink-0', 'whitespace-nowrap', 'max-md:rounded-full', 'max-md:border', 'min-h-[44px]');
+    for (const pill of pills) expect(pill).toHaveClass('shrink-0', 'whitespace-nowrap', 'max-md:rounded-full', 'max-md:bg-ink-200/70', 'min-h-[44px]');
   });
 
-  it('keeps the page\'s 16 px margin and centres the block in the window under the search bar', () => {
+  it('keeps the page\'s 16 px margin and starts under the field, not centred in the window (LC38)', () => {
     const { container } = renderPage();
-    expect(container.firstElementChild).toHaveClass(
-      'max-md:w-auto', 'max-md:px-0', 'max-md:flex', 'max-md:flex-col', 'max-md:justify-center',
-      'max-md:min-h-[calc(100dvh-var(--search-bar-height,0px)-2rem)]',
-    );
+    expect(container.firstElementChild).toHaveClass('max-md:w-auto', 'max-md:px-0', 'max-md:pt-6');
+    expect(container.firstElementChild).not.toHaveClass('max-md:justify-center');
     // The reader's column has no padding below md since R3b: taking 16 px back would put the page on the screen's edges.
     expect(container.firstElementChild).not.toHaveClass('max-md:-mx-4');
   });
 
-  it('takes Focus mode\'s padding off instead, where no search bar is drawn', () => {
-    appStore.setState((s) => ({ settings: { ...s.settings, focusMode: true } }));
-    try {
-      const { container } = renderPage();
-      expect(container.firstElementChild).toHaveClass('max-md:min-h-[calc(100dvh-6rem)]');
-    } finally {
-      appStore.setState((s) => ({ settings: { ...s.settings, focusMode: false } }));
-    }
+  it('has no second way to the search on a phone: the field is right above (LC38)', () => {
+    renderPage();
+    expect(screen.getByRole('button', { name: 'Inizia una ricerca' }).parentElement).toHaveClass('max-md:hidden');
+  });
+});
+
+// LC8: Work's bar no longer lists the Corpus tools; the search page reaches them, at every width.
+describe('the Scrivania\'s ways to the Corpus tools', () => {
+  it('links «Analizza un documento» and «Rassegne», in the flow of the page (seen at 390 px too)', () => {
+    renderPage();
+    const tools = screen.getByRole('navigation', { name: 'Altri strumenti della Ricerca' });
+    const links = within(tools).getAllByRole('link');
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([['Analizza un documento', '/documents'], ['Rassegne', '/rassegne']]);
+    // The links: underlined, in the action's ink (#448: they read as bold text).
+    for (const link of links) expect(link).toHaveClass('min-h-11', 'underline', 'underline-offset-4', 'font-serif');
+    // LC21: the «Prova» examples are bold sans buttons, not underlined links.
+    const example = screen.getByRole('button', { name: 'Art. 2043 c.c.' });
+    expect(example).toHaveClass('font-semibold', 'min-h-[44px]');
+    expect(example).not.toHaveClass('underline');
+    expect(example).not.toHaveClass('font-serif');
+    expect(tools.className).not.toMatch(/(^|\s)hidden(\s|$)|max-md:hidden/);
+  });
+});
+
+describe('Scrivania — «Gestisci» of the frequent searches (LC84)', () => {
+  it('asks for Impostazioni at its quick norms', () => {
+    appStore.setState({ settingsRequest: null });
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: /Gestisci/ }));
+    expect(appStore.getState().settingsRequest).toEqual({ section: 'norme-rapide' });
+    appStore.setState({ settingsRequest: null });
   });
 });

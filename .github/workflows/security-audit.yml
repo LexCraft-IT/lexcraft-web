@@ -1,0 +1,42 @@
+name: Security Audit
+
+# What ships blocks; development tools are shown and never block (G-552).
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 6 * * 1'  # Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    name: npm audit, production dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: app
+
+  npm-audit-dev:
+    name: npm audit, development tools included (shown, never blocks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # A finding becomes a warning on the run's summary page; the job itself stays green.
+      - run: |
+          if ! npm audit --audit-level=high; then
+            echo "::warning title=npm audit::a high or critical advisory; this check never blocks, the production one does (G-552)"
+          fi
+        working-directory: app

@@ -5,11 +5,10 @@ import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
 import { render, screen } from '@testing-library/react';
 import { Input } from '../Input';
-import { FormSelect } from '../FormSelect';
+import { Select } from '../Select';
 import { CardFilters } from '../../features/studia/CardFilters';
 import { NO_FILTERS } from '../../features/studia/useMyCards';
 import { FIELD_TEXT } from '../../../constants/interactions';
-import { FIELD } from '../../features/planner/plannerStyles';
 
 const CSS_PATH = resolve(process.cwd(), 'src/index.css');
 async function compile(candidates: string[]): Promise<string> {
@@ -37,23 +36,17 @@ describe('a field\'s text is 16 px on a phone', () => {
     sixteenBelowMd(screen.getByRole('textbox', { name: 'Numero' }));
   });
 
-  it('in `ui/FormSelect`, on every size', () => {
+  it('in `ui/Select`, on every size', () => {
     render(
       <>
-        <FormSelect aria-label="Medio"><option>Uno</option></FormSelect>
-        <FormSelect aria-label="Piccolo" size="sm"><option>Uno</option></FormSelect>
+        <Select aria-label="Medio"><option>Uno</option></Select>
+        <Select aria-label="Piccolo" size="sm"><option>Uno</option></Select>
       </>,
     );
     sixteenBelowMd(screen.getByRole('combobox', { name: 'Medio' }));
     const small = screen.getByRole('combobox', { name: 'Piccolo' });
     expect(small).toHaveClass('text-[length:max(1rem,16px)]', 'md:text-xs');
     expect(small).not.toHaveClass('text-xs');
-  });
-
-  it('in the planner\'s `FIELD`: its tasks\' fields and the dossier\'s search', () => {
-    const classes = FIELD.split(/\s+/);
-    expect(classes).toEqual(expect.arrayContaining(['text-[length:max(1rem,16px)]', 'md:text-sm']));
-    expect(classes).not.toContain('text-base');
   });
 
   it('in the search and the selects of «Le mie schede»', () => {

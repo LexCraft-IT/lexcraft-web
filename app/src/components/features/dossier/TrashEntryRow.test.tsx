@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TrashEntryRow } from './TrashEntryRow';
 import type { TrashEntry } from '../../../services/trashService';
 import type { Dossier } from '../../../types';
@@ -48,7 +48,7 @@ describe('TrashEntryRow', () => {
 
   it('names a whole dossier and its size', () => {
     renderRow(dossierEntry);
-    expect(screen.getByText('Dossier «Vecchia pratica»')).toBeInTheDocument();
+    expect(screen.getByText('Pratica «Vecchia pratica»')).toBeInTheDocument();
     expect(screen.getByText('7 elementi')).toBeInTheDocument();
   });
 
@@ -57,6 +57,16 @@ describe('TrashEntryRow', () => {
     expect(screen.getByText('Schede di studio (4)')).toBeInTheDocument();
     expect(screen.queryByText(/LingoLex/)).toBeNull();
     expect(screen.getByText('«Che cos’è la causa?» · «Quando è nullo?» · «Che cos’è la forma?» e altre 1')).toBeInTheDocument();
+  });
+
+  it('names a course of «Percorsi» with its modules and cards, and a module of one with its cards', () => {
+    renderRow({ ...base, id: 't4', kind: 'LINGO_CORSO', dossierId: null, label: 'Segni distintivi', itemCount: 10, cardCount: 1, byApplication: false, clientName: null });
+    expect(screen.getByText('Percorso «Segni distintivi»')).toBeInTheDocument();
+    expect(screen.getByText('10 moduli · 1 scheda')).toBeInTheDocument();
+    cleanup();
+    renderRow({ ...base, id: 't5', kind: 'LINGO_CORSO_MODULO', dossierId: null, label: 'Il marchio di fatto · Segni distintivi', itemCount: 1, cardCount: 0 });
+    expect(screen.getByText('Modulo «Il marchio di fatto» · Segni distintivi')).toBeInTheDocument();
+    expect(screen.getByText('Senza schede')).toBeInTheDocument();
   });
 
   it('names one card in the singular', () => {
@@ -71,12 +81,12 @@ describe('TrashEntryRow', () => {
 
   it('asks where to restore when the dossier is gone, then restores there', async () => {
     const onRestore = vi.fn()
-      .mockResolvedValueOnce({ kind: 'needs-target', message: 'Il dossier non esiste più: scegli dove ripristinare.' })
+      .mockResolvedValueOnce({ kind: 'needs-target', message: 'La pratica non esiste più: scegli dove ripristinare.' })
       .mockResolvedValueOnce({ kind: 'restored' });
     renderRow(items, { onRestore });
     fireEvent.click(screen.getByRole('button', { name: 'Ripristina Da «Ricorso Rossi»' }));
-    await screen.findByText('Il dossier non esiste più: scegli dove ripristinare.');
-    fireEvent.change(screen.getByLabelText('Dossier in cui ripristinare'), { target: { value: 'd2' } });
+    await screen.findByText('La pratica non esiste più: scegli dove ripristinare.');
+    fireEvent.change(screen.getByLabelText('Pratica in cui ripristinare'), { target: { value: 'd2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Ripristina qui' }));
     await waitFor(() => expect(onRestore).toHaveBeenLastCalledWith(items, 'd2'));
   });

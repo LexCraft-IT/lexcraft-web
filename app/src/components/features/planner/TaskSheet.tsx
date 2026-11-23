@@ -1,13 +1,17 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronUp, Folder, Inbox, MoreHorizontal, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { CheckCheck, ChevronDown, ChevronUp, Folder, Inbox, MoreHorizontal, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Modal } from '../../ui/Modal';
 import { MenuButton } from '../../ui/MenuButton';
 import { cn } from '../../../lib/utils';
 import { useAppStore } from '../../../store/useAppStore';
 import { taskService } from '../../../services/taskService';
 import type { Task, TaskInput } from '../../../types/tasks';
-import { FOCUS_RING, QUIET_BUTTON, SECONDARY_BUTTON } from '../studia/progress/tokens';
+import { FOCUS_RING } from '../studia/progress/tokens';
+import { Button } from '../../ui/Button';
+import { IconButton } from '../../ui/IconButton';
+import { Input } from '../../ui/Input';
+import { Textarea } from '../../ui/Textarea';
 import { LinkedText } from './LinkedText';
 import { completeWithUndo, type Optimistic } from './taskActions';
 import { draftFromTask, draftProblem, MAX_DESCRIPTION, MAX_TITLE } from './taskDraft';
@@ -16,7 +20,7 @@ import { PRIORITY_LABEL, shortDay } from './taskDates';
 import { TaskCheckbox } from './TaskCheckbox';
 import { TaskSheetFields, type SheetSave } from './TaskSheetFields';
 import { useTaskView } from './useTaskView';
-import { FIELD, FIELD_HINT, ICON_BUTTON, META } from './plannerStyles';
+import { MENU_TRIGGER, META } from './plannerStyles';
 
 export interface TaskSheetProps {
   task: Task;
@@ -30,6 +34,8 @@ export interface TaskSheetProps {
   /** The task's own tick: the sheet hands it back, since its row is the view's. */
   onDone: (task: Task, parent: Task | null) => void;
   onTrash: (task: Task, parent: Task | null) => void;
+  /** «Completa per sempre», for a repeating task: handed back like the tick. */
+  onCompleteForever: (task: Task, parent: Task | null) => void;
   /** The server's copy after a change saved here: the view's copy may be in no list any more (moved to a dossier). */
   onSaved: (task: Task) => void;
   onClose: () => void;
@@ -55,7 +61,7 @@ function typing(target: EventTarget | null): boolean {
  * what the server does not keep yet (reminders, an assignee, comments).
  */
 export function TaskSheet(props: TaskSheetProps) {
-  const { neighbours, onStep, onClose, onOpenTask, onTrash } = props;
+  const { neighbours, onStep, onClose, onOpenTask, onTrash, onCompleteForever } = props;
   const headingId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
   // The field to add a subtask: where the focus starts when the sheet was opened for one.
@@ -107,11 +113,11 @@ export function TaskSheet(props: TaskSheetProps) {
           <nav aria-label="Dove si trova il compito" className="flex min-w-0 flex-1 items-center gap-1 text-sm text-slate-600 dark:text-slate-400">
             {task.dossierId ? (
               <Link
-                to={`/dossier?dossier=${encodeURIComponent(task.dossierId)}`}
+                to={`/pratiche?dossier=${encodeURIComponent(task.dossierId)}`}
                 className={cn('inline-flex min-h-[44px] min-w-0 items-center gap-1.5 rounded px-1 hover:text-slate-900 hover:underline dark:hover:text-slate-100', FOCUS_RING)}
               >
                 <Folder size={15} aria-hidden className="shrink-0" />
-                <span className="truncate">{dossierTitle ?? 'Dossier'}</span>
+                <span className="truncate">{dossierTitle ?? 'Pratica'}</span>
               </Link>
             ) : (
               <span className="inline-flex min-w-0 items-center gap-1.5 px-1">
@@ -122,6 +128,7 @@ export function TaskSheet(props: TaskSheetProps) {
             {parent && (
               <>
                 <span aria-hidden>/</span>
+                {/* bare-button: a step of the path, drawn as the link before it. */}
                 <button
                   type="button"
                   onClick={() => onOpenTask(parent)}
@@ -133,25 +140,20 @@ export function TaskSheet(props: TaskSheetProps) {
               </>
             )}
           </nav>
-          <button type="button" aria-label="Compito precedente" aria-keyshortcuts="k" disabled={!neighbours.previous} onClick={() => step(-1)} className={cn(ICON_BUTTON, 'disabled:opacity-40 disabled:hover:bg-transparent')}>
-            <ChevronUp size={18} aria-hidden />
-          </button>
-          <button type="button" aria-label="Compito successivo" aria-keyshortcuts="j" disabled={!neighbours.next} onClick={() => step(1)} className={cn(ICON_BUTTON, 'disabled:opacity-40 disabled:hover:bg-transparent')}>
-            <ChevronDown size={18} aria-hidden />
-          </button>
+          <IconButton size="lg" aria-label="Compito precedente" aria-keyshortcuts="k" disabled={!neighbours.previous} onClick={() => step(-1)} icon={<ChevronUp size={18} aria-hidden />} />
+          <IconButton size="lg" aria-label="Compito successivo" aria-keyshortcuts="j" disabled={!neighbours.next} onClick={() => step(1)} icon={<ChevronDown size={18} aria-hidden />} />
           <MenuButton
             label="Altre azioni sul compito"
-            triggerClassName={ICON_BUTTON}
+            triggerClassName={MENU_TRIGGER}
             items={[
               ...(task.parentId ? [] : [{ label: 'Aggiungi un sottocompito', icon: Plus, onSelect: () => setRequest((r) => ({ id: task.id, n: r.id === task.id ? r.n + 1 : 1 })) }]),
-              { label: 'Sposta nel cestino', icon: Trash2, danger: true, separatorBefore: !task.parentId, onSelect: () => onTrash(task, parent) },
+              ...(task.recurrence ? [{ label: 'Completa per sempre', icon: CheckCheck, onSelect: () => onCompleteForever(task, parent) }] : []),
+              { label: 'Sposta nel cestino', icon: Trash2, danger: true, separatorBefore: !task.parentId || Boolean(task.recurrence), onSelect: () => onTrash(task, parent) },
             ]}
           >
             <MoreHorizontal size={18} aria-hidden />
           </MenuButton>
-          <button type="button" aria-label="Chiudi" onClick={onClose} className={ICON_BUTTON}>
-            <X size={18} aria-hidden />
-          </button>
+          <IconButton size="lg" aria-label="Chiudi" onClick={onClose} icon={<X size={18} aria-hidden />} />
         </header>
         <SheetBody key={task.id} {...props} task={task} headingId={headingId} listed={listed} familyFailed={family.status === 'error'} familyOptimistic={family.optimistic} parent={parent} addRequest={addRequest} addFieldRef={addFieldRef} />
       </div>
@@ -170,7 +172,7 @@ interface BodyProps extends TaskSheetProps {
 }
 
 /** One task's body, drawn again for each task the arrows open (its edits are its own). */
-function SheetBody({ task, today, headingId, listed, familyFailed, familyOptimistic, parent, addRequest, addFieldRef, onOpenTask, onDone, onSaved }: BodyProps) {
+function SheetBody({ task, today, headingId, listed, familyFailed, familyOptimistic, parent, addRequest, addFieldRef, onOpenTask, onDone, onCompleteForever, onSaved }: BodyProps) {
   // What the sheet shows: what was changed here while the writes travel, then the server's answer, until a newer copy
   // of the task comes from the view.
   const [local, setLocal] = useState<Task | null>(null);
@@ -193,6 +195,16 @@ function SheetBody({ task, today, headingId, listed, familyFailed, familyOptimis
         q.sending = false;
         q.saved = updated;
         onSaved(updated);
+        // The server brings the subtasks into the new dossier, not into its origin: they follow here, or a task moved
+        // between Work and Learn would leave them in the other list (LC130).
+        const origin = input.origin;
+        const behind = origin ? subtasks.filter((child) => child.origin !== origin) : [];
+        if (origin && behind.length > 0) {
+          Promise.all(behind.map((child) => taskService.update(child.id, { origin }))).then(
+            () => plannerStore.getState().changed(),
+            (failure) => setError(failureMessage(failure, 'Non riesco a spostare i sottocompiti. Riprova.')),
+          );
+        }
         plannerStore.getState().changed();
         if (q.pending) flush();
         else {
@@ -229,7 +241,7 @@ function SheetBody({ task, today, headingId, listed, familyFailed, familyOptimis
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       {error && (
-        <p role="alert" className="mx-4 mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 md:mx-6 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
+        <p role="alert" className="mx-4 mt-3 rounded-[8px] border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 md:mx-6 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </p>
       )}
@@ -250,7 +262,7 @@ function SheetBody({ task, today, headingId, listed, familyFailed, familyOptimis
         </div>
 
         <aside aria-label="Campi del compito" className="min-w-0 border-y border-slate-200 bg-slate-50 px-4 py-1 md:col-start-2 md:row-span-2 md:row-start-1 md:border-y-0 md:border-l md:px-5 md:py-3 dark:border-slate-800 dark:bg-slate-950/40">
-          <TaskSheetFields task={shown} today={today} onSave={save} />
+          <TaskSheetFields task={shown} today={today} onSave={save} onCompleteForever={() => onCompleteForever(shown, parent)} />
         </aside>
 
         <div className="min-w-0 px-4 pb-10 pt-4 md:pl-[3.75rem] md:pr-6">
@@ -325,7 +337,7 @@ function TitleField({ value, onCommit }: { value: string; onCommit: (title: stri
       }}
       className={cn(
         'block w-full resize-none overflow-hidden rounded-md bg-transparent px-1 py-1.5 font-serif text-2xl font-medium leading-snug text-slate-900 hover:bg-slate-50 dark:text-slate-50 dark:hover:bg-slate-800/50',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+        'focus-visible:outline-none ',
       )}
     />
   );
@@ -358,7 +370,7 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (text:
     return (
       <div className="mt-1 grid gap-1">
         <label htmlFor={`${id}-description`} className="sr-only">Descrizione</label>
-        <textarea
+        <Textarea
           ref={ref}
           id={`${id}-description`}
           value={text}
@@ -376,19 +388,17 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (text:
               finish(true);
             }
           }}
-          aria-describedby={`${id}-hint`}
-          className={cn(FIELD, 'py-2')}
+          helperText="Gli indirizzi web diventano link. Si salva quando esci dal campo."
         />
-        <p id={`${id}-hint`} className={FIELD_HINT}>Gli indirizzi web diventano link. Si salva quando esci dal campo.</p>
       </div>
     );
   }
 
   if (!value) {
     return (
-      <button type="button" onClick={start} className={cn(QUIET_BUTTON, 'mx-0 px-1 font-normal text-slate-600 dark:text-slate-400')}>
+      <Button type="button" variant="quiet" onClick={start} className="justify-self-start px-1 font-normal">
         Aggiungi una descrizione
-      </button>
+      </Button>
     );
   }
 
@@ -403,9 +413,7 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (text:
       >
         <LinkedText text={value} />
       </p>
-      <button type="button" aria-label="Modifica la descrizione" onClick={start} className={ICON_BUTTON}>
-        <Pencil size={15} aria-hidden />
-      </button>
+      <IconButton size="lg" aria-label="Modifica la descrizione" onClick={start} icon={<Pencil size={15} aria-hidden />} />
     </div>
   );
 }
@@ -499,6 +507,7 @@ function Subtasks({ parent, subtasks, today, failed, optimistic, addRequest, inp
                 onTick={() => tick(child)}
               />
               <div className="min-w-0 flex-1 py-1">
+                {/* bare-button: the subtask's title, which opens it, as a task's on its row. */}
                 <button
                   type="button"
                   onClick={() => onOpenTask(child)}
@@ -531,25 +540,25 @@ function Subtasks({ parent, subtasks, today, failed, optimistic, addRequest, inp
           className="mt-2 flex flex-wrap gap-2"
         >
           <label htmlFor={`${id}-title`} className="sr-only">Nuovo sottocompito</label>
-          <input
-            ref={inputRef}
-            id={`${id}-title`}
-            value={title}
-            maxLength={MAX_TITLE}
-            placeholder="Titolo del sottocompito"
-            onChange={(e) => setTitle(e.target.value)}
-            className={cn(FIELD, 'min-w-0 flex-1 basis-56')}
-            autoComplete="off"
-          />
-          <button type="submit" disabled={busy || !title.trim()} className={SECONDARY_BUTTON}>
+          <div className="min-w-0 flex-1 basis-56">
+            <Input
+              ref={inputRef}
+              id={`${id}-title`}
+              value={title}
+              maxLength={MAX_TITLE}
+              placeholder="Titolo del sottocompito"
+              onChange={(e) => setTitle(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <Button type="submit" variant="secondary" disabled={busy || !title.trim()}>
             Aggiungi<span className="sr-only"> il sottocompito</span>
-          </button>
+          </Button>
         </form>
       ) : (
-        <button ref={addButtonRef} type="button" onClick={() => setAdding(true)} className={cn(QUIET_BUTTON, 'mx-0 mt-1 inline-flex items-center gap-2 px-1 font-normal text-slate-700 dark:text-slate-300')}>
-          <Plus size={16} aria-hidden className="text-primary-700 dark:text-primary-300" />
+        <Button ref={addButtonRef} type="button" variant="quiet" onClick={() => setAdding(true)} icon={<Plus size={16} aria-hidden className="text-primary-700 dark:text-primary-300" />} className="mt-1 px-1 font-normal">
           Aggiungi un sottocompito
-        </button>
+        </Button>
       )}
       {error && <p role="alert" className="mt-2 text-sm text-red-800 dark:text-red-200">{error}</p>}
     </section>

@@ -1,19 +1,27 @@
-import { useEffect, useRef, useState } from 'react';
-import { Search, CheckSquare, Square, Loader2, TreeDeciduous } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Search, CheckSquare, Square, TreeDeciduous } from 'lucide-react';
+import { Button } from '../../ui/Button';
+import { Select } from '../../ui/Select';
+import { Input } from '../../ui/Input';
 import { parseItalianDate } from '../../../utils/dateUtils';
 import { resolveAct } from '../../../utils/actUrn';
 import { isEuropeanAct } from '../../../utils/versionDisplay';
 import { extractArticleIdsFromTree, type TreeNode } from '../../../utils/treeUtils';
 import { legalFetch } from '../../../services/legalFetch';
+import { Expand } from '../../ui/Expand';
+import { CARD_RADIUS, CONTROL_BORDER } from '../../ui/controlStyles';
+import { cn } from '../../../lib/utils';
 
 
 interface ActIdentity { tipo_atto: string; data: string; numero_atto: string }
 
 interface Props {
+  open: boolean;
   onClose: () => void;
   onImport: (articles: { numero: string; urn?: string }[], normInfo: ActIdentity) => void;
   /** Open on this act's index at once ("+ articoli" of a dossier's act block). */
   initialAct?: ActIdentity;
+  className?: string;
 }
 
 // The act types the form offers; an act opened from a dossier may be another.
@@ -34,7 +42,21 @@ const ACT_TYPE_OPTIONS: { value: string; label: string }[] = [
 
 type TreeEntry = string | Record<string, string>;
 
-export function TreeNavigatorModal({ onClose, onImport, initialAct }: Props) {
+/**
+ * «Importa articoli da norma» in the page (LC125, L-73): a space under the header's «Aggiungi» (`Expand`), never over
+ * the content. The focus lands on the space, never in a field; Esc closes it and the focus goes back to the command.
+ */
+export function TreeNavigatorModal({ open, className, ...rest }: Props) {
+  const headingId = useId();
+  return (
+    <Expand open={open} onClose={rest.onClose} role="region" aria-labelledby={headingId} className={cn('bg-card', CARD_RADIUS, CONTROL_BORDER, className)}>
+      {/* Closed, `Expand` draws nothing: opened again, the form starts afresh (and an act's index is read again). */}
+      <TreeNavigatorForm {...rest} headingId={headingId} />
+    </Expand>
+  );
+}
+
+function TreeNavigatorForm({ onClose, onImport, initialAct, headingId }: Omit<Props, 'open' | 'className'> & { headingId: string }) {
   const [actType, setActType] = useState(initialAct?.tipo_atto ?? 'codice civile');
   const [actNumber, setActNumber] = useState(initialAct?.numero_atto ?? '');
   const [actDate, setActDate] = useState(initialAct?.data ?? '');
@@ -143,71 +165,44 @@ export function TreeNavigatorModal({ onClose, onImport, initialAct }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white dark:bg-slate-900 rounded-xl shadow-lg w-full max-w-lg max-h-[85vh] border border-slate-200 dark:border-slate-800 flex flex-col">
-        <div className="p-6 border-b border-slate-200 dark:border-slate-800">
-          <h3 className="font-semibold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <TreeDeciduous size={20} className="text-green-600" />
-            Importa articoli da norma
-          </h3>
-        </div>
+    <div>
+        <h2 id={headingId} className="flex items-center gap-2 px-4 pt-4 text-base font-semibold text-slate-900 md:px-5 md:pt-5 dark:text-slate-50">
+          <TreeDeciduous size={18} aria-hidden className="text-green-600" />
+          Importa articoli da norma
+        </h2>
 
-        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+        <div className="space-y-4 p-4 md:p-5">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo atto</label>
-              <select
-                value={actType}
-                onChange={(e) => setActType(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-              >
+              <Select label="Tipo atto" value={actType} onChange={(e) => setActType(e.target.value)}>
                 {!ACT_TYPE_OPTIONS.some((o) => o.value === actType) && (
                   <option value={actType}>{actType}</option>
                 )}
                 {ACT_TYPE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Numero</label>
-              <input
-                value={actNumber}
-                onChange={(e) => setActNumber(e.target.value)}
-                placeholder="241"
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-              />
+              <Input label="Numero" value={actNumber} onChange={(e) => setActNumber(e.target.value)} placeholder="241" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
-              <input
-                type="text"
-                value={actDate}
-                onChange={(e) => setActDate(e.target.value)}
-                placeholder="aaaa o gg-mm-aaaa"
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-              />
+              <Input label="Data" type="text" value={actDate} onChange={(e) => setActDate(e.target.value)} placeholder="aaaa o gg-mm-aaaa" />
             </div>
           </div>
 
-          <button
-            onClick={fetchTree}
-            disabled={loading}
-            className="w-full py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
-          >
-            {loading ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
-            {loading ? 'Caricamento...' : 'Cerca articoli'}
-          </button>
+          <Button type="button" onClick={fetchTree} loading={loading} className="w-full" icon={<Search size={16} aria-hidden />}>
+            {loading ? 'Caricamento…' : 'Cerca articoli'}
+          </Button>
 
           {loading && (
             <p className="text-xs text-slate-500 dark:text-slate-400 text-center animate-pulse">
-              Recupero della struttura della norma — potrebbe richiedere qualche secondo.
+              Recupero della struttura della norma. Può richiedere qualche secondo.
             </p>
           )}
 
           {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg text-sm">
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-md text-sm">
               {error}
             </div>
           )}
@@ -218,23 +213,22 @@ export function TreeNavigatorModal({ onClose, onImport, initialAct }: Props) {
                 <span className="text-sm text-slate-600 dark:text-slate-400">
                   {tree.length} articoli trovati • {selectedArticles.size} selezionati
                 </span>
-                <button
-                  onClick={toggleSelectAll}
-                  className="text-sm text-primary-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
-                >
+                <Button type="button" variant="link" onClick={toggleSelectAll}>
                   {allSelected ? 'Deseleziona tutti' : 'Seleziona tutti'}
-                </button>
+                </Button>
               </div>
-              <div className="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-800">
+              <div className="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-md divide-y divide-slate-100 dark:divide-slate-800">
                 {tree.map((item, idx) => {
                   const articleNum = typeof item === 'string' ? item : Object.keys(item)[0];
                   const selected = selectedArticles.has(articleNum);
                   return (
+                    // bare-button: a row of the list, the whole width a checkbox's target (`aria-pressed`), not a button's look.
                     <button
+                      type="button"
                       key={idx}
                       onClick={() => toggleArticle(articleNum)}
                       aria-pressed={selected}
-                      className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:bg-slate-50 dark:focus-visible:bg-slate-800"
+                      className="w-full h-9 px-3 text-left flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:bg-slate-50 dark:focus-visible:bg-slate-800"
                     >
                       {selected ? (
                         <CheckSquare size={16} className="text-primary-500" />
@@ -250,23 +244,14 @@ export function TreeNavigatorModal({ onClose, onImport, initialAct }: Props) {
           )}
         </div>
 
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          >
+        <div className="flex justify-end gap-3 px-4 pb-4 md:px-5 md:pb-5">
+          <Button type="button" variant="quiet" onClick={onClose}>
             Annulla
-          </button>
-          <button
-            onClick={runImport}
-            disabled={selectedArticles.size === 0}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
-          >
+          </Button>
+          <Button type="button" onClick={runImport} disabled={selectedArticles.size === 0}>
             Importa {selectedArticles.size > 0 ? `(${selectedArticles.size})` : ''}
-          </button>
+          </Button>
         </div>
-
-      </div>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { TextAtDateDialog, type TextAtDateDialogProps } from './TextAtDateDialog';
+import { CONTROL_HEIGHT, FIELD_CONTROL } from '../../ui/controlStyles';
 
 function setup(over: Partial<TextAtDateDialogProps> = {}) {
     const props: TextAtDateDialogProps = {
@@ -15,14 +17,21 @@ const confirm = () => screen.getByRole('button', { name: /Mostra il testo/ });
 const type = (value: string) => fireEvent.change(dateField(), { target: { value } });
 
 describe('TextAtDateDialog', () => {
+    // LC111: the common field, so in the dark the browser's calendar is drawn dark too.
+    it('draws its date as the common field, with the dark rule', () => {
+        setup();
+        expect(dateField()).toHaveClass(...FIELD_CONTROL.split(' '));
+        expect(dateField()).toHaveClass('dark:[color-scheme:dark]');
+    });
+
     it('renders nothing while closed', () => {
         setup({ isOpen: false });
-        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(screen.queryByRole('region')).not.toBeInTheDocument();
     });
 
     it('says what the date means and what it does not', () => {
         setup();
-        expect(screen.getByRole('dialog', { name: 'Testo alla data' })).toBeInTheDocument();
+        expect(screen.getByRole('region', { name: 'Testo alla data' })).toBeInTheDocument();
         expect(screen.getByText('Normattiva mostra il testo in vigore in quel giorno.')).toBeInTheDocument();
         expect(screen.getByText(/non dice quale disciplina si applichi al fatto/)).toBeInTheDocument();
     });
@@ -108,7 +117,8 @@ describe('TextAtDateDialog', () => {
     it('keeps a 44px touch target on mobile on every control', () => {
         setup();
         const target = ['min-h-[44px]', 'md:min-h-0'];
-        expect(dateField()).toHaveClass(...target);
+        // The date is the common field (LC111): 44 px on a phone, 36 from md.
+        expect(dateField()).toHaveClass(...CONTROL_HEIGHT.md.split(' '));
         expect(screen.getByLabelText('Testo originale').closest('label')).toHaveClass(...target);
         expect(screen.getByRole('button', { name: 'Annulla' })).toHaveClass(...target);
         expect(confirm()).toHaveClass(...target);
@@ -118,5 +128,32 @@ describe('TextAtDateDialog', () => {
         const { onClose } = setup();
         fireEvent.click(screen.getByRole('button', { name: 'Annulla' }));
         expect(onClose).toHaveBeenCalled();
+    });
+
+    // LC139 (L-73): in the page under the toolbar, not a window.
+    it('opens as a region that takes the focus, not the date field; Esc and «Chiudi» give it back', () => {
+        function Host() {
+            const [open, setOpen] = useState(false);
+            return (
+                <>
+                    <button type="button" onClick={() => setOpen(true)}>Testo alla data…</button>
+                    <TextAtDateDialog isOpen={open} onClose={() => setOpen(false)} onConfirm={() => {}} euAct={false} today="2026-10-01" />
+                </>
+            );
+        }
+        render(<Host />);
+        const command = screen.getByRole('button', { name: 'Testo alla data…' });
+        command.focus();
+        fireEvent.click(command);
+        const region = screen.getByRole('region', { name: 'Testo alla data' });
+        expect(region).toHaveFocus();
+        expect(screen.queryByRole('dialog')).toBeNull();
+        fireEvent.keyDown(region, { key: 'Escape' });
+        expect(screen.queryByRole('region')).toBeNull();
+        expect(command).toHaveFocus();
+        fireEvent.click(command);
+        fireEvent.click(screen.getByRole('button', { name: 'Chiudi' }));
+        expect(screen.queryByRole('region')).toBeNull();
+        expect(command).toHaveFocus();
     });
 });

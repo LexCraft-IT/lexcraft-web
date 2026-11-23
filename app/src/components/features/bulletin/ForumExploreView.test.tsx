@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createPortal } from 'react-dom';
 import { ForumExploreView } from './ForumExploreView';
 import { sharedEnvironmentService } from '../../../services/sharedEnvironmentService';
@@ -56,10 +56,6 @@ function ForumExploreViewIn({ into }: { into: HTMLElement }) {
       setCategory={noop}
       sort="newest"
       setSort={noop}
-      showCategoryDropdown={false}
-      setShowCategoryDropdown={noop}
-      showSortDropdown={false}
-      setShowSortDropdown={noop}
       onSearchSubmit={(e) => e.preventDefault()}
       onRefresh={noop}
       onPaginate={noop}
@@ -67,7 +63,6 @@ function ForumExploreViewIn({ into }: { into: HTMLElement }) {
       onImport={noop}
       onReport={noop}
       onSuggest={noop}
-      onPublishClick={noop}
       onPacksAdded={noop}
       onPacksError={noop}
       onResetFilters={noop}
@@ -89,10 +84,6 @@ function renderView(overrides: Partial<React.ComponentProps<typeof ForumExploreV
       setCategory={noop}
       sort="newest"
       setSort={noop}
-      showCategoryDropdown={false}
-      setShowCategoryDropdown={noop}
-      showSortDropdown={false}
-      setShowSortDropdown={noop}
       onSearchSubmit={(e) => e.preventDefault()}
       onRefresh={noop}
       onPaginate={noop}
@@ -100,7 +91,6 @@ function renderView(overrides: Partial<React.ComponentProps<typeof ForumExploreV
       onImport={noop}
       onReport={noop}
       onSuggest={noop}
-      onPublishClick={noop}
       onPacksAdded={noop}
       onPacksError={noop}
       onResetFilters={noop}
@@ -162,53 +152,62 @@ describe('ForumExploreView - touch targets on a phone', () => {
 
   it('gives the icon-only refresh button a name and 44 × 44 px', () => {
     renderView();
-    expect(screen.getByRole('button', { name: "Aggiorna l'elenco" })).toHaveClass('min-h-[44px]', 'min-w-[44px]', 'md:min-h-0', 'md:min-w-0');
-  });
-
-  it('gives «Pubblica un dossier» of the empty Forum 44 px', () => {
-    renderView();
-    expect(screen.getByRole('button', { name: 'Pubblica un dossier' })).toHaveClass('min-h-[44px]', 'md:min-h-0');
+    expect(screen.getByRole('button', { name: "Aggiorna l'elenco" })).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-9', 'md:min-w-9');
   });
 
   it('gives «Azzera filtri» of an empty search 44 px', () => {
     renderView({ searchQuery: 'privacy' });
-    expect(screen.getByRole('button', { name: 'Azzera filtri' })).toHaveClass('min-h-[44px]', 'md:min-h-0');
+    expect(screen.getByRole('button', { name: 'Azzera filtri' })).toHaveClass('min-h-11', 'md:min-h-9');
   });
 });
 
-// One row of filters on a phone (M1): the search across, then the category and the order half each, the refresh beside.
-describe('ForumExploreView - the filters on a phone', () => {
+// LC114: the order a choice in a row (as «Ordina» in Pratiche), the category the common menu; no menu made by hand
+// over the content any more.
+describe('ForumExploreView - the order and the category', () => {
   beforeEach(() => {
     listMock.mockReset();
     listMock.mockResolvedValue({ data: [], pagination: { page: 1, limit: 3, total: 0, pages: 0 } });
   });
 
-  it('puts the search on a row of its own and the category, the order and the refresh side by side under it', () => {
-    renderView();
-    const row = document.getElementById('tour-forum-filters')!;
-    expect(row).toHaveClass('flex-wrap', 'sm:flex-nowrap');
-    expect(screen.getByRole('textbox', { name: 'Cerca nei dossier pubblici' }).closest('form')).toHaveClass('basis-full', 'sm:basis-auto');
-    for (const name of [/^Categoria:/, /^Ordine:/]) {
-      const button = screen.getByRole('button', { name });
-      expect(button).toHaveClass('w-full', 'min-h-[44px]');
-      expect(button.parentElement).toHaveClass('flex-1', 'sm:flex-none');
-    }
+  it('draws the order as a small row of three choices, the chosen one alone in the Tab order', () => {
+    renderView({ sort: 'popular' });
+    const order = screen.getByRole('radiogroup', { name: 'Ordina i dossier pubblici' });
+    const choices = within(order).getAllByRole('radio');
+    expect(choices.map((choice) => choice.textContent)).toEqual(['Recenti', 'Popolari', 'Aggiunti']);
+    expect(choices[1]).toHaveAttribute('aria-checked', 'true');
+    expect(choices.map((choice) => choice.tabIndex)).toEqual([-1, 0, -1]);
+    // `size="sm"`: each choice 44 px on a phone (the row 44, no track round it), 32 inside a row of 36 from md.
+    expect(choices[1]).toHaveClass('min-h-11', 'md:min-h-8');
+    expect(order).toHaveClass('md:p-0.5');
+    expect(order).not.toHaveClass('p-0.5');
   });
 
-  it('names the menus with what they hold, and writes «Tutte» on a phone where «Tutte le categorie» does not fit', () => {
-    renderView();
-    const category = screen.getByRole('button', { name: 'Categoria: Tutte le categorie' });
-    expect(category).toHaveAttribute('aria-expanded', 'false');
-    expect(within(category).getByText('Tutte')).toHaveClass('sm:hidden');
-    expect(within(category).getByText('Tutte le categorie')).toHaveClass('hidden', 'sm:inline');
-    expect(screen.getByRole('button', { name: /^Ordine: / })).toHaveAttribute('aria-expanded', 'false');
+  it('moves the order with the arrows, Home and End', () => {
+    const setSort = vi.fn();
+    renderView({ sort: 'newest', setSort });
+    const current = screen.getByRole('radio', { name: 'Recenti' });
+    fireEvent.keyDown(current, { key: 'ArrowRight' });
+    expect(setSort).toHaveBeenLastCalledWith('popular');
+    fireEvent.keyDown(current, { key: 'End' });
+    expect(setSort).toHaveBeenLastCalledWith('mostDownloaded');
+    fireEvent.keyDown(current, { key: 'ArrowLeft' });
+    expect(setSort).toHaveBeenLastCalledWith('mostDownloaded');
   });
 
-  it('writes the order in one word on a phone, where half a 320 px row cut «Più rece…», its name in full', () => {
+  it('chooses the category in the common menu, «Tutte» first', () => {
+    const setCategory = vi.fn();
+    renderView({ setCategory });
+    const menu = screen.getByRole('combobox', { name: 'Filtra per categoria' });
+    expect(menu.tagName).toBe('SELECT');
+    expect(within(menu).getAllByRole('option')[0]).toHaveValue('all');
+    fireEvent.change(menu, { target: { value: 'penal' } });
+    expect(setCategory).toHaveBeenCalledWith('penal');
+  });
+
+  it('puts nothing over the content: no veil, no menu that opens', () => {
     renderView();
-    const order = screen.getByRole('button', { name: 'Ordine: Più recenti' });
-    expect(within(order).getByText('Recenti')).toHaveClass('sm:hidden');
-    expect(within(order).getByText('Più recenti')).toHaveClass('hidden', 'sm:inline');
+    expect(document.querySelector('.fixed')).toBeNull();
+    expect(screen.queryByRole('button', { expanded: false })).toBeNull();
   });
 });
 
@@ -232,7 +231,7 @@ describe('ForumExploreView - the order of the page', () => {
     window.matchMedia = original;
   });
 
-  it('puts the community\'s grid first on a computer, three columns from xl, and «Pronti da VisuaLex» after it', () => {
+  it('puts the community\'s grid first on a computer, three columns from xl, and «Pronti da LexCraft» after it', () => {
     setDesktop(true);
     renderView({ environments: five, pagination: { page: 1, pages: 1, total: 5 } });
     const cards = screen.getAllByRole('article');
@@ -241,7 +240,7 @@ describe('ForumExploreView - the order of the page', () => {
     // One grid: every card, the same height in its row.
     expect(new Set(cards.map((card) => card.parentElement)).size).toBe(1);
     expect(cards[0]).toHaveClass('h-full', 'flex-col');
-    const packs = screen.getByRole('region', { name: 'Pronti da VisuaLex' });
+    const packs = screen.getByRole('region', { name: 'Pronti da LexCraft' });
     expect(follows(cards[4], packs)).toBe(true);
   });
 
@@ -249,10 +248,10 @@ describe('ForumExploreView - the order of the page', () => {
     setDesktop(false);
     renderView({ environments: five, pagination: { page: 1, pages: 1, total: 5 } });
     const cards = screen.getAllByRole('article');
-    const packs = screen.getByRole('region', { name: 'Pronti da VisuaLex' });
+    const packs = screen.getByRole('region', { name: 'Pronti da LexCraft' });
     expect(follows(cards[1], packs)).toBe(true);
     expect(follows(packs, cards[2])).toBe(true);
-    expect(screen.getAllByRole('region', { name: 'Pronti da VisuaLex' })).toHaveLength(1);
+    expect(screen.getAllByRole('region', { name: 'Pronti da LexCraft' })).toHaveLength(1);
     // The tour's first card is still the first.
     expect(cards[0]).toHaveAttribute('id', 'tour-forum-card');
   });
@@ -260,19 +259,18 @@ describe('ForumExploreView - the order of the page', () => {
   it('keeps the strip in its place on a phone while a new read travels: never mounted again', () => {
     setDesktop(false);
     const { rerender } = renderView({ environments: five, pagination: { page: 1, pages: 1, total: 5 } });
-    const packs = screen.getByRole('region', { name: 'Pronti da VisuaLex' });
+    const packs = screen.getByRole('region', { name: 'Pronti da LexCraft' });
     const props = (loading: boolean) => ({
       environments: five, pagination: { page: 1, pages: 1, total: 5 }, loading, likingIds: new Set<string>(), searchQuery: '',
       setSearchQuery: noop, category: 'all' as const, setCategory: noop, sort: 'newest' as const, setSort: noop,
-      showCategoryDropdown: false, setShowCategoryDropdown: noop, showSortDropdown: false, setShowSortDropdown: noop,
       onSearchSubmit: (e: React.FormEvent) => e.preventDefault(), onRefresh: noop, onPaginate: noop, onLike: noop,
-      onImport: noop, onReport: noop, onSuggest: noop, onPublishClick: noop, onPacksAdded: noop, onPacksError: noop,
+      onImport: noop, onReport: noop, onSuggest: noop, onPacksAdded: noop, onPacksError: noop,
       onResetFilters: noop,
     });
     rerender(<ForumExploreView {...props(true)} />);
-    expect(screen.getByRole('region', { name: 'Pronti da VisuaLex' })).toBe(packs);
+    expect(screen.getByRole('region', { name: 'Pronti da LexCraft' })).toBe(packs);
     rerender(<ForumExploreView {...props(false)} />);
-    expect(screen.getByRole('region', { name: 'Pronti da VisuaLex' })).toBe(packs);
+    expect(screen.getByRole('region', { name: 'Pronti da LexCraft' })).toBe(packs);
   });
 
   // P1: the count's line came with the read and moved the cards down 44 px (CLS 0.12 on a phone), and the cards held in
@@ -299,12 +297,12 @@ describe('ForumExploreView - the order of the page', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'Dalla comunità' })).toHaveClass('sr-only');
     // The cards after the strip are not read as its part.
     const more = screen.getByRole('heading', { level: 2, name: 'Altri dossier della comunità' });
-    const packs = screen.getByRole('region', { name: 'Pronti da VisuaLex' });
+    const packs = screen.getByRole('region', { name: 'Pronti da LexCraft' });
     expect(follows(packs, more) && follows(more, screen.getAllByRole('article')[2])).toBe(true);
     expect(await screen.findByRole('heading', { level: 2, name: 'I più aggiunti' })).toBeInTheDocument();
   });
 
-  it('brings «Pronti da VisuaLex» to the top of the content and focuses it, from /forum#pronti', async () => {
+  it('brings «Pronti da LexCraft» to the top of the content and focuses it, from /forum#pronti', async () => {
     setDesktop(true);
     window.history.replaceState(null, '', '/forum#pronti');
     const scrollTo = vi.fn();
@@ -324,7 +322,7 @@ describe('ForumExploreView - the order of the page', () => {
       unmount();
       (document.activeElement as HTMLElement | null)?.blur();
       render(<ForumExploreViewIn into={scroller} />);
-      await screen.findByRole('list', { name: 'Pronti da VisuaLex' });
+      await screen.findByRole('list', { name: 'Pronti da LexCraft' });
       expect(scrollTo).toHaveBeenCalledTimes(1);
       expect(document.activeElement).not.toBe(document.getElementById('pronti'));
     } finally {
@@ -333,11 +331,18 @@ describe('ForumExploreView - the order of the page', () => {
     }
   });
 
-  it('shows the packs once, after the empty Forum', () => {
-    setDesktop(true);
-    renderView();
-    const empty = screen.getByText('Ancora nessun dossier nel Forum');
-    const packs = screen.getByRole('region', { name: 'Pronti da VisuaLex' });
-    expect(follows(empty, packs)).toBe(true);
+  // LC24: the empty Forum is one quiet line; «Pubblica un dossier» is the page header's, not the view's.
+  it('shows the packs once, after the empty Forum\'s one line, with no button of its own', () => {
+    for (const desktop of [true, false]) {
+      setDesktop(desktop);
+      const { unmount } = renderView();
+      const empty = screen.getByText(/^Ancora nessun dossier pubblicato dalla comunità:/);
+      expect(empty.tagName).toBe('P');
+      expect(screen.queryByRole('button', { name: 'Pubblica un dossier' })).toBeNull();
+      const packs = screen.getAllByRole('region', { name: 'Pronti da LexCraft' });
+      expect(packs).toHaveLength(1);
+      expect(follows(empty, packs[0])).toBe(true);
+      unmount();
+    }
   });
 });

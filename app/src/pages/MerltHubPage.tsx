@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Bot, ChevronDown, Settings, ShieldCheck, Sparkles } from 'lucide-react';
+import { ChevronDown, Settings, ShieldCheck, UserRound } from 'lucide-react';
 import { PageFrame } from '../components/layout/PageFrame';
 import { ASSISTANT_PAGE } from '../features/sections/pageNames';
 import { cn } from '../lib/utils';
 import { useMerltFeatures } from '../features/merlt/useMerltFeatures';
+import { LabsOff } from '../features/merlt/LabsOff';
 import { useConsent } from '../features/merlt/consent/useConsent';
 import { ConsentDialog } from '../features/merlt/consent/ConsentDialog';
 import { OpsTrainingButton } from '../features/merlt/ops/OpsTrainingButton';
@@ -45,21 +46,14 @@ export function MerltHubPage() {
     graphReadable: features.graphReadable,
   });
 
-  if (!features.merltEnabled) {
-    return (
-      <div className="flex min-h-[40vh] flex-col items-center justify-center text-center">
-        <Bot size={40} aria-hidden className="mb-3 text-slate-400" />
-        <p className="text-slate-600 dark:text-slate-300">MERL-T non è disponibile in questa configurazione.</p>
-      </div>
-    );
-  }
+  if (!features.merltEnabled) return <LabsOff />;
 
   const toggle = (panel: FootPanel) => setFootPanel((open) => (open === panel ? null : panel));
 
   return (
     <PageFrame
       title={ASSISTANT_PAGE}
-      // L-37: «Academia · il laboratorio del diritto» over the page's name.
+      // L-37: the section's name, «Labs», over the page's name.
       kicker="academia"
       line="Il tuo centro per l’intelligenza giuridica MERL-T: fai domande, valida le proposte della community, esplora il grafo e contribuisci con i tuoi appunti."
       section="academia"
@@ -124,7 +118,7 @@ export function MerltHubPage() {
             onClick={() => toggle('profile')}
             className={HUB_LINK}
           >
-            <Sparkles size={16} aria-hidden />
+            <UserRound size={16} aria-hidden />
             Il tuo profilo
             <ChevronDown size={16} aria-hidden className={cn('transition-transform motion-reduce:transition-none', footPanel === 'profile' && 'rotate-180')} />
           </button>

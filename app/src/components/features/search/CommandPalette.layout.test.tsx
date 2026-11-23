@@ -12,20 +12,26 @@ vi.mock('framer-motion', async (importOriginal) => ({
   useReducedMotion: () => motionPref.reduced,
 }));
 
+// The page's idle time, when the test says (`setup.ts` gives none): the band drawn ahead (LC133).
+const idle = vi.hoisted(() => ({ runs: [] as Array<() => void> }));
+vi.mock('../../../lib/idle', () => ({ whenIdle: (run: () => void) => { idle.runs.push(run); return () => {}; } }));
+
 import { CommandPalette } from './CommandPalette';
+import { SEARCH_CLOSE, SEARCH_OPEN } from '../../../lib/motion';
 import { appStore } from '../../../store/useAppStore';
-import { SEARCH_FIELD_FORM_ID } from '../../../utils/searchFieldControl';
+import { SEARCH_FIELD_FORM_ID, SEARCH_ISLAND_ID } from '../../../utils/searchFieldControl';
 import type { CustomAlias, QuickNorm } from '../../../types';
 
 /**
- * The search menu in the new design (spec O1): on a computer a panel that drops from the search page's
- * field, on a phone `ui/Sheet`; the field first, the list of acts and «A portata di mano» under it, the
- * filters and the keys at the foot. The behaviour behind it is `CommandPalette.test.tsx`'s.
+ * The search menu (L-75): the field grows in the bar out of the pill or the search page's field, the lists are a band
+ * under the bars, in the page's flow; the list of acts and «A portata di mano», the filters and the keys at the foot. The
+ * behaviour behind it is `CommandPalette.test.tsx`'s.
  */
 
 function asDesktop(desktop: boolean) {
   vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
-    matches: desktop, media: query, onchange: null,
+    // The island reads «riduci movimento» from here (LC85); every other query is the width's.
+    matches: query.includes('reduced-motion') ? motionPref.reduced : desktop, media: query, onchange: null,
     addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {},
     dispatchEvent: () => false,
   }) as unknown as MediaQueryList);
@@ -55,22 +61,50 @@ afterEach(() => {
   appStore.setState({ quickNorms: [], customAliases: [] });
 });
 
-describe('CommandPalette — where it opens', () => {
-  it('on a computer, drops from the search page\'s field, with its own «Chiudi» and the keys at the foot', () => {
-    asDesktop(true);
-    const form = document.createElement('form');
-    form.id = SEARCH_FIELD_FORM_ID;
-    document.body.appendChild(form);
-    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+/**
+ * A bar as `TopBar`, `PhoneTopBar` and the search page's bar draw it (L-75): what the field grows from (the pill, or the
+ * search page's field) and the slot it grows in. `over`: it lies over the content, as the phone's.
+ */
+function bar({ from = 'pill', over = false }: { from?: 'pill' | 'field' | 'compact'; over?: boolean } = {}) {
+  const holder = document.createElement('div');
+  holder.setAttribute('data-palette-bar', over ? 'over' : '');
+  const source = document.createElement(from === 'pill' ? 'button' : 'form');
+  if (from === 'pill') source.id = SEARCH_ISLAND_ID;
+  else source.id = SEARCH_FIELD_FORM_ID;
+  if (from === 'compact') source.setAttribute('data-compact', '');
+  const slot = document.createElement('div');
+  slot.setAttribute('data-palette-slot', '');
+  holder.append(source, slot);
+  document.body.append(holder);
+  return { holder, source, slot };
+}
 
-    const panel = document.getElementById('command-menu-root')!.closest('[class*="fixed"]') as HTMLElement;
-    // placed by floating-ui against the field, not hung at the top of the screen
-    expect(panel.className).not.toMatch(/top-16/);
-    expect(panel.style.position).toBe('fixed');
-    expect(screen.getByRole('button', { name: 'Chiudi' })).toBeInTheDocument();
-    expect(screen.getByText('Naviga')).toBeInTheDocument();
-    // a dialog with its name, the focus kept inside
-    expect(screen.getByRole('dialog', { name: 'Menu di ricerca' })).toContainElement(screen.getByRole('combobox'));
+afterEach(() => {
+  document.querySelectorAll('[data-palette-bar]').forEach((el) => el.remove());
+});
+
+const band = () => screen.getByRole('region', { name: 'Menu di ricerca' });
+
+describe('CommandPalette — where it opens (L-75: in the page, nothing over it)', () => {
+  it('on a computer, the field grows in the bar that holds the pill, «Chiudi» beside it, the lists in a band under it, the keys at its foot', () => {
+    asDesktop(true);
+    const { slot } = bar();
+    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(slot).toContainElement(screen.getByRole('combobox'));
+    expect(slot).toContainElement(screen.getByRole('button', { name: 'Chiudi' }));
+    expect(band()).not.toContainElement(screen.getByRole('combobox'));
+    expect(band()).toContainElement(screen.getByText('Naviga'));
+    // No dialog, no veil, nothing fixed.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.querySelector('[data-palette-veil]')).toBeNull();
+    expect(document.querySelector('.fixed')).toBeNull();
+  });
+
+  it('on the search page, grows in the bar out of its field, the compact one from lg as the large one below', () => {
+    asDesktop(true);
+    const { slot } = bar({ from: 'compact' });
+    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(slot).toContainElement(screen.getByRole('combobox'));
   });
 
   it('on a computer, gives the focus back to what had it (the search page\'s field) when it closes', async () => {
@@ -87,22 +121,21 @@ describe('CommandPalette — where it opens', () => {
     opener.remove();
   });
 
-  it('is as tall as what it holds, up to its maximum: no fixed height (Bill)', () => {
+  it('is as tall as what it holds, up to its maximum, on a computer: no fixed height (Bill)', () => {
     asDesktop(true);
-    const form = document.createElement('form');
-    form.id = SEARCH_FIELD_FORM_ID;
-    document.body.append(form);
+    bar();
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    const box = screen.getByRole('dialog', { name: 'Menu di ricerca' });
-    expect(box.style.height).toBe('');
-    expect(box.querySelector(':scope > div')).toHaveClass('max-h-[var(--palette-max-h,40rem)]');
+    expect(band().style.height).toBe('');
+    const column = band().querySelector<HTMLElement>('.max-w-3xl')!;
+    expect(column).toHaveClass('max-h-[var(--palette-max-h)]');
+    expect(column.style.getPropertyValue('--palette-max-h')).toBe('min(40rem, calc(100dvh - 12rem))');
   });
 
-  it('on a computer with no field on screen, hangs at the top, centred', () => {
+  it('with no bar (a lesson, full screen below lg), the field is the band\'s first row', () => {
     asDesktop(true);
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    const panel = document.getElementById('command-menu-root')!.closest('[class*="fixed"]') as HTMLElement;
-    expect(panel.className).toMatch(/top-16/);
+    expect(band()).toContainElement(screen.getByRole('combobox'));
+    expect(band()).toContainElement(screen.getByRole('button', { name: 'Chiudi' }));
   });
 
   it('on a phone, gives the focus back to what opened it (the bar\'s magnifier) when it closes', async () => {
@@ -119,182 +152,301 @@ describe('CommandPalette — where it opens', () => {
     opener.remove();
   });
 
-  it('on a phone, drops from the bar at the top across the page less 16 px each side, with its «Chiudi», and shows no keys (R2)', () => {
+  it('on a phone, the field grows in the bar, the band starts under the bar over the content and fills the page under it; no keys (R2)', () => {
     asDesktop(false);
+    const { slot } = bar({ over: true });
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    const panel = screen.getByRole('dialog', { name: 'Menu di ricerca' });
-    expect(panel).toHaveClass('inset-x-4');
-    expect(panel.className).toMatch(/top-\[calc\(env\(safe-area-inset-top\)/);
-    expect(within(panel).getByRole('button', { name: 'Chiudi' })).toBeInTheDocument();
+    expect(slot).toContainElement(screen.getByRole('combobox'));
+    expect(within(slot).getByRole('button', { name: 'Chiudi' })).toBeInTheDocument();
+    expect(band().firstElementChild!.firstElementChild).toHaveClass('pt-[calc(3.5rem+env(safe-area-inset-top))]');
+    expect(band().querySelector('.max-w-3xl')).toHaveClass('h-[var(--palette-max-h)]');
     expect(screen.queryByText('Naviga')).toBeNull();
   });
 });
 
-describe('CommandPalette — growing out of the field (R2)', () => {
-  it('starts as tall as the search page\'s field, at its corners, and grows into the panel', async () => {
-    asDesktop(true);
-    // jsdom has no Web Animations: one that records what it was asked.
-    const asked: Keyframe[][] = [];
-    const animateSpy = vi.fn(function (this: HTMLElement, keyframes: Keyframe[]) {
-      asked.push(keyframes);
-      return { cancel: vi.fn(), onfinish: null, playState: 'running' } as unknown as Animation;
-    });
-    Object.defineProperty(HTMLElement.prototype, 'animate', { value: animateSpy, configurable: true, writable: true });
-    try {
-      const form = document.createElement('form');
-      form.id = SEARCH_FIELD_FORM_ID;
-      Object.defineProperty(form, 'offsetHeight', { value: 44 });
-      document.body.append(form);
-      render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-      const panel = screen.getByRole('dialog', { name: 'Menu di ricerca' }).querySelector<HTMLElement>('.rounded-2xl')!;
-      // Set before the first paint, so it never flashes open: the field's height and corners.
-      expect(panel.style.clipPath).toBe('inset(0px 0px calc(100% - 44px) 0px round 12px)');
-      // Grown to the panel's, at a card's corners — once the first frame is drawn.
-      await waitFor(() => expect(asked).toContainEqual([
-        { clipPath: 'inset(0px 0px calc(100% - 44px) 0px round 12px)' },
-        { clipPath: 'inset(0px 0px calc(0% - 0px) 0px round 16px)' },
-      ]));
-    } finally {
-      Reflect.deleteProperty(HTMLElement.prototype, 'animate');
-    }
-  });
-
-  it('opened again while it closes grows back from where the closing is, and one closing runs one animation', async () => {
-    asDesktop(true);
-    const AS_FIELD = 'inset(0px 0px calc(100% - 44px) 0px round 12px)';
-    const AT_CLOSE = 'inset(0px 0px calc(20% - 8px) 0px round 15px)';
-    const MIDWAY = 'inset(0px 0px calc(60% - 26px) 0px round 14px)';
-    let caught = AT_CLOSE;
-    const runs: { keyframes: Keyframe[]; animation: Animation }[] = [];
-    Object.defineProperty(HTMLElement.prototype, 'animate', {
-      value: vi.fn((keyframes: Keyframe[]) => {
-        const animation = { cancel: vi.fn(), onfinish: null, playState: 'running' } as unknown as Animation;
-        runs.push({ keyframes, animation });
+describe('CommandPalette — the island in the bar (LC69, L-75)', () => {
+  type Run = { el: Element; keyframes: Keyframe[]; options: KeyframeAnimationOptions; animation: Animation };
+  let runs: Run[] = [];
+  /** jsdom has no Web Animations: one that records what it was asked, each animation ending when told to. */
+  function recordAnimations() {
+    runs = [];
+    Object.defineProperty(Element.prototype, 'animate', {
+      value: vi.fn(function (this: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) {
+        const animation = { cancel: vi.fn(), onfinish: null, playState: 'running', effect: { target: this } } as unknown as Animation;
+        runs.push({ el: this, keyframes, options, animation });
         return animation;
       }),
       configurable: true,
       writable: true,
     });
-    // The panel caught halfway, as a browser reads it while an animation runs.
-    const computed = window.getComputedStyle.bind(window);
-    vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element, pseudo?: string | null) => {
-      const style = computed(el, pseudo);
-      if (!(el instanceof HTMLElement) || !el.classList.contains('shadow-lg')) return style;
-      return new Proxy(style, {
-        get: (target, key) => {
-          if (key === 'clipPath') return caught;
-          const value = Reflect.get(target, key);
-          return typeof value === 'function' ? value.bind(target) : value;
-        },
-      });
+  }
+  /** The bar's pill in the middle of a 1024 px window, and the 768 px field it grows into, on the pill's line. */
+  function pillInBar() {
+    const { source: pill, slot } = bar();
+    pill.style.borderTopLeftRadius = '16px';
+    const rect = (left: number, top: number, width: number, height: number) =>
+      ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+    const own = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this === pill) return rect(336, 10, 352, 32);
+      if (this.parentElement === slot) return rect(128, 10, 768, 32);
+      return own.call(this);
     });
-    const closings = () => runs.filter((run) => run.keyframes.at(-1)?.clipPath === AS_FIELD);
-    try {
-      const form = document.createElement('form');
-      form.id = SEARCH_FIELD_FORM_ID;
-      Object.defineProperty(form, 'offsetHeight', { value: 44 });
-      document.body.append(form);
-      const onClose = vi.fn();
-      const { rerender } = render(<CommandPalette isOpen onClose={onClose} onSearch={vi.fn()} />);
-      await waitFor(() => expect(runs.some((run) => run.keyframes[0]?.clipPath === AS_FIELD)).toBe(true));
+    return pill;
+  }
+  const shapeOf = () => document.querySelector<HTMLElement>('[data-island-shape]')!;
+  const contentOf = () => document.querySelector<HTMLElement>('[data-island-content]')!;
+  const runOn = (el: Element) => runs.filter((run) => run.el === el).at(-1)!;
+  const end = (run: Run) => act(() => (run.animation.onfinish as unknown as () => void)?.());
 
-      rerender(<CommandPalette isOpen={false} onClose={onClose} onSearch={vi.fn()} />);
-      expect(closings()).toHaveLength(1);
-      expect(closings()[0].keyframes[0]).toEqual({ clipPath: AT_CLOSE });
-      // Renders while it closes start no second closing.
-      rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
-      rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
-      expect(closings()).toHaveLength(1);
-
-      const closing = closings()[0].animation;
-      // Halfway back: the browser now reads another clip than the one the closing started from.
-      caught = MIDWAY;
-      rerender(<CommandPalette isOpen onClose={onClose} onSearch={vi.fn()} />);
-      const panel = screen.getByRole('dialog', { name: 'Menu di ricerca' }).querySelector<HTMLElement>('.rounded-2xl')!;
-      // Taken over where it was: the closing stopped, the clip held there, never the field's or the panel's.
-      expect(closing.cancel).toHaveBeenCalled();
-      expect(panel.style.clipPath).toBe(MIDWAY);
-      await waitFor(() => expect(runs.at(-1)?.keyframes).toEqual([
-        { clipPath: MIDWAY },
-        { clipPath: 'inset(0px 0px calc(0% - 0px) 0px round 16px)' },
-      ]));
-    } finally {
-      Reflect.deleteProperty(HTMLElement.prototype, 'animate');
-    }
+  afterEach(() => {
+    Reflect.deleteProperty(Element.prototype, 'animate');
   });
 
-  it('a closing that ended is dropped when the panel comes back before it went, and under reduced motion it fades back from where it was', async () => {
+  it('the field grows out of the pill to both sides at once, in 180 ms; «Chiudi» fades in; the pill hidden under it (LC132)', () => {
     asDesktop(true);
-    const runs: { keyframes: Keyframe[]; animation: Animation }[] = [];
-    Object.defineProperty(HTMLElement.prototype, 'animate', {
-      value: vi.fn((keyframes: Keyframe[]) => {
-        const animation = { cancel: vi.fn(), onfinish: null, playState: 'running' } as unknown as Animation;
-        runs.push({ keyframes, animation });
-        return animation;
-      }),
-      configurable: true,
-      writable: true,
-    });
-    const computed = window.getComputedStyle.bind(window);
-    vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element, pseudo?: string | null) => {
-      const style = computed(el, pseudo);
-      if (!(el instanceof HTMLElement) || !el.classList.contains('shadow-lg')) return style;
-      return new Proxy(style, {
-        get: (target, key) => {
-          if (key === 'opacity') return '0.4';
-          const value = Reflect.get(target, key);
-          return typeof value === 'function' ? value.bind(target) : value;
-        },
-      });
-    });
-    try {
-      motionPref.reduced = true;
-      const { rerender } = render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-      rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
-      const fadeOut = runs.find((run) => run.keyframes.at(-1)?.opacity === 0)!;
-      expect(fadeOut).toBeDefined();
-      // It ended, and the panel is asked back in the same breath as its removal.
-      act(() => {
-        (fadeOut.animation.onfinish as unknown as () => void)?.();
-        rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-      });
-      expect(fadeOut.animation.cancel).toHaveBeenCalled();
-      const panel = screen.getByRole('dialog', { name: 'Menu di ricerca' }).querySelector<HTMLElement>('.rounded-2xl')!;
-      expect(panel.style.clipPath).toBe('');
-      expect(runs.at(-1)?.keyframes).toEqual([{ opacity: 0.4 }, { opacity: 1 }]);
-    } finally {
-      Reflect.deleteProperty(HTMLElement.prototype, 'animate');
-    }
+    recordAnimations();
+    const pill = pillInBar();
+    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    // Started in the commit that opens it: no wait for the mount's frames (LC132: up to 150 ms before).
+    const grow = runOn(shapeOf());
+    expect(grow).toBeDefined();
+    expect(grow.options.delay ?? 0).toBe(0);
+    expect(grow.options.duration).toBe(180);
+    expect(grow.keyframes[0]).toMatchObject({ top: '0px', right: '208px', bottom: '0px', left: '208px', borderRadius: '16px' });
+    expect(grow.keyframes.at(-1)).toMatchObject({ top: '0px', right: '0px', bottom: '0px', left: '0px' });
+    expect(grow.options).toMatchObject(SEARCH_OPEN);
+    expect(runOn(contentOf()).keyframes[0]).toEqual({ clipPath: 'inset(0px 208px 0px 208px round 16px)' });
+    // LC81: the field is the pill from the first frame, on its box (FLIP: a move and its width) …
+    const field = runOn(document.querySelector('[data-island-field]')!);
+    expect(field.keyframes[0]).toEqual({ transform: 'translate(336px, 10px)', minWidth: '352px', maxWidth: '352px', opacity: 1 });
+    expect(field.keyframes.at(-1)).toMatchObject({ transform: 'translate(0px, 0px)', opacity: 1 });
+    expect(field.options).toMatchObject(SEARCH_OPEN);
+    // … and «Chiudi» fades in beside it, from a quarter of the way.
+    expect(runOn(screen.getByRole('button', { name: 'Chiudi' })).keyframes).toEqual([{ opacity: 0 }, { opacity: 0, offset: 0.25 }, { opacity: 1 }]);
+    expect(pill.style.opacity).toBe('0');
+    expect(document.querySelector('[data-palette-veil]')).toBeNull();
+    end(grow);
+    expect(grow.animation.cancel).toHaveBeenCalled();
   });
 
-  it('lets go of the field\'s width and height when the field goes while it is open', async () => {
+  it('the band grows in height and pushes the page, by the island\'s times (180 and 120 ms); closing, the reverse', () => {
     asDesktop(true);
-    const form = document.createElement('form');
-    form.id = SEARCH_FIELD_FORM_ID;
-    document.body.append(form);
-    const { rerender } = render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    const box = screen.getByRole('dialog', { name: 'Menu di ricerca' });
-    await waitFor(() => expect(box.style.getPropertyValue('--palette-max-h')).not.toBe(''));
-    expect(box.style.width).not.toBe('');
-    form.remove();
+    recordAnimations();
+    pillInBar();
+    const { rerender } = render(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
     rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    expect(box.style.width).toBe('');
-    expect(box.style.getPropertyValue('--palette-max-h')).toBe('');
+    const open = runOn(band());
+    expect(Object.keys(open.keyframes[0])).toEqual(['height']);
+    expect(open.keyframes[0]).toEqual({ height: '0px' });
+    expect(open.options).toMatchObject(SEARCH_OPEN);
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    // Going: `aria-hidden`, no longer named.
+    const shut = runOn(document.querySelector('[data-palette-band]')!);
+    expect(shut.keyframes.at(-1)).toEqual({ height: '0px' });
+    expect(shut.options).toMatchObject(SEARCH_CLOSE);
+    expect(shut.options.duration).toBe(120);
   });
 
-  it('without Web Animations draws the panel at once, never left clipped to the field', () => {
+  it('takes the keys from the first frame of the opening: the field has the focus as the island starts to grow, no letter lost (LC129, LC132)', async () => {
     asDesktop(true);
-    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    const panel = screen.getByRole('dialog', { name: 'Menu di ricerca' }).querySelector<HTMLElement>('.rounded-2xl')!;
-    expect(panel.style.clipPath).toBe('');
+    recordAnimations();
+    const user = userEvent.setup();
+    pillInBar();
+    const { rerender } = render(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    // The island is growing already, in the same commit (no wait), and the field has the focus while it grows.
+    const growing = runs.find((run) => run.el === shapeOf());
+    expect(growing).toBeDefined();
+    expect(growing!.animation.cancel).not.toHaveBeenCalled();
+    const box = screen.getByRole('combobox');
+    expect(box).toHaveFocus();
+    // Typed where the focus is, as a hand right after ⌘K.
+    await user.keyboard('proc');
+    expect(box).toHaveValue('proc');
   });
 
-  it('under reduced motion grows nothing: no clip, it fades', () => {
+  it('draws the band ahead once the page is idle, hidden and out of reach, so the first ⌘K mounts nothing (LC133)', async () => {
     asDesktop(true);
+    recordAnimations();
+    const user = userEvent.setup();
+    pillInBar();
+    const { rerender } = render(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(document.querySelector('[data-palette-band]')).toBeNull();
+    // The page goes idle.
+    act(() => idle.runs.splice(0).forEach((run) => run()));
+    const ahead = document.querySelector<HTMLElement>('[data-palette-band]')!;
+    expect(ahead).not.toBeNull();
+    expect(ahead.hidden).toBe(true);
+    expect(ahead).toHaveAttribute('inert');
+    expect(ahead).toHaveAttribute('aria-hidden', 'true');
+    expect(ahead.querySelector('[cmdk-item]')).not.toBeNull();
+    expect(screen.queryByRole('option')).toBeNull();
+    // Nothing read for it: the aliases' catalogue waits for an opening.
+    expect(fetch).not.toHaveBeenCalled();
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(ahead.hidden).toBe(false);
+    // No row mounted, cmdk's choice is still the first one, at every opening.
+    const chosen = () => ahead.querySelector('[cmdk-item][data-selected="true"]')?.textContent;
+    const first = ahead.querySelector('[cmdk-item]')?.textContent;
+    expect(chosen()).toBe(first);
+    const box = screen.getByRole('combobox');
+    expect(box).toHaveFocus();
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    expect(chosen()).not.toBe(first);
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(chosen()).toBe(first);
+    await user.keyboard('proc');
+    expect(screen.getByRole('combobox')).toHaveValue('proc');
+  });
+
+  it('opened before the page is idle, keeps the band from then on: the flag never changes while it closes (LC133)', () => {
+    asDesktop(true);
+    recordAnimations();
+    pillInBar();
+    const { rerender } = render(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    const band = document.querySelector<HTMLElement>('[data-palette-band]')!;
+    const shut = runOn(band);
+    end(shut);
+    // Kept, hidden: not dropped by the closing that started before any idle time.
+    expect(document.querySelector('[data-palette-band]')).toBe(band);
+    expect(band.hidden).toBe(true);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(shut.animation.cancel).toHaveBeenCalled();
+    expect(band.hidden).toBe(false);
+  });
+
+  it('names the chosen row from the field, as it opens, as the arrows move and after a reopening (aria-activedescendant, LC133)', async () => {
+    asDesktop(true);
+    const { rerender } = render(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    const box = screen.getByRole('combobox');
+    const named = () => document.getElementById(box.getAttribute('aria-activedescendant') ?? '');
+    const chosen = () => document.querySelector('[cmdk-item][data-selected="true"]');
+    expect(chosen()).not.toBeNull();
+    await waitFor(() => expect(named()).toBe(chosen()));
+    expect(document.getElementById(box.getAttribute('aria-controls')!)).toHaveAttribute('role', 'listbox');
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    await waitFor(() => expect(named()).toBe(chosen()));
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    await waitFor(() => expect(named()).toBe(chosen()));
+    await waitFor(() => expect(named()).toBe(document.querySelector('[cmdk-item]')));
+  });
+
+  it('the band does not move while one types: its height changes at once, no row slides (LC129)', () => {
+    asDesktop(true);
+    recordAnimations();
+    pillInBar();
+    const observed: Element[] = [];
+    vi.stubGlobal('ResizeObserver', class { observe(el: Element) { observed.push(el); } unobserve() {} disconnect() {} });
+    const { rerender } = render(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    // The band's own measure (its content's box) is not watched: it does not follow the rows.
+    expect(observed).not.toContain(band().firstElementChild);
+    const before = runs.length;
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'proc' } });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    expect(runs.slice(before)).toEqual([]);
+  });
+
+  it('closes back into the pill, and shows the pill again only as the field lands', async () => {
+    asDesktop(true);
+    recordAnimations();
+    const pill = pillInBar();
+    const { rerender } = render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    end(runOn(shapeOf()));
+
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    const shrink = runOn(shapeOf());
+    expect(shrink.keyframes.at(-1)).toMatchObject({ top: '0px', right: '208px', bottom: '0px', left: '208px', opacity: 0 });
+    expect(shrink.options).toMatchObject(SEARCH_CLOSE);
+    // LC81: the field lands on the pill, and gives way to it in the shape's crossfade.
+    expect(runOn(document.querySelector('[data-island-field]')!).keyframes.at(-1)).toMatchObject({ transform: 'translate(336px, 10px)', maxWidth: '352px', opacity: 0 });
+    const back = runOn(pill);
+    expect(back.keyframes).toEqual([{ opacity: 0 }, { opacity: 0, offset: 0.99 }, { opacity: 1 }]);
+    expect(back.options).toMatchObject(SEARCH_CLOSE);
+    expect(pill.style.opacity).toBe('0');
+    end(shrink);
+    expect(pill.style.opacity).toBe('');
+    await waitFor(() => expect(document.querySelector('[data-palette-slot]')).toBeEmptyDOMElement());
+  });
+
+  it('opened again while it closes grows from where it is on screen', () => {
+    asDesktop(true);
+    recordAnimations();
+    const pill = pillInBar();
+    const caught: Record<string, string> = { top: '0px', right: '120px', bottom: '0px', left: '120px', borderRadius: '15px', opacity: '0.4', clipPath: 'inset(0px 120px 0px 120px round 15px)' };
+    const computed = window.getComputedStyle.bind(window);
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element, pseudo?: string | null) => {
+      const style = computed(el, pseudo);
+      const mid = runs.some((run) => run.el === el && run.options.duration === SEARCH_CLOSE.duration);
+      if (!mid) return style;
+      return new Proxy(style, { get: (target, key) => (typeof key === 'string' && key in caught ? caught[key] : Reflect.get(target, key)) });
+    });
+    const { rerender } = render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    const closing = runOn(shapeOf());
+    // Renders while it closes start no second closing.
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(runOn(shapeOf())).toBe(closing);
+
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(closing.animation.cancel).toHaveBeenCalled();
+    const again = runOn(shapeOf());
+    expect(again).not.toBe(closing);
+    expect(again.keyframes[0]).toMatchObject({ top: '0px', right: '120px', bottom: '0px', left: '120px', borderRadius: '15px', opacity: '0.4' });
+    expect(again.options).toMatchObject(SEARCH_OPEN);
+    expect(runOn(contentOf()).keyframes[0]).toMatchObject({ clipPath: caught.clipPath });
+    expect(shapeOf().parentElement!.style.pointerEvents).toBe('');
+    expect(runOn(pill).animation.cancel).toHaveBeenCalled();
+    expect(pill.style.opacity).toBe('0');
+  });
+
+  it('under reduced motion only fades, the field and the band on ⌘K\'s own times (180 and 120 ms, LC133)', () => {
+    asDesktop(true);
+    recordAnimations();
     motionPref.reduced = true;
+    const pill = pillInBar();
+    const { rerender } = render(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    const root = () => shapeOf().parentElement!;
+    expect(runOn(root()).keyframes).toEqual([{ opacity: 0 }, { opacity: 1 }]);
+    expect(runOn(root()).options).toMatchObject(SEARCH_OPEN);
+    expect(runs.filter((run) => run.el === shapeOf())).toEqual([]);
+    expect(pill.style.opacity).toBe('');
+    rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(runOn(root()).keyframes.at(-1)).toEqual({ opacity: 0 });
+    expect(runOn(root()).options).toMatchObject(SEARCH_CLOSE);
+    // The band only fades too, on the same times: its content, no height.
+    const fades = runs.filter((run) => run.el.parentElement?.hasAttribute('data-palette-band'));
+    expect(fades.map((run) => run.options.duration)).toEqual([SEARCH_OPEN.duration, SEARCH_CLOSE.duration]);
+    expect(runs.some((run) => run.el.hasAttribute('data-palette-band'))).toBe(false);
+  });
+
+  it('follows the page to its new bar when the bar it grew in goes while open (/sentenze → /)', () => {
+    asDesktop(false);
+    const first = bar({ over: true });
+    const { rerender } = render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(first.slot).toContainElement(screen.getByRole('combobox'));
+    first.holder.remove();
+    const second = bar({ from: 'field' });
+    rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    expect(second.slot).toContainElement(screen.getByRole('combobox'));
+    expect(band().firstElementChild!.firstElementChild).not.toHaveClass('pt-[calc(3.5rem+env(safe-area-inset-top))]');
+  });
+
+  it('without Web Animations draws the field at once, nothing left hidden', () => {
+    asDesktop(true);
+    bar();
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    const panel = screen.getByRole('dialog', { name: 'Menu di ricerca' }).querySelector<HTMLElement>('.rounded-2xl')!;
-    expect(panel.style.clipPath).toBe('');
+    const root = shapeOf().parentElement!;
+    expect(root.style.opacity).toBe('');
+    expect(contentOf().style.clipPath).toBe('');
   });
 });
 
@@ -312,7 +464,7 @@ describe('CommandPalette — the field and the steps', () => {
     const crumb = screen.getByRole('button', { name: 'Torna indietro: Codice civile' });
     expect(crumb).toHaveTextContent('Codice civile');
     await user.click(crumb);
-    expect(screen.getByPlaceholderText(/art 2043 cc/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/^Norma, sentenza o tema/)).toBeInTheDocument();
   });
 
   it('goes back a step with Backspace on the empty field it opens with, from the keyboard alone (R2, Bill)', async () => {
@@ -320,12 +472,12 @@ describe('CommandPalette — the field and the steps', () => {
     const user = userEvent.setup();
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
     // «Codice penale», Enter: the article's field, empty, has the focus.
-    await user.type(screen.getByPlaceholderText(/art 2043 cc/i), 'codice penale{Enter}');
+    await user.type(screen.getByPlaceholderText(/^Norma, sentenza o tema/), 'codice penale{Enter}');
     const box = await screen.findByRole('textbox', { name: "Numero dell'articolo" });
     await waitFor(() => expect(box).toHaveFocus());
     expect(box).toHaveValue('');
     await user.keyboard('{Backspace}');
-    expect(screen.getByPlaceholderText(/art 2043 cc/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/^Norma, sentenza o tema/)).toBeInTheDocument();
   });
 
   it('a held Backspace stops at an empty field, and the date gives way to the number first (R2)', async () => {
@@ -375,19 +527,14 @@ describe('CommandPalette — «Scegli l\'atto»', () => {
     expect(screen.getByRole('option', { name: 'Codice di procedura civile · c.p.c.' })).toBeInTheDocument();
   });
 
-  it('draws the letters the box matched in the app\'s ink, and a row leaving is no option any more (R2)', () => {
+  it('draws the letters the box matched in the app\'s ink, and a row filtered away is gone at once (R2, LC129)', () => {
     asDesktop(true);
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    // One change, then a look in the same tick: the rows filtered away are still fading.
+    // One change, then a look in the same tick: nothing fades out, the list is already the new one.
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'proc' } });
     const row = screen.getAllByRole('option').find((o) => o.textContent === 'Codice di procedura civile · c.p.c.')!;
     expect(row.querySelector('.text-toga-700')).toHaveTextContent(/^proc$/);
-    // A row filtered away, while it fades: hidden, and never Enter's.
-    const leaving = screen.getAllByRole('option', { hidden: true }).find((o) => o.textContent === 'Codice civile · c.c.');
-    expect(leaving).toBeDefined();
-    expect(leaving).toHaveAttribute('aria-hidden', 'true');
-    expect(leaving).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getAllByRole('option').map((o) => o.textContent)).not.toContain('Codice civile · c.c.');
+    expect(screen.queryAllByRole('option', { hidden: true }).map((o) => o.textContent)).not.toContain('Codice civile · c.c.');
   });
 
   it('is narrowed by the field while it is typed', async () => {
@@ -416,7 +563,7 @@ describe('CommandPalette — «A portata di mano»', () => {
   it('is one quiet line each when empty: no favourite, and «Crea un alias»', () => {
     asDesktop(true);
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    expect(screen.getByText('Nessun preferito: il fulmine su un articolo lo aggiunge qui')).toBeInTheDocument();
+    expect(screen.getByText('Nessun preferito: «Aggiungi alle norme rapide», nel menu ⋯ di un articolo, lo porta qui')).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Crea un alias' })).toBeInTheDocument();
   });
 
@@ -426,7 +573,7 @@ describe('CommandPalette — «A portata di mano»', () => {
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
     const group = document.getElementById('command-palette-quick-norms')!;
     expect(group.className).toMatch(/\[&_\[cmdk-group-heading\]\]:min-h-\[44px\]/);
-    expect(within(group).getByRole('button', { name: 'Gestisci' })).toHaveClass('top-0', 'min-h-[44px]');
+    expect(within(group).getByRole('button', { name: 'Gestisci' })).toHaveClass('top-0', 'min-h-11');
   });
 
   it('shows the first six of 30 favourites and of 50 aliases, and the way to all of them', () => {
@@ -492,7 +639,7 @@ describe('CommandPalette — the keys', () => {
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     // still on the first step: Enter did not reach cmdk's list (no act in the field's crumb)
-    expect(screen.getByPlaceholderText(/art 2043 cc/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/^Norma, sentenza o tema/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Torna indietro/ })).toBeNull();
   });
 
@@ -555,14 +702,17 @@ describe('CommandPalette — the field and its line', () => {
     asDesktop(true);
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
     const box = screen.getByRole('combobox');
-    expect(box).toHaveClass('focus-visible:ring-0', 'focus-visible:ring-offset-0');
-    expect(box.parentElement).toHaveClass('border', 'focus-within:ring-2');
+    expect(box.className).not.toMatch(/ring-/);
+    // LC146: one edge, no ring: the frame's border only moves to `--focus-line`.
+    expect(box.parentElement).toHaveClass('border', 'has-[input:focus]:border-(--focus-line)');
+    expect(box.parentElement!.className).not.toMatch(/ring-/);
+    expect(box.parentElement!.className).not.toMatch(/focus-within/);
   });
 
   it('never draws a field under 16 px, so Safari on an iPhone does not zoom into it, with the text size «piccolo» too', async () => {
     asDesktop(false);
     render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
-    expect(screen.getByRole('combobox')).toHaveClass('text-[length:max(1.125rem,16px)]');
+    expect(screen.getByRole('combobox')).toHaveClass('text-[length:max(1rem,16px)]');
     await userEvent.setup().click(screen.getByRole('button', { name: /Filtri avanzati/ }));
     const years = screen.getAllByRole('spinbutton');
     expect(years.length).toBeGreaterThan(0);
@@ -599,8 +749,8 @@ describe('CommandPalette — on a phone, the keyboard (R2)', () => {
 
     rerender(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
     expect(listen).toHaveBeenCalledWith('resize', expect.any(Function));
-    const dialog = screen.getByRole('dialog', { name: 'Menu di ricerca' });
-    expect(dialog.style.getPropertyValue('--palette-max-h')).toBe('min(40rem, calc(500px - 1rem - env(safe-area-inset-top)))');
+    const column = screen.getByRole('region', { name: 'Menu di ricerca' }).querySelector<HTMLElement>('.max-w-3xl')!;
+    expect(column.style.getPropertyValue('--palette-max-h')).toBe('calc(500px - 3.5rem - env(safe-area-inset-top))');
 
     rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
     expect(unlisten).toHaveBeenCalledWith('resize', listen.mock.calls[0][1]);
@@ -628,5 +778,40 @@ describe('CommandPalette — on a phone, the focus back (R2)', () => {
     rerender(<CommandPalette isOpen={false} onClose={vi.fn()} onSearch={vi.fn()} />);
     await waitFor(() => expect(opener).toHaveFocus());
     opener.remove();
+  });
+});
+
+// LC113: the palette's fields are the common `Input` and `Select`; the box, the arrows and Enter are cmdk's, as before.
+describe('CommandPalette — on the common controls (LC113)', () => {
+  it('opens with the focus in the box; the arrows move the chosen row and Enter picks it', async () => {
+    asDesktop(true);
+    const user = userEvent.setup();
+    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('combobox')).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Costituzione · Cost.' })).toHaveAttribute('aria-selected', 'true'));
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('option', { name: 'Legge · l.' })).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('button', { name: 'Torna indietro: Legge' })).toBeInTheDocument();
+    // The act's number, an `Input`, takes the focus for the next words.
+    expect(screen.getByRole('textbox', { name: "Numero dell'atto" })).toHaveFocus();
+  });
+
+  it('keeps Enter and the arrows in the filters\' `Select` and `Input`: the list does not move', async () => {
+    asDesktop(true);
+    const user = userEvent.setup();
+    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Filtri avanzati/ }));
+    const source = screen.getByRole('combobox', { name: 'Fonte' });
+    expect(source.tagName).toBe('SELECT');
+    expect(source).toHaveClass('appearance-none', 'rounded-md');
+    const year = screen.getByRole('spinbutton', { name: "Dall'anno" });
+    expect(year).toHaveClass('rounded-md');
+    for (const field of [source, year]) {
+      field.focus();
+      await user.keyboard('{ArrowDown}{Enter}');
+    }
+    expect(screen.getByRole('option', { name: 'Costituzione · Cost.' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('button', { name: /^Torna indietro/ })).toBeNull();
   });
 });

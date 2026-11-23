@@ -1,15 +1,14 @@
-import { useLayoutEffect, useRef, type RefObject } from 'react';
+import { useRef, type RefObject } from 'react';
+import { Button } from '../../../ui/Button';
 import { Link } from 'react-router-dom';
-import { fadeInEntries } from '../../../../features/sections/useEntriesEntrance';
-import { prefersReducedMotion } from '../../../../features/sections/sectionTransition';
 import { cn } from '../../../../lib/utils';
 import type { Materia, Progressi, TappaIstituto } from '../../../../types/studia';
 import { estimateLabel } from '../studiaLabels';
-import { GoalMark } from '../progress/GoalMark';
-import { formatDate, formatDayLong } from '../progress/layout';
+import { formatDayLong } from '../progress/layout';
 import { goalMissionDone } from './missions';
 import { nextDayLine, subjectsPhrase, todaySentence, todayState, todaySubjects } from '../progress/today';
-import { FOCUS_RING, INK_BG, INK_TEXT, MUTED_TEXT, ON_INK, SECONDARY_BUTTON, TILE } from '../progress/tokens';
+import { FOCUS_RING, INK_TEXT, MUTED_TEXT, TILE } from '../progress/tokens';
+import { Illustration, type IllustrationName } from '../../../ui/Illustration';
 
 export interface DayBlockProps {
   /** The whole day's answer: the date, the goal met, whether there is any card at all. */
@@ -40,20 +39,11 @@ export interface DayBlockProps {
   goalRef?: RefObject<HTMLDivElement | null>;
 }
 
-/** The page's one primary button (G8): wide, 48 px, full width on a phone; a key that presses into its ink edge. */
-const PRIMARY = cn(
-  'min-h-12 w-full rounded-xl px-10 text-base font-semibold md:w-auto md:min-w-64',
-  'shadow-[0_4px_0_var(--color-primary-950)] transition-[translate,box-shadow] active:translate-y-[3px] active:shadow-[0_1px_0_var(--color-primary-950)] motion-reduce:transition-none',
-  'dark:shadow-[0_4px_0_var(--color-primary-500)] dark:active:shadow-[0_1px_0_var(--color-primary-500)]',
-  INK_BG,
-  ON_INK,
-  FOCUS_RING,
-);
+/** The page's one primary button (G8): the common `Button`, wide, full width on a phone (LC112: no key of its own). */
+const PRIMARY = 'mt-1 w-full px-10 md:w-auto md:min-w-64';
 
-/** The block's large line: Newsreader, 30 px on a phone and 36 px from `md`. */
+/** The block's large line: EB Garamond, 30 px on a phone and 36 px from `md`. */
 const LARGE = cn('max-w-prose font-serif text-3xl font-medium leading-tight tracking-tight md:text-4xl', INK_TEXT);
-
-const RETRY = cn('min-h-[44px] rounded px-1 font-sans text-base font-medium underline', FOCUS_RING);
 
 /**
  * The small line on top: the server's day, «giovedì 22 ottobre» — the page's title says «Oggi» already (G8) —; narrowed
@@ -69,8 +59,7 @@ function DayLine({ day, subject }: { day: Progressi | null; subject?: string }) 
  * The day block (G8), first on «Oggi» and on a phone the first thing under the bar: the day, what is on today in
  * large type, what it costs and where it comes from, and «Inizia il ripasso», the page's one primary button.
  * With nothing left, «Hai finito per oggi.» and the next day; narrowed to a subject, that subject's; with no card at
- * all, how to begin; a failed read says so and keeps the start. It enters with the sidebar's light cascade
- * (`fadeInEntries`, opacity only) once its content is first drawn, never under reduced motion.
+ * all, how to begin; a failed read says so and keeps the start.
  */
 export function DayBlock({
   day, dayFailed, action, actionFailed, stops, onRetry, materia, subject, onAllSubjects, onStart, onOpenSettings, settingsPanel,
@@ -86,50 +75,38 @@ export function DayBlock({
 
   // The cascade, once, when the block first draws what it says (not while its places are held).
   const block = useRef<HTMLElement>(null);
-  const entered = useRef(false);
-  const drawn = state !== 'loading';
-  useLayoutEffect(() => {
-    if (!drawn || entered.current) return;
-    entered.current = true;
-    if (block.current && !prefersReducedMotion()) fadeInEntries(block.current);
-  }, [drawn]);
 
   const cards = action ? action.oggi.dovute + action.oggi.nuove : 0;
   // Narrowed, the line on top names the subject; else the subjects today's cards come from.
   const from = !materia && action ? todaySubjects(action.materie, stops, action.oggi.nuove) : null;
   const detail = state === 'todo' ? [estimateLabel(cards), from && subjectsPhrase(from)].filter(Boolean).join(' · ') : '';
 
+  const art: IllustrationName | null = state === 'todo' ? 'learn-ripasso' : state === 'done' ? 'learn-giorno-chiuso' : state === 'empty' ? 'learn-schede-vuote' : null;
   return (
     <section
       ref={block}
       aria-labelledby="studia-giorno"
       aria-busy={state === 'loading'}
-      // A tile with the section's hue as a rule down its left edge: the page's entry. With the goal's mark, its right
-      // side kept for it from `md`.
+      // The page's entry: its weight is the title's size, not a coloured edge. With the goal's mark, its right side
+      // kept for it from `md`.
       className={cn(
         TILE,
-        'relative grid justify-items-stretch gap-3 border-l-4 border-l-[color:var(--vlx-section-gymnasium)] dark:border-l-[color:var(--vlx-section-gymnasium)] p-5 md:justify-items-start md:p-7',
-        goal && 'md:pr-44',
+        'relative grid justify-items-stretch gap-3 p-5 md:justify-items-start md:p-7',
+        goal ? 'pr-32 md:pr-52' : art && (state === 'done' ? 'pr-32 md:pr-52' : 'md:pr-44'),
       )}
     >
+      {/* LC35: an engraving at the block's right from md, what the day holds: the open book and its cards, the empty
+          drawer. The day done has its own, with the goal's words (below). */}
+      {!goal && art && <Illustration name={art} className={cn('absolute right-4 top-4 md:right-7 md:top-1/2 md:-translate-y-1/2', art === 'learn-giorno-chiuso' ? 'aspect-[480/284] top-auto bottom-5 w-24 md:bottom-7 md:top-auto md:w-40 md:translate-y-0' : 'h-16 w-16 md:h-32 md:w-32')} />}
       <h2 id="studia-giorno" className="sr-only">
         Il ripasso di oggi
       </h2>
       {goal && (
-        // The goal's mark (G9): on a phone first, over the date's line, 72 px with its words beside it, never beside the
-        // large line; from `md` at the block's right, 96 px over its words, in the room that side had empty. As wide as
-        // its content on a phone, so the confetti start from it, not the card's middle.
-        <div
-          ref={goalRef}
-          className="flex w-max max-w-full items-center gap-3 md:absolute md:right-7 md:top-1/2 md:w-36 md:-translate-y-1/2 md:flex-col md:gap-2 md:text-center"
-        >
-          <GoalMark size={96} draw={drawGoal} label="Obiettivo raggiunto" className={cn('h-[72px] w-[72px] md:h-24 md:w-24', INK_TEXT)} />
-          {/* «23 ottobre 2026 · giorno 3» on one line beside it; from `md` the date over the day, under it. */}
-          <p className={cn('text-sm font-medium tabular-nums', MUTED_TEXT)}>
-            <span className="md:block">{formatDate(goal.oggi.giorno)}</span>
-            <span className="md:hidden"> · </span>
-            <span className="md:block">giorno {goal.serie.attuale}</span>
-          </p>
+        // The day closed (LC39; the anti-slop review: one object, inside the card): the lamp just put out, resting at
+        // the card's foot on its right, 96 px on a phone and 160 from `md`; the smoke rises from its wick (`goalRef`).
+        // The streak is said in «I tuoi progressi», not here: no line of its own.
+        <div ref={goalRef} data-testid="goal-plate" className={cn('absolute bottom-5 right-5 w-24 md:bottom-7 md:right-7 md:w-40', drawGoal && 'vlx-plate-in')}>
+          <Illustration name="learn-giorno-chiuso" label="Obiettivo raggiunto" className="aspect-[480/284] w-full" />
         </div>
       )}
       <DayLine day={day} subject={subject} />
@@ -145,7 +122,7 @@ export function DayBlock({
           <p className="sr-only">Carico i tuoi progressi…</p>
           <div aria-hidden className="h-[75px] w-3/4 rounded-md bg-slate-100 motion-safe:animate-pulse min-[390px]:h-[38px] md:h-11 dark:bg-slate-800" />
           <div aria-hidden className="h-10 w-56 max-w-full rounded bg-slate-100 motion-safe:animate-pulse md:h-5 dark:bg-slate-800" />
-          <div aria-hidden className="mt-1 h-12 w-full rounded-xl bg-slate-100 motion-safe:animate-pulse md:w-64 dark:bg-slate-800" />
+          <div aria-hidden className="mt-1 h-11 w-full rounded-md bg-slate-100 motion-safe:animate-pulse md:w-64 dark:bg-slate-800" />
         </>
       )}
 
@@ -153,14 +130,14 @@ export function DayBlock({
         <>
           <p role="alert" className={LARGE}>
             Non riesco a leggere i tuoi progressi.{' '}
-            <button type="button" onClick={onRetry} className={RETRY}>
+            <Button type="button" variant="link" onClick={onRetry} className="font-sans text-base">
               Riprova
-            </button>
+            </Button>
           </p>
           <p className={cn('max-w-prose text-sm', MUTED_TEXT)}>Puoi ripassare lo stesso: il ripasso legge le sue schede.</p>
-          <button type="button" onClick={onStart} className={cn(PRIMARY, 'mt-1')}>
+          <Button type="button" size="lg" onClick={onStart} className={PRIMARY}>
             Inizia il ripasso
-          </button>
+          </Button>
         </>
       )}
 
@@ -175,9 +152,9 @@ export function DayBlock({
             </Link>{' '}
             e scegli «+ Nuova scheda» sotto il testo, oppure accendi le schede della comunità: le missioni partono dalla prima scheda.
           </p>
-          <button type="button" aria-controls={settingsPanel} onClick={() => onOpenSettings('comunita')} className={cn(PRIMARY, 'mt-1')}>
+          <Button type="button" size="lg" aria-controls={settingsPanel} onClick={() => onOpenSettings('comunita')} className={PRIMARY}>
             Accendi le schede della comunità
-          </button>
+          </Button>
         </>
       )}
 
@@ -194,27 +171,27 @@ export function DayBlock({
           {(actionFailed || dayFailed) && (
             <p role="alert" className="max-w-prose text-sm text-red-700 dark:text-red-400">
               Non riesco a leggere i tuoi progressi.{' '}
-              <button type="button" onClick={onRetry} className={cn(RETRY, 'text-sm')}>
+              <Button type="button" variant="link" onClick={onRetry}>
                 Riprova
-              </button>
+              </Button>
             </p>
           )}
 
           {state === 'todo' && (
-            <button type="button" onClick={onStart} className={cn(PRIMARY, 'mt-1')}>
+            <Button type="button" size="lg" onClick={onStart} className={PRIMARY}>
               {met ? 'Continua il ripasso' : 'Inizia il ripasso'}
-            </button>
+            </Button>
           )}
           {state === 'done' && filtered && (
-            <button type="button" onClick={onAllSubjects} className={cn(SECONDARY_BUTTON, 'mt-1 w-full px-6 md:w-auto')}>
+            <Button type="button" variant="secondary" onClick={onAllSubjects} className="mt-1 w-full px-6 md:w-auto">
               Ripassa tutte le materie
-            </button>
+            </Button>
           )}
           {/* Done for the day with new cards still waiting: more of them is a setting, the new cards a day. */}
           {state === 'done' && !filtered && action.stati.nuove > 0 && (
-            <button type="button" aria-controls={settingsPanel} onClick={() => onOpenSettings()} className={cn(SECONDARY_BUTTON, 'mt-1 w-full px-6 md:w-auto')}>
+            <Button type="button" variant="secondary" aria-controls={settingsPanel} onClick={() => onOpenSettings()} className="mt-1 w-full px-6 md:w-auto">
               Impara altre schede nuove
-            </button>
+            </Button>
           )}
         </>
       )}

@@ -1,7 +1,8 @@
-import { useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Clock } from 'lucide-react';
-import { Modal } from '../../ui/Modal';
+import { ReaderSpace } from './ReaderSpace';
 import { Button } from '../../ui/Button';
+import { Input } from '../../ui/Input';
 import { parseItalianDate } from '../../../utils/dateUtils';
 import type { TextAtDateChoice } from '../../../utils/versionDisplay';
 
@@ -20,9 +21,7 @@ export interface TextAtDateDialogProps {
     initialDate?: string;
 }
 
-interface FormProps extends Omit<TextAtDateDialogProps, 'isOpen'> {
-    inputRef: RefObject<HTMLInputElement | null>;
-}
+type FormProps = Omit<TextAtDateDialogProps, 'isOpen'>;
 
 /**
  * The value for the date field: an ISO day as it is, a day written in Italian or as
@@ -39,8 +38,8 @@ function toIsoDay(value: string | undefined): string {
     return exists ? parts[0] : '';
 }
 
-// Mounted only while the dialog is open, so every opening starts clean.
-function TextAtDateForm({ onClose, onConfirm, euAct, today, initialDate, inputRef }: FormProps) {
+// Mounted only while the space is open, so every opening starts clean.
+function TextAtDateForm({ onClose, onConfirm, euAct, today, initialDate }: FormProps) {
     const [date, setDate] = useState(() => toIsoDay(initialDate));
     const [original, setOriginal] = useState(false);
 
@@ -56,13 +55,11 @@ function TextAtDateForm({ onClose, onConfirm, euAct, today, initialDate, inputRe
 
     return (
         <form onSubmit={submit} className="space-y-4">
+            {/* The common field (LC111): its ground, outline, height and, in the dark, the browser's calendar drawn dark. */}
             <div>
-                <label htmlFor="text-at-date" className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Data
-                </label>
-                <input
+                <Input
                     id="text-at-date"
-                    ref={inputRef}
+                    label="Data"
                     type="date"
                     value={date}
                     max={today}
@@ -70,7 +67,6 @@ function TextAtDateForm({ onClose, onConfirm, euAct, today, initialDate, inputRe
                     aria-invalid={future || undefined}
                     aria-describedby={error ? 'text-at-date-error' : undefined}
                     onChange={(event) => setDate(event.target.value)}
-                    className="w-full min-h-[44px] md:min-h-0 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-[color,background-color,border-color,opacity] disabled:opacity-50"
                 />
             </div>
             <label className="flex min-h-[44px] md:min-h-0 items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
@@ -108,22 +104,20 @@ function TextAtDateForm({ onClose, onConfirm, euAct, today, initialDate, inputRe
  * its original text. It validates before it sends — a future day is not sent —
  * and refuses EUR-Lex acts with the reason. What comes back opens as a row of
  * its own in the act, labelled with the day asked for; the toolbar shows the window the
- * source states.
+ * source states. In the page under the toolbar since LC139 (L-73; it was a window): the focus lands on the space, not
+ * in the date field.
  */
 export function TextAtDateDialog({ isOpen, onClose, ...form }: TextAtDateDialogProps) {
-    const inputRef = useRef<HTMLInputElement>(null);
     return (
-        <Modal
-            isOpen={isOpen}
+        <ReaderSpace
+            open={isOpen}
             onClose={onClose}
             title="Testo alla data"
-            description="Normattiva mostra il testo in vigore in quel giorno."
-            size="sm"
-            variant="info"
-            icon={<Clock size={20} />}
-            initialFocusRef={inputRef}
+            line="Normattiva mostra il testo in vigore in quel giorno."
+            icon={<Clock size={16} aria-hidden className="shrink-0" />}
+            className="max-w-md"
         >
-            <TextAtDateForm {...form} onClose={onClose} inputRef={inputRef} />
-        </Modal>
+            <TextAtDateForm {...form} onClose={onClose} />
+        </ReaderSpace>
     );
 }

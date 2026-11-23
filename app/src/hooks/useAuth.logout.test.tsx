@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
+// D7b's flag, asked as the app starts: off here, with no request leaving the test.
+vi.mock('../services/assistantService', () => ({ assistantService: { features: vi.fn(async () => ({ assistantPassages: false })) } }));
 vi.mock('../services/authService', () => ({
   isAuthenticated: () => false,
   logout: vi.fn(),
@@ -18,6 +20,8 @@ import { useArticleCards } from '../components/features/studia/useArticleCards';
 import { fetchDecisionCached } from '../utils/decisionFetchCache';
 import { appStore } from '../store/useAppStore';
 import { useAuth } from './useAuth';
+import { assistantProposalsStore } from '../store/assistantProposals';
+import { offerShortcutUndo } from '../components/ui/notifications/notifications';
 
 const REF = { corte: 'cassazione' as const, archivio: 'civile' as const, numero: 99999, anno: 2024 };
 
@@ -59,6 +63,29 @@ describe('useAuth — logout', () => {
     expect(studiaService.forArticle).toHaveBeenCalledTimes(2);
   });
 
+  it('carries out the last gesture on a highlight before the token goes: it said nothing, so for the reader it is done (A4)', async () => {
+    vi.mocked(authService.logout).mockClear();
+    const settle = vi.fn(() => expect(authService.logout).not.toHaveBeenCalled());
+    offerShortcutUndo({ message: 'Evidenziazione rimossa', undo: vi.fn(), settle });
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => { result.current.logout(); });
+
+    expect(settle).toHaveBeenCalledExactlyOnceWith(true);
+    expect(authService.logout).toHaveBeenCalled();
+  });
+
+  it('forgets what applications proposed on the last reader\'s dossiers (D7b)', async () => {
+    assistantProposalsStore.setState({ enabled: true, byItem: { a1: [] } });
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => { result.current.logout(); });
+
+    expect(assistantProposalsStore.getState()).toEqual({ enabled: false, byItem: {}, busy: {}, moving: null });
+  });
+
   it('forgets what Gymnasium last drew here: the last reader’s points and level (G-316)', async () => {
     localStorage.setItem('visualex.studia.visto', JSON.stringify({ xp: 900, livello: 7 }));
     const { result } = renderHook(() => useAuth());
@@ -78,7 +105,21 @@ describe('useAuth — logout', () => {
     await act(async () => { await result.current.login('b@example.test', 'pw'); });
     expect(localStorage.getItem('visualex.studia.visto')).toBeNull();
     localStorage.setItem('visualex.studia.visto', JSON.stringify({ xp: 900, livello: 7 }));
+    vi.mocked(authService.getCurrentUser).mockResolvedValue({ id: 'u3' } as never);
     await act(async () => { await result.current.register('c@example.test', 'c', 'pw'); });
     expect(localStorage.getItem('visualex.studia.visto')).toBeNull();
+  });
+
+  it('keeps the only copy of their work when the same person signs in again on a browser marked as theirs', async () => {
+    vi.mocked(authService.getCurrentUser).mockResolvedValue({ id: 'u2' } as never);
+    vi.spyOn(appStore.getState(), 'fetchUserData').mockResolvedValue(undefined as never);
+    localStorage.setItem('visualex.user-data-owner', 'u2');
+    localStorage.setItem('merlt-qa-thread-v1', '[]');
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { await result.current.login('b@example.test', 'pw'); });
+    expect(localStorage.getItem('merlt-qa-thread-v1')).toBe('[]');
+    localStorage.removeItem('merlt-qa-thread-v1');
+    localStorage.removeItem('visualex.user-data-owner');
   });
 });

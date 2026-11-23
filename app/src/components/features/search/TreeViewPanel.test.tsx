@@ -1,3 +1,4 @@
+import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
@@ -29,7 +30,7 @@ function setViewport(isDesktop: boolean) {
 
 beforeEach(() => {
   appStore.setState({
-    structureWindow: { blockId: 'block-a', position: { x: 120, y: 80 } },
+    structureWindow: { blockId: 'block-a' },
   });
 });
 
@@ -37,13 +38,12 @@ afterEach(() => {
   window.matchMedia = originalMatchMedia;
 });
 
-describe('TreeViewPanel — window variant', () => {
+describe('TreeViewPanel — on a computer, in the card (LC77)', () => {
   beforeEach(() => setViewport(true));
 
-  it('renders the index outside its own subtree, on document.body', () => {
+  it('renders the index in its own place in the page: no portal, no dialog, nothing fixed', () => {
     const { container } = render(
       <TreeViewPanel
-        variant="window"
         isOpen
         onClose={vi.fn()}
         treeData={['1', '2']}
@@ -52,10 +52,10 @@ describe('TreeViewPanel — window variant', () => {
       />,
     );
 
-    // Portalled out: nothing lands in the component's own container, which is
-    // the whole point — the workspace panel it lives under is transformed.
-    expect(container).toBeEmptyDOMElement();
-    expect(screen.getByText('Struttura Atto')).toBeInTheDocument();
+    const region = screen.getByRole('region', { name: 'Struttura Atto' });
+    expect(container).toContainElement(region);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(container.querySelector('.fixed')).toBeNull();
   });
 
   it('stays open after an article is picked', () => {
@@ -64,7 +64,6 @@ describe('TreeViewPanel — window variant', () => {
 
     render(
       <TreeViewPanel
-        variant="window"
         isOpen
         onClose={onClose}
         treeData={['1', '2']}
@@ -73,36 +72,18 @@ describe('TreeViewPanel — window variant', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Art. 1' }));
 
     expect(onArticleSelect).toHaveBeenCalledWith('1', null);
     // Picking must not dismiss the window: taking several articles out of one
     // index without reopening it is the point of the round.
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: '2' })).toBeInTheDocument();
-  });
-
-  it('renders nothing on a small viewport, so the portal cannot leak onto mobile', () => {
-    setViewport(false);
-
-    render(
-      <TreeViewPanel
-        variant="window"
-        isOpen
-        onClose={vi.fn()}
-        treeData={['1']}
-        urn="urn:test"
-        title="Struttura Atto"
-      />,
-    );
-
-    expect(screen.queryByText('Struttura Atto')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 2' })).toBeInTheDocument();
   });
 
   it('renders nothing while closed', () => {
     render(
       <TreeViewPanel
-        variant="window"
         isOpen={false}
         onClose={vi.fn()}
         treeData={['1']}
@@ -115,13 +96,12 @@ describe('TreeViewPanel — window variant', () => {
   });
 });
 
-describe('TreeViewPanel — drawer variant', () => {
+describe('TreeViewPanel — on a phone, in the page (LC77)', () => {
   beforeEach(() => setViewport(false));
 
-  it('renders in place rather than through a portal', () => {
+  it('opens in the page, full width, not as a dialog over the whole screen', () => {
     const { container } = render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1']}
@@ -130,9 +110,12 @@ describe('TreeViewPanel — drawer variant', () => {
       />,
     );
 
-    // Not portalled, so its `md:hidden` wrapper keeps it off desktop.
-    expect(container).not.toBeEmptyDOMElement();
-    expect(screen.getByText("Struttura dell'Atto")).toBeInTheDocument();
+    const region = screen.getByRole('region', { name: "Struttura dell'Atto" });
+    expect(container).toContainElement(region);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(container.querySelector('.fixed')).toBeNull();
+    // Rows a finger can hit.
+    expect(screen.getByRole('button', { name: 'Art. 1' }).className).toContain('min-h-[44px]');
   });
 
   it('also stays open after a pick', () => {
@@ -141,7 +124,6 @@ describe('TreeViewPanel — drawer variant', () => {
 
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={onClose}
         treeData={['1']}
@@ -150,7 +132,7 @@ describe('TreeViewPanel — drawer variant', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Art. 1' }));
 
     expect(onArticleSelect).toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
@@ -163,7 +145,6 @@ describe('TreeViewPanel — rubriche', () => {
   it('renders a rubrica beside its article number', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['2043', '2044']}
@@ -173,19 +154,18 @@ describe('TreeViewPanel — rubriche', () => {
     );
 
     expect(
-      screen.getByRole('button', { name: '2043 Risarcimento per fatto illecito' }),
+      screen.getByRole('button', { name: 'Art. 2043 Risarcimento per fatto illecito' }),
     ).toBeInTheDocument();
     // Truncated to one line on screen, so the full text has to survive as a
     // tooltip.
     expect(
-      screen.getByRole('button', { name: '2043 Risarcimento per fatto illecito' }),
+      screen.getByRole('button', { name: 'Art. 2043 Risarcimento per fatto illecito' }),
     ).toHaveAttribute('title', 'Risarcimento per fatto illecito');
   });
 
   it('renders the bare number for an article the export has no rubrica for', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['2043', '2044']}
@@ -199,10 +179,10 @@ describe('TreeViewPanel — rubriche', () => {
     // The covered sibling proves the map was honoured at all, so the bare row
     // is a real gap rather than rubriche having been ignored wholesale.
     expect(
-      screen.getByRole('button', { name: '2043 Risarcimento per fatto illecito' }),
+      screen.getByRole('button', { name: 'Art. 2043 Risarcimento per fatto illecito' }),
     ).toBeInTheDocument();
 
-    const bare = screen.getByRole('button', { name: '2044' });
+    const bare = screen.getByRole('button', { name: 'Art. 2044' });
     expect(bare).toBeInTheDocument();
     expect(bare).not.toHaveAttribute('title');
   });
@@ -210,7 +190,6 @@ describe('TreeViewPanel — rubriche', () => {
   it('survives an act with no rubriche at all (the Costituzione)', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1', '2']}
@@ -219,8 +198,8 @@ describe('TreeViewPanel — rubriche', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: '1' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '2' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 2' })).toBeInTheDocument();
     // Zero coverage costs nothing: the index is still the same surface.
     expect(
       screen.getByLabelText('Filtra gli articoli per numero o rubrica'),
@@ -232,7 +211,6 @@ describe('TreeViewPanel — rubriche', () => {
 
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['2043']}
@@ -243,7 +221,7 @@ describe('TreeViewPanel — rubriche', () => {
     );
 
     fireEvent.click(
-      screen.getByRole('button', { name: '2043 Risarcimento per fatto illecito' }),
+      screen.getByRole('button', { name: 'Art. 2043 Risarcimento per fatto illecito' }),
     );
 
     expect(onArticleSelect).toHaveBeenCalledWith('2043', null);
@@ -259,7 +237,6 @@ describe('TreeViewPanel — filter', () => {
   it('matches by article-number prefix', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1', '12', '120', '2043']}
@@ -269,17 +246,16 @@ describe('TreeViewPanel — filter', () => {
 
     fireEvent.change(filterInput(), { target: { value: '12' } });
 
-    expect(screen.getByRole('button', { name: '12' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '120' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 12' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 120' })).toBeInTheDocument();
     // Prefix, not substring: 2043 does not contain a leading "12" either way.
-    expect(screen.queryByRole('button', { name: '2043' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '1' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Art. 2043' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Art. 1' })).not.toBeInTheDocument();
   });
 
   it('matches by rubrica substring, ignoring accents', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1218', '2043']}
@@ -295,17 +271,16 @@ describe('TreeViewPanel — filter', () => {
     fireEvent.change(filterInput(), { target: { value: 'responsabilita' } });
 
     expect(
-      screen.getByRole('button', { name: '1218 Responsabilità del debitore' }),
+      screen.getByRole('button', { name: 'Art. 1218 Responsabilità del debitore' }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: '2043 Risarcimento per fatto illecito' }),
+      screen.queryByRole('button', { name: 'Art. 2043 Risarcimento per fatto illecito' }),
     ).not.toBeInTheDocument();
   });
 
   it('reports how many articles the filter kept', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1', '12', '120', '2043']}
@@ -321,7 +296,6 @@ describe('TreeViewPanel — filter', () => {
   it('shows an empty state when nothing matches', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1', '2']}
@@ -351,7 +325,6 @@ describe('TreeViewPanel — collapsible sections', () => {
   it('keeps sections expanded at or below the eight-section threshold', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={treeWithSections(3)}
@@ -360,16 +333,15 @@ describe('TreeViewPanel — collapsible sections', () => {
     );
 
     expect(
-      screen.getByRole('button', { name: 'Comprimi SEZIONE 1' }),
+      screen.getByRole('button', { name: 'Sezione 1' }),
     ).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('button', { name: '101' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '301' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 101' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 301' })).toBeInTheDocument();
   });
 
   it('starts collapsed above the threshold — the codice civile has 406 sections', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={treeWithSections(9)}
@@ -378,15 +350,14 @@ describe('TreeViewPanel — collapsible sections', () => {
     );
 
     // Headers are all there; the 9 articles under them are not.
-    expect(screen.getByRole('button', { name: 'Espandi SEZIONE 1' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '101' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '901' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sezione 1' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Art. 101' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Art. 901' })).not.toBeInTheDocument();
   });
 
   it('opens the section holding an already-loaded article', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={treeWithSections(9)}
@@ -395,14 +366,14 @@ describe('TreeViewPanel — collapsible sections', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: '401' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '101' })).not.toBeInTheDocument();
+    // On the table: its name says so to a screen reader.
+    expect(screen.getByRole('button', { name: /^Art\. 401 ?, sul tavolo$/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Art. 101' })).not.toBeInTheDocument();
   });
 
   it('expands a collapsed section from the keyboard', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={treeWithSections(9)}
@@ -410,21 +381,20 @@ describe('TreeViewPanel — collapsible sections', () => {
       />,
     );
 
-    const header = screen.getByRole('button', { name: 'Espandi SEZIONE 1' });
+    const header = screen.getByRole('button', { name: 'Sezione 1' });
     expect(header).toHaveAttribute('aria-expanded', 'false');
 
     fireEvent.keyDown(header, { key: 'Enter' });
 
-    expect(screen.getByRole('button', { name: '101' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 101' })).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Comprimi SEZIONE 1' }),
+      screen.getByRole('button', { name: 'Sezione 1' }),
     ).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('auto-expands matching sections while a filter is active', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={treeWithSections(9)}
@@ -437,9 +407,9 @@ describe('TreeViewPanel — collapsible sections', () => {
       { target: { value: '401' } },
     );
 
-    expect(screen.getByRole('button', { name: '401' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 401' })).toBeInTheDocument();
     // Sections without a match drop out entirely.
-    expect(screen.queryByRole('button', { name: /SEZIONE 1$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Sezione 1$/ })).not.toBeInTheDocument();
   });
 });
 
@@ -447,10 +417,9 @@ describe('TreeViewPanel — collapsible sections', () => {
 describe('TreeViewPanel — index rows, the details that regress silently', () => {
   beforeEach(() => setViewport(false));
 
-  it('keeps a 44px touch target on the drawer variant', () => {
+  it('keeps a 44px touch target on a phone', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['2043']}
@@ -459,14 +428,13 @@ describe('TreeViewPanel — index rows, the details that regress silently', () =
       />,
     );
 
-    const row = screen.getByRole('button', { name: '2043 Risarcimento per fatto illecito' });
+    const row = screen.getByRole('button', { name: 'Art. 2043 Risarcimento per fatto illecito' });
     expect(row.className).toContain('min-h-[44px]');
   });
 
   it('lets a long article id widen its own row instead of spilling out of it', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['3', '2409-octiesdecies']}
@@ -476,15 +444,15 @@ describe('TreeViewPanel — index rows, the details that regress silently', () =
 
     // A hard `w-11` (44px) with shrink-0 makes "2409-octiesdecies" overflow to
     // the LEFT, out of the row. The codici are full of these.
-    const slot = screen.getByText('2409-octiesdecies');
-    expect(slot.className).toContain('min-w-11');
+    const slot = screen.getByText('Art. 2409-octiesdecies');
+    expect(slot.className).toContain('shrink-0');
+    expect(slot.className).toContain('whitespace-nowrap');
     expect(slot.className).not.toMatch(/(^|\s)w-11(\s|$)/);
   });
 
   it('keeps a loaded article focusable and tooltipped', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['2043']}
@@ -507,7 +475,6 @@ describe('TreeViewPanel — index rows, the details that regress silently', () =
     const onArticleSelect = vi.fn();
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['2043']}
@@ -527,7 +494,6 @@ describe('TreeViewPanel — index rows, the details that regress silently', () =
     const sections = Array.from({ length: 9 }, (_, i) => [`SEZIONE ${i + 1}`, `${i + 1}`]).flat();
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={sections}
@@ -535,7 +501,7 @@ describe('TreeViewPanel — index rows, the details that regress silently', () =
       />,
     );
 
-    const header = screen.getAllByRole('button', { name: /Espandi/ })[0];
+    const header = screen.getAllByRole('button', { name: /^Sezione/ })[0];
     const event = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
     fireEvent(header, event);
 
@@ -558,7 +524,6 @@ describe('TreeViewPanel — article ids past "decies"', () => {
   it.each(LONG_IDS)('lists art. %s as an article, not a section header', (id) => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1', id]}
@@ -572,7 +537,6 @@ describe('TreeViewPanel — article ids past "decies"', () => {
   it('still treats an uppercase multi-word heading as a section title', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['LIBRO PRIMO DELLE PERSONE E DELLA FAMIGLIA', '1', '2']}
@@ -580,10 +544,10 @@ describe('TreeViewPanel — article ids past "decies"', () => {
       />,
     );
 
-    // It must not have become a clickable article row.
+    // A heading of the tree, which opens and closes, not an article row.
     expect(
-      screen.queryByRole('button', { name: 'LIBRO PRIMO DELLE PERSONE E DELLA FAMIGLIA' }),
-    ).not.toBeInTheDocument();
+      screen.getByRole('button', { name: 'Libro primo delle persone e della famiglia' }),
+    ).toHaveAttribute('aria-expanded', 'true');
   });
 });
 
@@ -611,7 +575,6 @@ describe('TreeViewPanel — titles follow the annex', () => {
   it('leaves the Dispositivo unlabelled instead of borrowing the code body titles', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={[{ allegato: null, numero: '1' }, { allegato: null, numero: '2' }]}
@@ -628,13 +591,12 @@ describe('TreeViewPanel — titles follow the annex', () => {
 
     expect(screen.queryByText('Capacità giuridica')).not.toBeInTheDocument();
     expect(screen.queryByText('Maggiore età')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^1$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Art\. 1$/ })).toBeInTheDocument();
   });
 
   it('labels the code body from its own part', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={[
@@ -656,7 +618,6 @@ describe('TreeViewPanel — titles follow the annex', () => {
   it('marks a repealed article instead of leaving the row blank', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={[{ allegato: '2', numero: '3' }]}
@@ -667,13 +628,12 @@ describe('TreeViewPanel — titles follow the annex', () => {
       />,
     );
 
-    expect(screen.getByText('Abrogato')).toBeInTheDocument();
+    expect(screen.getByText('abrogato')).toBeInTheDocument();
   });
 
   it('uses the flat map for an act with no parts', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['2043']}
@@ -692,7 +652,6 @@ describe('TreeViewPanel — titles follow the annex', () => {
   it('never falls back to the flat map for an act in parts', () => {
     render(
       <TreeViewPanel
-        variant="drawer"
         isOpen
         onClose={vi.fn()}
         treeData={['1', '2']}
@@ -709,3 +668,169 @@ describe('TreeViewPanel — titles follow the annex', () => {
     expect(screen.queryByText(/Delibera del Garante/)).not.toBeInTheDocument();
   });
 });
+
+describe('TreeViewPanel — LC71, the panel redone', () => {
+  const CC_ANNEXES = [
+    { number: null, label: 'Dispositivo', article_count: 2, article_numbers: ['1', '2'] },
+    { number: '1', label: 'Disposizioni sulla legge in generale', article_count: 1, article_numbers: ['1'] },
+    { number: '2', label: 'CODICE CIVILE', article_count: 2, article_numbers: ['2043', '2044'] },
+  ];
+  const CC_TREE = [
+    { allegato: null, numero: '1' },
+    { allegato: null, numero: '2' },
+    'Disposizioni sulla legge in generale',
+    'CAPO I Delle fonti del diritto',
+    { allegato: '1', numero: '1' },
+    'CODICE CIVILE',
+    'LIBRO QUARTO Delle obbligazioni',
+    'TITOLO IX Dei fatti illeciti',
+    { allegato: '2', numero: '2043' },
+    { allegato: '2', numero: '2044' },
+  ];
+
+  it('shows no statistics, no subtitle and a plain title', () => {
+    setViewport(true);
+    render(
+      <TreeViewPanel isOpen onClose={vi.fn()} treeData={['1', '2']} urn="urn:test" title="Struttura del Codice civile" loadedArticles={['1']} />,
+    );
+    expect(screen.getByRole('heading', { name: 'Struttura del Codice civile' })).toBeInTheDocument();
+    expect(screen.queryByText(/articoli totali/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/caricati/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/indice strutturale/i)).not.toBeInTheDocument();
+  });
+
+  it('opens on the part it is given, with the parts by their whole names in the act’s order', () => {
+    setViewport(false);
+    render(
+      <TreeViewPanel isOpen onClose={vi.fn()} treeData={CC_TREE} urn="urn:test" annexes={CC_ANNEXES} currentAnnex="2" />,
+    );
+    const menu = screen.getByLabelText("Parte dell'atto") as HTMLSelectElement;
+    expect(menu.value).toBe('2');
+    expect(Array.from(menu.options).map((o) => o.text)).toEqual([
+      'Dispositivo', 'Disposizioni sulla legge in generale', 'Codice civile',
+    ]);
+    // The code's own tree, nested: the book holds the title, the title the article.
+    expect(screen.getByRole('button', { name: 'Libro quarto Delle obbligazioni' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Titolo IX Dei fatti illeciti' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Art. 2043' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Delle fonti del diritto/ })).not.toBeInTheDocument();
+  });
+
+  it('marks the open article and writes each row as «Art. n · rubrica»', () => {
+    setViewport(false);
+    render(
+      <TreeViewPanel
+        isOpen onClose={vi.fn()} treeData={CC_TREE} urn="urn:test" annexes={CC_ANNEXES} currentAnnex="2"
+        loadedArticles={['all2:2043']} activeArticle="all2:2043"
+        rubricheParts={[{ name: 'CODICE CIVILE', keys: ['2043', '2044'], rubriche: { '2043': 'Risarcimento per fatto illecito' }, abrogati: [] }]}
+      />,
+    );
+    const open = screen.getByRole('button', { name: 'Art. 2043 Risarcimento per fatto illecito' });
+    expect(open).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('button', { name: 'Art. 2044' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('focuses the filter on opening, walks the rows with the arrows, and Esc gives the focus back', () => {
+    setViewport(true);
+    const onClose = vi.fn();
+    function Harness() {
+      const [open, setOpen] = React.useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Struttura</button>
+          <TreeViewPanel isOpen={open} onClose={() => { onClose(); setOpen(false); }} treeData={['1', '2']} urn="urn:test" />
+        </>
+      );
+    }
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Struttura' });
+    opener.focus();
+    fireEvent.click(opener);
+
+    // The space takes the focus, never the filter: no keyboard rising on a phone (LC105). The arrows start from it.
+    const filter = screen.getByLabelText('Filtra gli articoli per numero o rubrica');
+    const space = document.activeElement as HTMLElement;
+    expect(space).toContainElement(filter);
+    expect(space).toHaveAttribute('tabindex', '-1');
+    fireEvent.keyDown(space, { key: 'ArrowDown' });
+    expect(screen.getByRole('button', { name: 'Art. 1' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Art. 1' }), { key: 'ArrowDown' });
+    expect(screen.getByRole('button', { name: 'Art. 2' })).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Art. 2' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(opener).toHaveFocus();
+  });
+
+  it('closes from its X on a phone, giving the focus back', () => {
+    setViewport(false);
+    const onClose = vi.fn();
+    function Harness() {
+      const [open, setOpen] = React.useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Struttura</button>
+          <TreeViewPanel isOpen={open} onClose={() => { onClose(); setOpen(false); }} treeData={['1']} urn="urn:test" />
+        </>
+      );
+    }
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Struttura' });
+    opener.focus();
+    fireEvent.click(opener);
+    const x = screen.getByRole('button', { name: 'Chiudi la struttura' });
+    expect(x.className).toContain('h-11');
+    fireEvent.click(x);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(opener).toHaveFocus();
+  });
+});
+
+describe('TreeViewPanel — the consultant’s notes on #557', () => {
+  beforeEach(() => setViewport(true));
+  const panel = (extra: Partial<React.ComponentProps<typeof TreeViewPanel>> = {}) => (
+    <TreeViewPanel isOpen onClose={vi.fn()} treeData={['1', '2', '3']} urn="urn:test" {...extra} />
+  );
+
+  it('empties a filled filter on the first Esc and closes on the second', () => {
+    const onClose = vi.fn();
+    render(panel({ onClose }));
+    const filter = screen.getByLabelText('Filtra gli articoli per numero o rubrica');
+    fireEvent.change(filter, { target: { value: '2' } });
+    fireEvent.keyDown(filter, { key: 'Escape' });
+    expect(filter).toHaveValue('');
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(filter, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('brings the list back to the top when the filter changes', () => {
+    render(panel());
+    const list = screen.getByRole('group', { name: "Indice dell'atto" });
+    list.scrollTop = 300;
+    fireEvent.change(screen.getByLabelText('Filtra gli articoli per numero o rubrica'), { target: { value: '3' } });
+    expect(list.scrollTop).toBe(0);
+  });
+
+  it('marks the open article apart from a hovered row', () => {
+    render(panel({ activeArticle: '2' }));
+    const open = screen.getByRole('button', { name: 'Art. 2' });
+    const other = screen.getByRole('button', { name: 'Art. 1' });
+    expect(open.className).toContain('shadow-[inset_2px_0_0_currentColor]');
+    expect(other.className).not.toContain('shadow-[inset_2px_0_0_currentColor]');
+  });
+
+  it('writes a row that is not an article as it is', () => {
+    render(panel({ treeData: ['1', { numero: 'Indice allegati', allegato: null }] }));
+    expect(screen.getByRole('button', { name: 'Indice allegati' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Art\. Indice/ })).not.toBeInTheDocument();
+  });
+
+  it('is one Tab stop: the open article’s row', () => {
+    render(panel({ activeArticle: '2' }));
+    expect(screen.getByRole('button', { name: 'Art. 2' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('button', { name: 'Art. 1' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('button', { name: 'Art. 3' })).toHaveAttribute('tabindex', '-1');
+  });
+});
+

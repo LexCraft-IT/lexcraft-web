@@ -233,6 +233,9 @@ export function StudyModeSettings({
                   </button>
                 </div>
               </div>
+
+              {/* No way to the colours' meanings here (LC84, Bill): Impostazioni is a page, and going there would leave Study
+                  Mode and lose its state. They are changed in Impostazioni, reached from the highlighter outside it. */}
             </div>
           </motion.div>
         </>

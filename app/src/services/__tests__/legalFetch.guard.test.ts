@@ -4,13 +4,13 @@ import { join } from 'node:path';
 
 // In production the ingress refuses a scraping call that carries no login token, so a bare
 // fetch to one of those routes works in development and fails once deployed. This keeps
-// every such call on legalFetch, the way infra/ingress/paths.test.mjs keeps the ingress
-// in step with Vite.
+// every such call on legalFetch, the way legalPaths.contract.test.ts keeps Vite, and the
+// core's infra/ingress/paths.test.mjs the ingress, in step with conventions/contract/legal-paths.json.
 const src = join(__dirname, '..', '..'); // apps/web/src
 const vite = readFileSync(join(src, '..', 'vite.config.ts'), 'utf8');
 
-// The Python routes are what Vite proxies to port 5000 (and what the ingress gates)…
-const pythonRoutes = [...vite.matchAll(/'(\/[\w-]+)'\s*:\s*'http:\/\/localhost:5000'/g)].map((m) => m[1]);
+// The Python routes are what Vite proxies to the Python API, PYTHON_API (and what the ingress gates)…
+const pythonRoutes = [...vite.matchAll(/'(\/[\w-]+)'\s*:\s*PYTHON_API\b/g)].map((m) => m[1]);
 // …except the two the ingress leaves open. /health/detailed is not one of them.
 const open = new Set(['/version', '/health']);
 const gated = [...pythonRoutes.filter((route) => !open.has(route)), '/health/detailed'];

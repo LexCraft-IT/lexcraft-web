@@ -7,8 +7,7 @@ import { WireConfirm } from '../../ui/wireConfirm/WireConfirm';
 import { useAppStore } from '../../../store/useAppStore';
 import { sharedEnvironmentService } from '../../../services/sharedEnvironmentService';
 import { getErrorMessage } from '../../../utils/errors';
-import { cn } from '../../../lib/utils';
-import { PublishDossierDialog } from './PublishDossierDialog';
+import { Button } from '../../ui/Button';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -17,6 +16,10 @@ interface Props {
   showToast: (message: string, type?: ToastType) => void;
   /** The header's look for a secondary action. */
   buttonClassName: string;
+  /** «Pubblica nel Forum» or «Aggiorna la versione pubblicata»: the host opens the form in the page (LC125, L-73). */
+  onPublish: () => void;
+  /** Whether that form is open, for the command's `aria-expanded`. */
+  publishOpen?: boolean;
 }
 
 /**
@@ -27,11 +30,9 @@ interface Props {
  * withdrew cannot be published or republished (question 190): the button says so. The published copies are the
  * Forum's «Dossier pubblici», so what leaves them says so, not «dal Forum».
  */
-export function DossierForumActions({ dossier, showToast, buttonClassName }: Props) {
-  const dossiers = useAppStore((s) => s.dossiers);
+export function DossierForumActions({ dossier, showToast, buttonClassName, onPublish, publishOpen }: Props) {
   const refreshDossier = useAppStore((s) => s.refreshDossier);
   const navigate = useNavigate();
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const published = dossier.published ?? null;
@@ -58,13 +59,16 @@ export function DossierForumActions({ dossier, showToast, buttonClassName }: Pro
   // say how it went, then hands the focus to «Pubblica nel Forum».
   const [deleting, setDeleting] = useState<NonNullable<Dossier['published']> | null>(null);
   const publishRef = useRef<HTMLButtonElement>(null);
+  // The «Forum» menu's button: the confirmation grows from it and gives it the focus back (LC85).
+  const [deleteFrom, setDeleteFrom] = useState<HTMLElement | null>(null);
   // It takes away others' «Mi piace» and proposals: drawn from the «Forum» button (K1b), which says the outcome.
   const confirmation = (
     <WireConfirm
       open={confirmDelete}
+      origin={deleteFrom}
       variant="danger"
       title="Eliminare la copia pubblicata?"
-      message="La copia pubblicata, i suoi «Mi piace» e le proposte ricevute vengono eliminati. Il tuo dossier resta com'è; chi l'ha già scaricato ne conserva la copia."
+      message="La copia pubblicata, i suoi «Mi piace» e le proposte ricevute vengono eliminati. La tua pratica resta com'è; chi l'ha già scaricata ne conserva la copia."
       confirmLabel="Elimina dai dossier pubblici"
       onConfirm={async () => {
         setConfirmDelete(false);
@@ -79,41 +83,24 @@ export function DossierForumActions({ dossier, showToast, buttonClassName }: Pro
     />
   );
 
-  const dialog = dialogOpen && (
-    <PublishDossierDialog
-      dossier={dossier}
-      otherDossiers={dossiers}
-      onClose={() => setDialogOpen(false)}
-      onPublished={(message) => {
-        setDialogOpen(false);
-        showToast(message, 'success');
-        void refreshDossier(dossier.id);
-      }}
-      onAlreadyPublished={() => void refreshDossier(dossier.id)}
-    />
-  );
-
   if (!published) {
     return (
       <>
-        <button
+        <Button
           ref={publishRef}
           type="button"
-          onClick={() => setDialogOpen(true)}
+          variant="secondary"
+          onClick={onPublish}
+          aria-expanded={publishOpen}
           disabled={blocked || dossier.items.length === 0}
           title={blocked ? "L'amministrazione l'ha ritirato dai dossier pubblici: non puoi ripubblicarlo." : undefined}
           aria-label={blocked ? 'Ritirato dai dossier pubblici' : 'Pubblica nel Forum'}
-          // The look `MenuButton` gives the header's other triggers.
-          className={cn(
-            'inline-flex items-center gap-2 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
-            buttonClassName,
-            'disabled:cursor-not-allowed disabled:opacity-40',
-          )}
+          // The look the header gives its other triggers (`HEADER_BUTTON`).
+          className={buttonClassName}
         >
           <Upload size={16} aria-hidden />
           <span className="hidden sm:inline" aria-hidden>{blocked ? 'Ritirato dai dossier pubblici' : 'Pubblica nel Forum'}</span>
-        </button>
-        {dialog}
+        </Button>
         {confirmation}
       </>
     );
@@ -130,7 +117,7 @@ export function DossierForumActions({ dossier, showToast, buttonClassName }: Pro
         align="left"
         triggerClassName={buttonClassName}
         items={[
-          { label: 'Aggiorna la versione pubblicata', icon: RefreshCw, onSelect: () => setDialogOpen(true), disabled: busy },
+          { label: 'Aggiorna la versione pubblicata', icon: RefreshCw, onSelect: onPublish, disabled: busy },
           published.isActive
             ? {
                 label: 'Ritira dai dossier pubblici', icon: EyeOff, disabled: busy,
@@ -138,10 +125,11 @@ export function DossierForumActions({ dossier, showToast, buttonClassName }: Pro
               }
             : {
                 label: 'Ripubblica nel Forum', icon: Globe, disabled: busy || blocked,
-                onSelect: () => void act(() => sharedEnvironmentService.republish(published.sharedEnvironmentId), 'Dossier di nuovo nel Forum'),
+                onSelect: () => void act(() => sharedEnvironmentService.republish(published.sharedEnvironmentId), 'Di nuovo nel Forum'),
               },
           { label: 'Apri i dossier pubblici', icon: FolderOpen, onSelect: () => navigate('/forum') },
-          { label: 'Elimina dai dossier pubblici', icon: Trash2, danger: true, separatorBefore: true, disabled: busy, onSelect: () => {
+          { label: 'Elimina dai dossier pubblici', icon: Trash2, danger: true, separatorBefore: true, disabled: busy, onSelect: (_event, trigger) => {
+              setDeleteFrom(trigger);
               setDeleting(published);
               setConfirmDelete(true);
             } },
@@ -150,7 +138,6 @@ export function DossierForumActions({ dossier, showToast, buttonClassName }: Pro
         {published.isActive ? <Globe size={16} aria-hidden /> : <EyeOff size={16} aria-hidden />}
         <span className="hidden sm:inline">{state}</span>
       </MenuButton>
-      {dialog}
       {confirmation}
     </>
   );

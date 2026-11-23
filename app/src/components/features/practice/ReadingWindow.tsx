@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, type ComponentProps } from 'react';
 import { X } from 'lucide-react';
-import { FOCUS_RING } from '../../../constants/interactions';
+import { IconButton } from '../../ui/IconButton';
 import { cn } from '../../../lib/utils';
 import { useAppStore } from '../../../store/useAppStore';
 import type { ArticleData } from '../../../types';
@@ -9,6 +9,10 @@ import { ArticleTabContent } from '../search/ArticleTabContent';
 import { DecisionEntryView } from '../decisions/DecisionEntryView';
 import { DecisionSearchTabView } from '../decisions/DecisionSearchTabView';
 import { subjectOf, titleOf, type Subject } from './practiceView';
+import { useDossierItemId } from './inDossier';
+import { closePracticeWindow } from './practiceSwitch';
+import { retryRowText, useRowText } from './useRowText';
+import { RowTextStatus } from './RowTextStatus';
 
 /** The bar of practices floats over the results area (`fixed bottom-6`): a window's scrolling body
  *  keeps the same bottom padding as the column (spec §3.4). */
@@ -35,7 +39,6 @@ export interface ReadingWindowProps {
  */
 export function ReadingWindow({ practiceId, besideRef, onCrossReference, clearTopRight = false }: ReadingWindowProps) {
   const practice = useAppStore((s) => s.practices.find((p) => p.id === practiceId));
-  const closeBeside = useAppStore((s) => s.closeBeside);
   const subject = subjectOf(practice, besideRef);
   const title = titleOf(subject);
 
@@ -55,7 +58,7 @@ export function ReadingWindow({ practiceId, besideRef, onCrossReference, clearTo
       aria-label={title}
       data-testid="reading-window"
       data-window-id={besideRef.id}
-      className="flex h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800"
+      className="flex h-full focus:outline-none min-w-0 flex-col overflow-hidden rounded-[8px] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800"
     >
       <header
         data-reading-window-header
@@ -64,21 +67,17 @@ export function ReadingWindow({ practiceId, besideRef, onCrossReference, clearTo
           clearTopRight && 'md:pr-12',
         )}
       >
-        <h3 title={title} className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
+        <h3 title={title} data-page-title="" className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
           {title}
         </h3>
-        <button
-          type="button"
-          onClick={() => closeBeside(practiceId, besideRef.id)}
+        <IconButton
+          // The last one brings the overview back through the passage (L-62); the focus goes to what is left.
+          onClick={() => closePracticeWindow(practiceId, besideRef)}
           aria-label={`Chiudi la finestra ${title}`}
           title="Chiudi la finestra"
-          className={cn(
-            'flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 md:min-h-0 md:min-w-0 md:p-2 dark:text-slate-300 dark:hover:bg-slate-700',
-            FOCUS_RING,
-          )}
-        >
-          <X size={16} aria-hidden />
-        </button>
+          icon={<X aria-hidden />}
+          className="shrink-0"
+        />
       </header>
       <div data-reading-window-body className={cn('min-h-0 flex-1 overflow-y-auto px-3 pt-3', BODY_PADDING_BOTTOM)}>
         <ReadingWindowBody practiceId={practiceId} besideRef={besideRef} subject={subject} onCrossReference={onCrossReference} />
@@ -97,6 +96,10 @@ interface ReadingWindowBodyProps extends Omit<ReadingWindowProps, 'clearTopRight
 export function ReadingWindowBody({ practiceId, besideRef, subject, onCrossReference }: ReadingWindowBodyProps) {
   const articleKey = besideRef.kind === 'article' ? besideRef.articleKey : '';
   const actId = subject?.kind === 'article' ? subject.actId : '';
+  const textState = useRowText(practiceId, actId, subject?.kind === 'article' ? subject.article : undefined, true);
+  // In a dossier's «Lettura» (LC58): the entry read, for what an application proposed on it and its notes.
+  const dossierItemId = useDossierItemId(practiceId, subject?.kind === 'article' ? { norma: subject.article.norma_data }
+    : subject?.kind === 'decision' ? { decisionId: subject.decisionId } : undefined);
   const readingOrigin = useMemo(
     () => ({ tabId: besideRef.id, blockId: actId, articleKey }),
     [besideRef.id, actId, articleKey],
@@ -109,9 +112,11 @@ export function ReadingWindowBody({ practiceId, besideRef, subject, onCrossRefer
   );
 
   if (!subject) {
-    return <p className="text-sm text-slate-500 dark:text-slate-400">Questo testo non è più sul tavolo della pratica.</p>;
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Questo testo non è più sul tavolo.</p>;
   }
   if (subject.kind === 'article') {
+    const { article } = subject;
+    if (textState) return <RowTextStatus state={textState} onRetry={() => retryRowText(practiceId, actId, article)} />;
     return (
       <ArticleTabContent
         data={subject.article}
@@ -119,6 +124,7 @@ export function ReadingWindowBody({ practiceId, besideRef, subject, onCrossRefer
         readingOrigin={readingOrigin}
         findHostId={practiceId}
         variant="beside"
+        dossierItemId={dossierItemId}
       />
     );
   }
@@ -130,6 +136,7 @@ export function ReadingWindowBody({ practiceId, besideRef, subject, onCrossRefer
         reference={subject.reference}
         hostId={besideRef.id}
         findHostId={practiceId}
+        dossierItemId={dossierItemId}
       />
     );
   }

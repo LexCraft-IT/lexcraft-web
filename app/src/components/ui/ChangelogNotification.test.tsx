@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChangelogNotification, ReleaseNews } from './ChangelogNotification';
 import { VERSION_CHECK_SESSION_KEY, VERSION_STORAGE_KEY } from '../../config/versionConfig';
 import { RELEASE_NOTES } from '../../content/novita/releaseNotes';
+import { NotificationHost } from './Toast';
+import { notify, resetNotifications } from './notifications/notifications';
+import { FOOT_STACK_BOTTOM, setFootBarRoom } from './notifications/footBar';
 
 // Reduced motion, switched per test: Framer's own hook, read by the toast and by `Modal`.
 const motionPreference = vi.hoisted(() => ({ reduced: false }));
@@ -70,6 +73,31 @@ describe('ChangelogNotification', () => {
     motionPreference.reduced = false;
   });
 
+  // LC101: at 390 the toast had a place of its own (`bottom-4`) and covered Work's views' bar at the foot, taking its
+  // clicks (as on #585 and #607). It takes the stack's place: over the bar's measured room (`footBarStore`, as Work's
+  // views set it on a phone: 66 px, the bar and the safe area), with the very rule of the notifications beside it.
+  it('rises over the bar at the foot of the window by the notifications\' own rule, never a place of its own', async () => {
+    localStorage.setItem(VERSION_STORAGE_KEY, '1.9.0');
+    answer('1.9.1');
+    render(<><ChangelogNotification /><NotificationHost /></>);
+    const card = (await screen.findByRole('button', { name: 'Vedi' })).closest('.fixed') as HTMLElement;
+    await act(async () => { notify({ message: 'Salvato', type: 'success', duration: 3000 }); });
+    const stack = screen.getByRole('list', { name: 'Notifiche' }).parentElement as HTMLElement;
+
+    expect(card.className).toContain(FOOT_STACK_BOTTOM);
+    expect(stack.className).toContain(FOOT_STACK_BOTTOM);
+    expect(card.className).not.toMatch(/(^|\s)(md:)?bottom-(4|8)(\s|$)/);
+    expect(card.style.getPropertyValue('--foot-bar')).toBe('');
+
+    act(() => setFootBarRoom(66));
+    expect(card.style.getPropertyValue('--foot-bar')).toBe('66px');
+    expect(card.style.getPropertyValue('--foot-bar')).toBe(stack.style.getPropertyValue('--foot-bar'));
+
+    act(() => setFootBarRoom(0));
+    expect(card.style.getPropertyValue('--foot-bar')).toBe('');
+    act(() => resetNotifications());
+  });
+
   it('shows the new version’s own note, though /version sends no changelog', async () => {
     localStorage.setItem(VERSION_STORAGE_KEY, '1.9.0');
     answer('1.9.1');
@@ -97,6 +125,25 @@ describe('ChangelogNotification', () => {
     ]);
   });
 
+  it('keeps the pill after a reload in the same session, the check not made again, until it is opened or closed (LC91)', async () => {
+    localStorage.setItem(VERSION_STORAGE_KEY, '1.9.0');
+    const fetched = answer('1.9.1');
+    const first = render(<ChangelogNotification />);
+    expect(await screen.findByRole('button', { name: 'Vedi' })).toBeInTheDocument();
+    first.unmount();
+
+    // The reload: within the throttle, no second request, the pill all the same.
+    render(<ChangelogNotification />);
+    expect(await screen.findByRole('button', { name: 'Vedi' })).toBeInTheDocument();
+    expect(fetched).toHaveBeenCalledTimes(1);
+
+    // Opened and closed: marked seen, and a reload no longer shows it.
+    await userEvent.click(screen.getByRole('button', { name: 'Vedi' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Chiudi' }));
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(localStorage.getItem(VERSION_STORAGE_KEY)).toBe('1.9.1');
+  });
+
   it('says «Correzioni e miglioramenti» for a version this bundle has no note of, and does not mark it seen', async () => {
     // A tab opened before a deploy: the server names the new version, the bundle has the old notes.
     localStorage.setItem(VERSION_STORAGE_KEY, '99.0.0');
@@ -113,21 +160,32 @@ describe('ChangelogNotification', () => {
   });
 
   it('only fades the toast in under reduced motion, where it otherwise rises and grows', async () => {
-    const toastOf = async () => (await screen.findByRole('button', { name: 'Vedi' })).parentElement as HTMLElement;
+    // The style the toast lands in the page with, before any frame of its entrance has run: read once the toast is
+    // found, a busy machine had already drawn a frame of the fade (an opacity of 0.00046, not 0).
+    const drawnAs = async () => {
+      let drawn: { opacity: string; transform: string } | null = null;
+      const watch = new MutationObserver(() => {
+        const toast = screen.queryByRole('button', { name: 'Vedi' })?.parentElement;
+        if (toast && !drawn) drawn = { opacity: toast.style.opacity, transform: toast.style.transform };
+      });
+      watch.observe(document.body, { childList: true, subtree: true });
+      render(<ChangelogNotification />);
+      await screen.findByRole('button', { name: 'Vedi' });
+      watch.disconnect();
+      return drawn!;
+    };
     localStorage.setItem(VERSION_STORAGE_KEY, '1.9.0');
     answer('1.9.1');
 
-    const moving = render(<ChangelogNotification />);
-    expect((await toastOf()).style.transform).toMatch(/translateY|scale/);
-    moving.unmount();
+    expect((await drawnAs()).transform).toMatch(/translateY|scale/);
+    cleanup();
 
     forget();
     localStorage.setItem(VERSION_STORAGE_KEY, '1.9.0');
     motionPreference.reduced = true;
-    render(<ChangelogNotification />);
-    const toast = await toastOf();
-    expect(toast.style.transform).not.toMatch(/translateY|scale/);
-    expect(toast.style.opacity).toBe('0');
+    const toast = await drawnAs();
+    expect(toast.transform).not.toMatch(/translateY|scale/);
+    expect(toast.opacity).toBe('0');
   });
 
   it('gives the focus back to where it was before the toast once the window closes', async () => {

@@ -1,9 +1,9 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
-import { createPortal } from 'react-dom';
-import { Loader2, Search, ArrowRight, Calendar, Trash2, Zap, FolderPlus, MoreVertical, Check, Plus, X } from 'lucide-react';
+import { Search, ArrowRight, Trash2, Zap, FolderPlus, MoreVertical, Plus, X } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { cn } from '../../../lib/utils';
+import { MenuButton, type MenuItem } from '../../ui/MenuButton';
 import { EmptyState } from '../../ui/EmptyState';
 import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { useAppStore } from '../../../store/useAppStore';
@@ -12,28 +12,16 @@ import type { NormaVisitata, SearchParams } from '../../../types';
 import { useTour } from '../../../hooks/useTour';
 import { getHistory, deleteHistoryItem, clearHistory, type SearchHistoryItem } from '../../../services/historyService';
 import { NormaChangesSection } from './NormaChangesSection';
-import { labelFromParams } from '../../../utils/sources';
+import { actHeading, labelFromParams } from '../../../utils/sources';
 import { DecisionHistoryRow } from './DecisionHistoryRow';
 import { PageFrame } from '../../layout/PageFrame';
 import { decisionHistoryLabel, identityFromKey } from '../../../utils/decisionLinks';
-import { FIELD_TEXT } from '../../../constants/interactions';
-
-// Stripe color per act_type — keyed on lowercased exact match. Codes get
-// distinct colors so the user can scan the timeline visually; everything
-// else falls back to slate. Same hex-map pattern as SharedEnvironmentCard.
-const ACT_TYPE_STRIPE: Record<string, string> = {
-    'codice civile': '#3b82f6',                // blue
-    'codice penale': '#ef4444',                // red
-    'codice di procedura civile': '#6366f1',   // indigo
-    'codice di procedura penale': '#8b5cf6',   // violet
-    'costituzione': '#f59e0b',                 // amber
-    'regolamento ue': '#0ea5e9',               // sky
-    'direttiva ue': '#06b6d4',                 // cyan
-};
-
-function stripeColor(actType: string | null | undefined): string {
-    return ACT_TYPE_STRIPE[(actType ?? '').toLowerCase()] ?? '#94a3b8';
-}
+import { Button } from '../../ui/Button';
+import { IconButton } from '../../ui/IconButton';
+import { Input } from '../../ui/Input';
+import { Toast } from '../../ui/Toast';
+import { Arrive } from '../../ui/Arrive';
+import { HistoryListSkeleton } from '../../ui/Skeleton';
 
 // Humanized group label: today/yesterday/weekday-this-week/full-date.
 // Group key stays YYYY-MM-DD (ISO) for stable insertion order; only the
@@ -73,6 +61,19 @@ function historyToSearchParams(item: SearchHistoryItem): SearchParams {
     };
 }
 
+// «2056,2057,2058» as the server keeps it, read as «2056, 2057, 2058» (B8).
+const articlesOf = (item: SearchHistoryItem) => item.article?.toString().split(',').map((a) => a.trim()).filter(Boolean).join(', ') ?? '';
+
+// The row's title: the norm as it is cited, «art. 2043 c.c.», «artt. 2056, 2057 c.c.» (B8).
+function historyLabel(item: SearchHistoryItem): string {
+    const articles = articlesOf(item);
+    const label = labelFromParams({ act_type: item.act_type ?? '', act_number: item.act_number, date: item.date, article: articles });
+    return articles.includes(',') ? label.replace(/^art\. /, 'artt. ') : label;
+}
+
+// The row's second line: the act by its name («Codice civile») or its citation.
+const actHeadingOf = (item: SearchHistoryItem) => actHeading({ tipo_atto: item.act_type ?? '', numero_atto: item.act_number, data: item.date });
+
 // A quick norm is suggested with the norm's short label, the act's with no article (source convention).
 function generateQuickNormLabel(item: SearchHistoryItem): string {
     return labelFromParams({ act_type: item.act_type ?? '', act_number: item.act_number, date: item.date, article: item.article?.toString() });
@@ -83,48 +84,12 @@ export function HistoryView() {
     const [loading, setLoading] = useState(true);
     const [clearing, setClearing] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [openMenu, setOpenMenu] = useState<string | null>(null);
-    const [showDossierList, setShowDossierList] = useState<string | null>(null);
     const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+    const [clearFrom, setClearFrom] = useState<HTMLElement | null>(null);
     const [createDossierFor, setCreateDossierFor] = useState<SearchHistoryItem | null>(null);
     const [newDossierTitle, setNewDossierTitle] = useState('');
-    // Menu position is computed from the trigger's getBoundingClientRect on open
-    // so the dropdown can use position:fixed and escape parent overflow contexts
-    // (the page layout has overflow-hidden on <main>; absolute positioning was
-    // getting clipped by it). flip is set when there's not enough space below.
-    const [menuPos, setMenuPos] = useState<{
-        top?: number;
-        bottom?: number;
-        right: number;
-    } | null>(null);
-    const menuRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
-
-    const closeMenu = () => {
-        setOpenMenu(null);
-        setShowDossierList(null);
-        setMenuPos(null);
-    };
-
-    const handleToggleMenu = (e: React.MouseEvent, itemId: string) => {
-        e.stopPropagation();
-        if (openMenu === itemId) {
-            closeMenu();
-            return;
-        }
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const ESTIMATED_MENU_HEIGHT = 180;
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const flipUp = spaceBelow < ESTIMATED_MENU_HEIGHT && rect.top > ESTIMATED_MENU_HEIGHT;
-        setMenuPos({
-            top: flipUp ? undefined : rect.bottom + 4,
-            bottom: flipUp ? window.innerHeight - rect.top + 4 : undefined,
-            right: window.innerWidth - rect.right,
-        });
-        setOpenMenu(itemId);
-        setShowDossierList(null);
-    };
 
     const {
         triggerSearch,
@@ -141,41 +106,11 @@ export function HistoryView() {
         tryStartTour('history');
     }, [tryStartTour]);
 
-    // Chiudi menu quando si clicca fuori, oppure quando l'utente scrolla
-    // (il dropdown è position:fixed con coordinate calcolate, quindi non
-    // riposiziona da solo — chiuderlo è la UX più semplice e coerente).
-    useEffect(() => {
-        const handleClickOutside = (e: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-                closeMenu();
-            }
-        };
-        const handleScrollOrResize = () => closeMenu();
-        document.addEventListener('mousedown', handleClickOutside);
-        if (openMenu) {
-            window.addEventListener('scroll', handleScrollOrResize, true);
-            window.addEventListener('resize', handleScrollOrResize);
-        }
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-            window.removeEventListener('scroll', handleScrollOrResize, true);
-            window.removeEventListener('resize', handleScrollOrResize);
-        };
-    }, [openMenu]);
-
-    // Auto-hide feedback
-    useEffect(() => {
-        if (feedback) {
-            const timer = setTimeout(() => setFeedback(null), 2000);
-            return () => clearTimeout(timer);
-        }
-    }, [feedback]);
-
     // Page-scoped shortcuts: "/" focuses search, Escape clears search when
     // focused. Skipped while any overlay is open or the user is typing in
     // a different input/textarea (mirrors DossierListView pattern).
     useEffect(() => {
-        const hasOverlay = clearConfirmOpen || createDossierFor !== null || openMenu !== null;
+        const hasOverlay = clearConfirmOpen || createDossierFor !== null;
         const handler = (e: KeyboardEvent) => {
             if (e.metaKey || e.ctrlKey || e.altKey) return;
             const target = e.target as HTMLElement | null;
@@ -191,7 +126,7 @@ export function HistoryView() {
         };
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
-    }, [clearConfirmOpen, createDossierFor, openMenu, searchTerm]);
+    }, [clearConfirmOpen, createDossierFor, searchTerm]);
 
     const showFeedback = (message: string, type: 'success' | 'error' = 'success') => {
         setFeedback({ message, type });
@@ -203,24 +138,19 @@ export function HistoryView() {
         const label = generateQuickNormLabel(item);
         addQuickNorm(label, searchParams);
         showFeedback('Aggiunto alle norme rapide');
-        setOpenMenu(null);
     };
 
     const handleAddToDossier = (e: React.MouseEvent, item: SearchHistoryItem, dossierId: string) => {
         e.stopPropagation();
         const norma = historyToNormaVisitata(item);
         addToDossier(dossierId, norma, 'norma');
-        showFeedback('Aggiunto al dossier');
-        setOpenMenu(null);
-        setShowDossierList(null);
+        showFeedback('Aggiunto alla pratica');
     };
 
     const handleCreateDossierAndAdd = (e: React.MouseEvent, item: SearchHistoryItem) => {
         e.stopPropagation();
         setCreateDossierFor(item);
         setNewDossierTitle('');
-        setOpenMenu(null);
-        setShowDossierList(null);
     };
 
     const handleConfirmCreateDossier = async () => {
@@ -234,11 +164,12 @@ export function HistoryView() {
             addToDossier(id, norma, 'norma');
             showFeedback(`Creato "${title}" e aggiunta norma`);
         } else {
-            showFeedback('Errore nella creazione del dossier', 'error');
+            showFeedback('Errore nella creazione della pratica', 'error');
         }
     };
 
-    const handleClearHistory = () => {
+    const handleClearHistory = (event: { currentTarget: HTMLElement }) => {
+        setClearFrom(event.currentTarget);
         setClearConfirmOpen(true);
     };
 
@@ -267,6 +198,29 @@ export function HistoryView() {
             showFeedback('Impossibile eliminare la voce dalla cronologia', 'error');
         }
     };
+
+    // A norm's «⋯»: the pratiche listed in it under their heading, as one menu (LC103: a `MenuButton`, as every other).
+    const historyMenuItems = (item: SearchHistoryItem): MenuItem[] => [
+        { label: 'Aggiungi a norme rapide', icon: Zap, iconClassName: 'text-amber-500', onSelect: (e) => handleAddQuickNorm(e, item) },
+        ...dossiers.map((dossier, i) => ({
+            label: dossier.title,
+            ariaLabel: `Aggiungi a ${dossier.title}`,
+            icon: FolderPlus,
+            iconClassName: 'text-primary-500',
+            separatorBefore: i === 0,
+            sectionHeading: i === 0 ? 'Aggiungi a una pratica' : undefined,
+            onSelect: (e: React.MouseEvent) => handleAddToDossier(e, item, dossier.id),
+        })),
+        {
+            label: 'Nuova pratica…',
+            ariaLabel: 'Aggiungi a una nuova pratica…',
+            icon: Plus,
+            separatorBefore: dossiers.length === 0,
+            sectionHeading: dossiers.length === 0 ? 'Aggiungi a una pratica' : undefined,
+            onSelect: (e) => handleCreateDossierAndAdd(e, item),
+        },
+        { label: 'Rimuovi dalla cronologia', icon: Trash2, danger: true, separatorBefore: true, onSelect: (e) => handleDeleteItem(e, item.id) },
+    ];
 
     const handleOpenNorma = (params: SearchParams) => {
         navigate('/');
@@ -348,59 +302,54 @@ export function HistoryView() {
     return (
         <PageFrame
             title="Cronologia"
-            className="animate-in fade-in duration-200"
             action={
                 <>
-                    <div id="tour-history-search" className="relative min-w-0 flex-1 md:w-64 md:flex-none">
-                        <input
+                    <div id="tour-history-search" className="min-w-0 flex-1 md:w-64 md:flex-none">
+                        <Input
                             ref={searchInputRef}
                             type="text"
-                            placeholder="Cerca nella cronologia..."
+                            placeholder="Cerca nella cronologia…"
                             aria-label="Cerca nella cronologia"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             aria-keyshortcuts="/"
                             title="Cerca (premi /)"
-                            className={`w-full pl-9 pr-4 py-2 ${FIELD_TEXT} rounded-lg bg-slate-100 dark:bg-slate-700 border-transparent focus:border-primary-500 focus:bg-white dark:focus:bg-slate-900 transition-colors min-h-[44px] md:min-h-0 md:py-1.5 md:rounded-full`}
+                            icon={<Search size={16} aria-hidden />}
                         />
-                        <Search size={16} aria-hidden className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     </div>
-                    {history.length > 0 && (
-                        <button
+                    {/* Its place held while the history is read, so the field does not move when it comes (LC120). */}
+                    {(loading || history.length > 0) && (
+                        <IconButton
                             onClick={handleClearHistory}
-                            disabled={clearing}
-                            className="flex shrink-0 items-center justify-center p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg md:rounded-full transition-colors disabled:opacity-50 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0"
+                            loading={clearing}
                             title="Svuota cronologia"
                             aria-label="Svuota cronologia"
-                        >
-                            {clearing ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                        </button>
+                            icon={<Trash2 aria-hidden />}
+                            className={cn("shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/20 dark:hover:text-red-300", loading && 'invisible')}
+                        />
                     )}
                 </>
             }
         >
             <NormaChangesSection onOpen={handleOpenNorma} />
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+            {/* No overflow at all: `hidden` made this card the date labels' scroll container (M1), and `clip` cut the
+                «⋯» menus at its edge (LC103); its padding keeps everything inside the rounded corners. */}
+            <div className="bg-white dark:bg-slate-800 rounded-[8px] shadow-sm border border-slate-200 dark:border-slate-700">
                 {/* Timeline with grouped dates. No inner scroll: the page is the
                     scroll context so the action dropdown isn't clipped. Sticky date
-                    headers attach to the next overflow ancestor. */}
+                    headers attach to the page's scroller, under the phone's bar. */}
                 <div className="p-3 md:p-6">
-                    {loading ? (
-                        <div className="p-8 text-center">
-                            <Loader2 className="animate-spin mx-auto text-primary-500" size={24} />
-                        </div>
-                    ) : filteredHistory.length === 0 && history.length > 0 ? (
+                    {/* The rows' place held while they are read, and their entrance (LC98, LC120). */}
+                    <Arrive loading={loading} placeholder={<><p role="status" className="sr-only">Apro la cronologia…</p><HistoryListSkeleton /></>}>
+                    {filteredHistory.length === 0 && history.length > 0 ? (
                         <EmptyState
                             variant="search"
                             title="Nessuna corrispondenza"
                             description={`Nessuna voce trovata per "${searchTerm}".`}
                             action={
-                                <button
-                                    onClick={() => setSearchTerm('')}
-                                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg inline-flex items-center gap-2 transition-colors min-h-[44px]"
-                                >
+                                <Button variant="secondary" onClick={() => setSearchTerm('')}>
                                     Azzera filtro
-                                </button>
+                                </Button>
                             }
                         />
                     ) : filteredHistory.length === 0 ? (
@@ -409,13 +358,9 @@ export function HistoryView() {
                             title="Nessuna ricerca recente"
                             description="Le tue ricerche appariranno qui. Inizia cercando una norma per vedere la cronologia."
                             action={
-                                <button
-                                    onClick={() => navigate('/')}
-                                    className="px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg inline-flex items-center gap-2 transition-colors min-h-[44px]"
-                                >
-                                    <Search size={18} />
+                                <Button onClick={() => navigate('/')} icon={<Search size={16} aria-hidden />}>
                                     Inizia una ricerca
-                                </button>
+                                </Button>
                             }
                         />
                     ) : (
@@ -424,243 +369,129 @@ export function HistoryView() {
                                 <div key={key} className="relative">
                                     {/* Date label with timeline line */}
                                     {/* Mobile: smaller, simpler date label */}
-                                    <div className="md:hidden flex items-center gap-2 mb-3 sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-200 ease-out motion-reduce:transition-none bg-white dark:bg-slate-800 py-1 z-10">
-                                        <div className="flex items-center gap-1.5 bg-primary-50 dark:bg-primary-900/30 px-2.5 py-1 rounded-full">
-                                            <Calendar size={12} className="text-primary-600 dark:text-primary-400" />
-                                            <span className="text-xs font-bold text-primary-600 dark:text-primary-400">{label}</span>
-                                        </div>
-                                        <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                                    <div className="md:hidden flex items-center gap-2 mb-3 sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-(--dur-pop) ease-out motion-reduce:transition-none bg-slate-50 dark:bg-slate-950 py-1 z-10">
+                                        <h2 className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-600 dark:text-slate-400">{label}</h2>
                                     </div>
 
                                     {/* Desktop: full date label */}
-                                    <div className="hidden md:flex items-center gap-3 mb-4 sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-200 ease-out motion-reduce:transition-none bg-white dark:bg-slate-800 py-2 z-10">
-                                        <div className="flex items-center gap-2 bg-primary-50 dark:bg-primary-900/30 px-3 py-1.5 rounded-full">
-                                            <Calendar size={14} className="text-primary-600 dark:text-primary-400" />
-                                            <span className="text-sm font-bold text-primary-600 dark:text-primary-400">{label}</span>
-                                        </div>
-                                        <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                                    <div className="hidden md:flex items-center gap-3 mb-4 sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-(--dur-pop) ease-out motion-reduce:transition-none bg-slate-50 dark:bg-slate-950 py-2 z-10">
+                                        <h2 className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-600 dark:text-slate-400">{label}</h2>
                                     </div>
 
                                     {/* Timeline items */}
                                     {/* Mobile: simpler timeline */}
                                     <div className="md:hidden space-y-2">
-                                        {items.map((item, idx) => item.decision_key ? (
+                                        {items.map((item) => item.decision_key ? (
                                             <DecisionHistoryRow key={item.id} item={item} variant="mobile" onDelete={handleDeleteItem} />
                                         ) : (
-                                            <div key={idx} className="relative">
-                                                {/* Mobile Item card - compact, tap-friendly */}
-                                                <div
+                                            <div key={item.id} className="relative">
+                                                {/* Mobile Item card - compact, tap-friendly; a button, so Tab reaches it and Enter opens it (A6) */}
+                                                {/* bare-button: the card is a whole entry of the list. */}
+                                                <button
+                                                    type="button"
                                                     onClick={() => handleItemClick(item)}
                                                     className={cn(
-                                                        "relative bg-white dark:bg-slate-800 p-3 pl-4 rounded-lg border transition-[color,background-color,border-color,scale] cursor-pointer min-h-[44px]",
+                                                        "relative block w-full text-left bg-white dark:bg-slate-800 p-3 pr-12 rounded-[8px] border transition-[color,background-color,border-color,scale] cursor-pointer min-h-[44px]",
                                                         "border-slate-200 dark:border-slate-700",
-                                                        "active:scale-[0.98] active:border-primary-400"
+                                                        "active:scale-[0.98] active:border-primary-400",
+                                                        "focus-visible:outline-none "
                                                     )}
                                                 >
-                                                    {/* Act-type stripe — see desktop card for rationale */}
-                                                    <span
-                                                        aria-hidden
-                                                        className="absolute left-0 top-0 bottom-0 w-1 rounded-l-lg"
-                                                        style={{ backgroundColor: stripeColor(item.act_type) }}
-                                                    />
-                                                    <div className="flex items-start justify-between gap-2">
-                                                        <div className="flex-1 min-w-0">
-                                                            <div className="flex items-center gap-1.5 mb-1">
-                                                                <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 px-2 py-0.5 rounded text-xs font-bold">
-                                                                    Art. {item.article}
-                                                                </span>
-                                                                {item.act_number && (
-                                                                    <span className="text-xs text-slate-500 dark:text-slate-400">
-                                                                        n. {item.act_number}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <p className="font-semibold text-sm text-slate-900 dark:text-white capitalize truncate">
-                                                                {item.act_type}
-                                                            </p>
+                                                    <span className="flex items-start justify-between gap-2">
+                                                        <span className="block flex-1 min-w-0">
+                                                            <span className="flex items-center gap-1.5 mb-1">
+                                                                <span className="font-serif text-base text-slate-900 dark:text-slate-50">{historyLabel(item)}</span>
+                                                            </span>
+                                                            <span className="block text-[13px] text-slate-600 dark:text-slate-400 truncate">
+                                                                {actHeadingOf(item)}
+                                                            </span>
                                                             {item.created_at && (
-                                                                <p
-                                                                    className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5"
+                                                                <span
+                                                                    className="block text-[11px] text-slate-600 dark:text-slate-400 mt-0.5"
                                                                     title={new Date(item.created_at).toLocaleString('it-IT')}
                                                                 >
                                                                     {formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: it })}
-                                                                </p>
+                                                                </span>
                                                             )}
-                                                        </div>
-                                                        <ArrowRight size={18} className="text-primary-500 flex-shrink-0 mt-1" />
-                                                    </div>
-                                                </div>
+                                                        </span>
+                                                        <ArrowRight size={18} aria-hidden className="text-primary-500 flex-shrink-0 mt-1" />
+                                                    </span>
+                                                </button>
+                                                {/* Beside the card, over its right edge: a button cannot hold another (LC103, 44 px to the touch). */}
+                                                <MenuButton
+                                                    label={`Altre azioni su ${historyLabel(item)}`}
+                                                    title="Altre azioni"
+                                                    items={historyMenuItems(item)}
+                                                    placement="auto"
+                                                    menuClassName="max-h-80"
+                                                    className="absolute right-1 top-1"
+                                                    triggerClassName="min-h-[44px] min-w-[44px] justify-center text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
+                                                >
+                                                    <MoreVertical size={18} aria-hidden />
+                                                </MenuButton>
                                             </div>
                                         ))}
                                     </div>
 
                                     {/* Desktop: full timeline with dots */}
-                                    <div className="hidden md:block space-y-3 pl-6 border-l-2 border-primary-100 dark:border-primary-900 relative">
+                                    <div className="hidden md:block border-t border-slate-200 dark:border-slate-800">
                                         {items.map((item, idx) => item.decision_key ? (
                                             <DecisionHistoryRow key={item.id} item={item} variant="desktop" onDelete={handleDeleteItem}
                                                 id={idx === 0 ? 'tour-history-item' : undefined} />
                                         ) : (
-                                            <div key={idx} id={idx === 0 ? 'tour-history-item' : undefined} className="relative group">
-                                                {/* Timeline dot */}
-                                                <div className="absolute -left-[27px] top-3 w-3 h-3 bg-primary-500 rounded-full ring-4 ring-white dark:ring-slate-800" />
+                                            <div key={item.id} id={idx === 0 ? 'tour-history-item' : undefined} className="relative group">
 
-                                                {/* Item card */}
+                                                {/* Item card: the title is a button stretched over the card (A6), so the card still opens
+                                                    on a click anywhere and Tab and Enter reach it; the menu sits beside it, above the stretch. */}
                                                 <div
-                                                    onClick={() => handleItemClick(item)}
                                                     className={cn(
-                                                        "relative bg-white dark:bg-slate-800 p-4 pl-5 rounded-xl border-2 transition-[color,background-color,border-color,box-shadow] cursor-pointer",
-                                                        "border-slate-200 dark:border-slate-700",
-                                                        "hover:border-primary-300 dark:hover:border-primary-700 hover:shadow-md"
+                                                        // LC21: a row of the list, as the prototype's: a rule under it, the hover a tint, no card.
+                                                        "relative border-b border-slate-200 px-2 py-3 transition-colors cursor-pointer dark:border-slate-800",
+                                                        "hover:bg-slate-100 dark:hover:bg-slate-900",
+                                                        "has-[[data-history-open]:focus-visible]:ring-2 has-[[data-history-open]:focus-visible]:ring-primary-500"
                                                     )}
                                                 >
-                                                    {/* Act-type stripe — rounded-l-xl matches card corner so it doesn't
-                                                        poke past the rounded edges; we can't use overflow-hidden on the
-                                                        card because the dropdown menu lives inside it. */}
-                                                    <span
-                                                        aria-hidden
-                                                        className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl"
-                                                        style={{ backgroundColor: stripeColor(item.act_type) }}
-                                                    />
                                                     <div className="flex justify-between items-start gap-4">
-                                                        <div className="flex-1">
-                                                            <div className="flex items-baseline gap-2 mb-2">
-                                                                <p className="font-bold text-primary-600 dark:text-primary-400 text-lg capitalize">
-                                                                    {item.act_type}
-                                                                </p>
-                                                                {item.act_number && (
-                                                                    <span className="font-medium text-slate-700 dark:text-slate-300">
-                                                                        n. {item.act_number}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex flex-wrap gap-2 text-sm text-slate-500 items-center">
-                                                                <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 px-2 py-1 rounded-lg text-xs font-medium">
-                                                                    Art. {item.article}
-                                                                </span>
-                                                                {item.date && (
-                                                                    <span className="text-slate-500 dark:text-slate-400">
-                                                                        del {item.date}
-                                                                    </span>
-                                                                )}
+                                                        {/* bare-button: the row's title, stretched over the row (A6). */}
+                                                        <button
+                                                            type="button"
+                                                            data-history-open
+                                                            onClick={() => handleItemClick(item)}
+                                                            className="flex-1 block text-left focus-visible:outline-none after:absolute after:inset-0 after:content-['']"
+                                                        >
+                                                            {/* The norm as it is cited («art. 2043 c.c.»), then the act's name and when it was read (B8). */}
+                                                            <span className="block font-serif text-lg leading-snug text-slate-900 dark:text-slate-50">
+                                                                {historyLabel(item)}
+                                                            </span>
+                                                            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[13px] text-slate-600 dark:text-slate-400">
+                                                                <span>{actHeadingOf(item)}</span>
                                                                 {item.created_at && (
                                                                     <span
-                                                                        className="text-xs text-slate-400 dark:text-slate-500"
+                                                                        className="text-xs text-slate-500 dark:text-slate-400"
                                                                         title={new Date(item.created_at).toLocaleString('it-IT')}
                                                                     >
                                                                         {formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: it })}
                                                                     </span>
                                                                 )}
-                                                            </div>
-                                                        </div>
+                                                            </span>
+                                                        </button>
 
-                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-[color,background-color,border-color,opacity]">
+                                                        <div className="relative z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-[color,background-color,border-color,opacity]">
                                                             {/* Menu azioni */}
-                                                            <div className="relative" ref={openMenu === item.id ? menuRef : null}>
-                                                                <button
-                                                                    id={idx === 0 ? 'tour-history-actions' : undefined}
-                                                                    onClick={(e) => handleToggleMenu(e, item.id)}
-                                                                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                                                            <div id={idx === 0 ? 'tour-history-actions' : undefined}>
+                                                                <MenuButton
+                                                                    label={`Altre azioni su ${historyLabel(item)}`}
                                                                     title="Altre azioni"
+                                                                    items={historyMenuItems(item)}
+                                                                    placement="auto"
+                                                                    menuClassName="max-h-80"
+                                                                    triggerClassName="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700"
                                                                 >
-                                                                    <MoreVertical size={16} />
-                                                                </button>
-
-                                                                {/* Dropdown menu — portaled to body so it escapes parent overflow
-                                                                    AND parent opacity (the row's group-hover wrapper has opacity-0
-                                                                    when not hovered, which would inherit through fixed children).
-                                                                    onMouseDown stopPropagation so click-outside doesn't fire when
-                                                                    the user clicks inside the portaled menu (no longer a DOM
-                                                                    descendant of menuRef). */}
-                                                                {openMenu === item.id && menuPos && createPortal(
-                                                                    <div
-                                                                        onMouseDown={(e) => e.stopPropagation()}
-                                                                        style={{
-                                                                            position: 'fixed',
-                                                                            top: menuPos.top,
-                                                                            bottom: menuPos.bottom,
-                                                                            right: menuPos.right,
-                                                                            zIndex: 50,
-                                                                        }}
-                                                                        className="w-56 bg-white dark:bg-slate-800 rounded-lg shadow-md border border-slate-200 dark:border-slate-700 py-1"
-                                                                    >
-                                                                        {/* QuickNorm */}
-                                                                        <button
-                                                                            id={idx === 0 ? 'tour-history-quick-norm' : undefined}
-                                                                            onClick={(e) => handleAddQuickNorm(e, item)}
-                                                                            className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                                                                        >
-                                                                            <Zap size={16} className="text-amber-500" />
-                                                                            <span>Aggiungi a norme rapide</span>
-                                                                        </button>
-
-                                                                        {/* Divider */}
-                                                                        <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
-
-                                                                        {/* Dossier */}
-                                                                        <div className="relative">
-                                                                            <button
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation();
-                                                                                    setShowDossierList(showDossierList === item.id ? null : item.id);
-                                                                                }}
-                                                                                className="w-full px-3 py-2 text-left text-sm flex items-center justify-between hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-                                                                            >
-                                                                                <span className="flex items-center gap-2">
-                                                                                    <FolderPlus size={16} className="text-primary-500" />
-                                                                                    <span>Aggiungi a dossier</span>
-                                                                                </span>
-                                                                                <ArrowRight size={14} className="text-slate-400" />
-                                                                            </button>
-
-                                                                            {/* Sub-menu dossier */}
-                                                                            {showDossierList === item.id && (
-                                                                                <div className="absolute left-full top-0 ml-1 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-md border border-slate-200 dark:border-slate-700 py-1 max-h-64 overflow-y-auto">
-                                                                                    {dossiers.length === 0 ? (
-                                                                                        <p className="px-3 py-2 text-sm text-slate-500">Nessun dossier</p>
-                                                                                    ) : (
-                                                                                        dossiers.map(dossier => (
-                                                                                            <button
-                                                                                                key={dossier.id}
-                                                                                                onClick={(e) => handleAddToDossier(e, item, dossier.id)}
-                                                                                                className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors truncate"
-                                                                                            >
-                                                                                                {dossier.title}
-                                                                                            </button>
-                                                                                        ))
-                                                                                    )}
-                                                                                    <div className="border-t border-slate-200 dark:border-slate-700 mt-1 pt-1">
-                                                                                        <button
-                                                                                            onClick={(e) => handleCreateDossierAndAdd(e, item)}
-                                                                                            className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors"
-                                                                                        >
-                                                                                            <Plus size={14} />
-                                                                                            <span>Nuovo dossier...</span>
-                                                                                        </button>
-                                                                                    </div>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-
-                                                                        {/* Divider */}
-                                                                        <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
-
-                                                                        {/* Elimina */}
-                                                                        <button
-                                                                            onClick={(e) => {
-                                                                                handleDeleteItem(e, item.id);
-                                                                                closeMenu();
-                                                                            }}
-                                                                            className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                                                                        >
-                                                                            <Trash2 size={16} />
-                                                                            <span>Rimuovi dalla cronologia</span>
-                                                                        </button>
-                                                                    </div>,
-                                                                    document.body
-                                                                )}
+                                                                    <MoreVertical size={16} aria-hidden />
+                                                                </MenuButton>
                                                             </div>
 
-                                                            <div className="p-2 bg-primary-50 dark:bg-primary-900/20 rounded-lg text-primary-500 pointer-events-none">
+                                                            <div className="p-2 bg-primary-50 dark:bg-primary-900/20 rounded-md text-primary-500 pointer-events-none">
                                                                 <ArrowRight size={18} />
                                                             </div>
                                                         </div>
@@ -673,29 +504,28 @@ export function HistoryView() {
                             ))}
                         </div>
                     )}
+                    </Arrive>
                 </div>
             </div>
 
-            {/* Feedback toast */}
-            {feedback && (
-                <div className={cn(
-                    "fixed bottom-4 right-4 md:right-4 left-4 md:left-auto px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-bottom-2 z-50",
-                    feedback.type === 'success'
-                        ? "bg-green-500 text-white"
-                        : "bg-red-500 text-white"
-                )}>
-                    <Check size={16} />
-                    <span className="text-sm font-medium">{feedback.message}</span>
-                </div>
-            )}
+            {/* Feedback: the app's notifications (K1a). */}
+            <Toast
+                message={feedback?.message ?? ''}
+                type={feedback?.type ?? 'success'}
+                isVisible={feedback !== null}
+                onClose={() => setFeedback(null)}
+                duration={2000}
+            />
 
             {/* Clear-all confirmation */}
             <ConfirmDialog
                 open={clearConfirmOpen}
+                origin={clearFrom}
                 variant="danger"
                 title="Svuotare la cronologia?"
-                message="Tutte le ricerche salvate verranno rimosse. I dossier e i segnalibri non saranno toccati."
+                message="Tutte le ricerche salvate verranno rimosse. Le pratiche e i segnalibri non saranno toccati."
                 confirmLabel="Svuota"
+                focusCancel
                 onConfirm={handleConfirmClear}
                 onCancel={() => setClearConfirmOpen(false)}
             />
@@ -703,24 +533,23 @@ export function HistoryView() {
             {/* New-dossier inline modal */}
             {createDossierFor && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-lg w-full max-w-md p-5">
+                    <div className="bg-white dark:bg-slate-900 rounded-[8px] shadow-lg w-full max-w-md p-5">
                         <div className="flex items-start justify-between mb-3">
                             <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                                Crea nuovo dossier
+                                Crea nuova pratica
                             </h2>
-                            <button
+                            <IconButton
                                 onClick={() => { setCreateDossierFor(null); setNewDossierTitle(''); }}
-                                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded"
                                 aria-label="Chiudi"
-                            >
-                                <X size={18} />
-                            </button>
+                                icon={<X aria-hidden />}
+                            />
                         </div>
                         <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-                            La norma verrà aggiunta automaticamente al nuovo dossier.
+                            La norma verrà aggiunta automaticamente alla nuova pratica.
                         </p>
-                        <input
+                        <Input
                             type="text"
+                            aria-label="Nome della pratica"
                             autoFocus
                             value={newDossierTitle}
                             onChange={(e) => setNewDossierTitle(e.target.value)}
@@ -728,24 +557,16 @@ export function HistoryView() {
                                 if (e.key === 'Enter' && newDossierTitle.trim()) handleConfirmCreateDossier();
                                 if (e.key === 'Escape') { setCreateDossierFor(null); setNewDossierTitle(''); }
                             }}
-                            placeholder="Nome del dossier"
+                            placeholder="Nome della pratica"
                             maxLength={120}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                         />
                         <div className="mt-4 flex justify-end gap-2">
-                            <button
-                                onClick={() => { setCreateDossierFor(null); setNewDossierTitle(''); }}
-                                className="px-3 py-1.5 text-sm bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-700"
-                            >
+                            <Button variant="secondary" onClick={() => { setCreateDossierFor(null); setNewDossierTitle(''); }}>
                                 Annulla
-                            </button>
-                            <button
-                                onClick={handleConfirmCreateDossier}
-                                disabled={!newDossierTitle.trim()}
-                                className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
+                            </Button>
+                            <Button onClick={handleConfirmCreateDossier} disabled={!newDossierTitle.trim()}>
                                 Crea e aggiungi
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 </div>

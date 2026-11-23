@@ -14,7 +14,7 @@ import { Z_INDEX } from '../../../constants/zIndex';
 import { parseLegalCitation, isSearchReady, formatParsedCitation, toSearchParams } from '../../../utils/citationParser';
 import { parseItalianDate } from '../../../utils/dateUtils';
 import { versionTabSuffix } from '../../../utils/versionDisplay';
-import { practiceArticleKey } from '../../../utils/practice';
+import { corpusPractices, practiceArticleKey } from '../../../utils/practice';
 import { useIsDesktop } from '../../../hooks/useIsDesktop';
 import { useDialogFocus } from '../../ui/useDialogFocus';
 import { FOCUS_RING } from '../../../constants/interactions';
@@ -59,7 +59,7 @@ function ArticleSelectorPanel({ side }: ArticleSelectorPanelProps) {
   const [version, setVersion] = useState<'vigente' | 'originale' | 'data'>('vigente');
   const [versionDate, setVersionDate] = useState('');
 
-  const practices = useAppStore((s) => s.practices);
+  const practices = corpusPractices(useAppStore((s) => s.practices));
 
   // Smart citation parsing (same as CommandPalette)
   const parsedCitation = useMemo(() => {
@@ -214,19 +214,19 @@ function ArticleSelectorPanel({ side }: ArticleSelectorPanelProps) {
             className={cn(
               "flex-1 flex items-center justify-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
               activeTab === 'available'
-                ? "bg-white dark:bg-slate-600 text-slate-900 dark:text-white shadow-sm"
+                ? "bg-white text-slate-900 shadow-sm dark:bg-toga-400 dark:hover:bg-toga-300 dark:text-ink-950"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             )}
           >
             <Layers size={14} />
-            Dalle pratiche ({availableArticles.length})
+            Dal tavolo ({availableArticles.length})
           </button>
           <button
             onClick={() => setActiveTab('search')}
             className={cn(
               "flex-1 flex items-center justify-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
               activeTab === 'search'
-                ? "bg-white dark:bg-slate-600 text-slate-900 dark:text-white shadow-sm"
+                ? "bg-white text-slate-900 shadow-sm dark:bg-toga-400 dark:hover:bg-toga-300 dark:text-ink-950"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             )}
           >
@@ -285,8 +285,8 @@ function ArticleSelectorPanel({ side }: ArticleSelectorPanelProps) {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="es. art 2043 cc, legge 241/1990 art 1..."
-                  className="w-full pl-9 pr-4 py-2.5 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  placeholder="es. art 2043 cc, legge 241/1990 art 1…"
+                  className="w-full pl-9 pr-4 py-2.5 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 focus:border-primary-500 outline-none"
                   autoFocus
                 />
                 {isSearching && (
@@ -316,7 +316,7 @@ function ArticleSelectorPanel({ side }: ArticleSelectorPanelProps) {
                       disabled={isSearching || (version === 'data' && !versionDate)}
                       className="px-3 py-1 text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-colors disabled:opacity-50"
                     >
-                      {isSearching ? 'Cercando...' : 'Cerca'}
+                      {isSearching ? 'Cercando…' : 'Cerca'}
                     </button>
                   ) : (
                     <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase">
@@ -340,7 +340,7 @@ function ArticleSelectorPanel({ side }: ArticleSelectorPanelProps) {
                   className={cn(
                     "flex-1 px-3 py-2 text-xs font-bold rounded-lg transition-[color,background-color,border-color,box-shadow]",
                     version === 'vigente'
-                      ? "bg-primary-500 text-white shadow-sm"
+                      ? "bg-primary-500 text-white shadow-sm dark:bg-toga-400 dark:hover:bg-toga-300 dark:text-ink-950"
                       : "bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600"
                   )}
                 >
@@ -362,7 +362,7 @@ function ArticleSelectorPanel({ side }: ArticleSelectorPanelProps) {
                   className={cn(
                     "flex-1 px-3 py-2 text-xs font-bold rounded-lg transition-[color,background-color,border-color,box-shadow] flex items-center justify-center gap-1",
                     version === 'data'
-                      ? "bg-primary-500 text-white shadow-sm"
+                      ? "bg-primary-500 text-white shadow-sm dark:bg-toga-400 dark:hover:bg-toga-300 dark:text-ink-950"
                       : "bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600"
                   )}
                 >
@@ -380,7 +380,7 @@ function ArticleSelectorPanel({ side }: ArticleSelectorPanelProps) {
                     value={versionDate}
                     onChange={(e) => setVersionDate(e.target.value)}
                     placeholder="es. 01/01/2020 o 2020"
-                    className="flex-1 px-3 py-2 text-sm border border-primary-200 dark:border-primary-800 rounded-lg bg-white dark:bg-slate-700 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                    className="flex-1 px-3 py-2 text-sm border border-primary-200 dark:border-primary-800 rounded-lg bg-white dark:bg-slate-700 focus:border-primary-500 outline-none"
                   />
                 </div>
               )}

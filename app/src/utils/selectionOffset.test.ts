@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { alignOffsetToTrimmedText, getSelectionAnchor, plainOffsetAt } from './selectionOffset';
+import { alignOffsetToTrimmedText, getSelectionAnchor, plainOffsetAt, rangeFromPlainOffsets, READER_SLOT_ATTR } from './selectionOffset';
+import { collectSearchableText } from './findInText';
 
 describe('alignOffsetToTrimmedText', () => {
   it('shifts the offset past leading whitespace', () => {
@@ -105,5 +106,90 @@ describe('getSelectionAnchor', () => {
     expect(plainOffsetAt(root, other.firstChild!.firstChild!, 0)).toBe(-1);
     root.remove();
     other.remove();
+  });
+});
+
+describe('rangeFromPlainOffsets (D7b: a stored anchor selected again)', () => {
+  const root = () => {
+    const div = document.createElement('div');
+    // Two blocks and a sign with no text, as the renderer draws them: the projection is «Primo comma.Secondo comma.».
+    div.innerHTML = '<div class="vlx-b">Primo <mark>comma</mark>.</div><span class="vlx-sign"></span><div class="vlx-b">Secondo comma.</div>';
+    document.body.append(div);
+    return div;
+  };
+
+  it('is the inverse of plainOffsetAt, across marks and blocks', () => {
+    const r = root();
+    for (const [start, end] of [[0, 5], [6, 11], [6, 20], [12, 26], [3, 4]]) {
+      const range = rangeFromPlainOffsets(r, start, end)!;
+      expect(range.toString()).toBe('Primo comma.Secondo comma.'.slice(start, end));
+      expect(plainOffsetAt(r, range.startContainer, range.startOffset)).toBe(start);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      expect(getSelectionAnchor(r, selection)).toEqual({ startOffset: start, text: 'Primo comma.Secondo comma.'.slice(start, end).trim() });
+    }
+    r.remove();
+  });
+
+  it('is null for a span that does not fit the text', () => {
+    const r = root();
+    expect(rangeFromPlainOffsets(r, 20, 40)).toBeNull();
+    expect(rangeFromPlainOffsets(r, 5, 5)).toBeNull();
+    expect(rangeFromPlainOffsets(r, -1, 3)).toBeNull();
+    r.remove();
+  });
+});
+
+// LC142: a space open in the text (`BlockSpace`) sits between two blocks, inside the text root. Its words are the page's,
+// not the article's: no offset, no find and no copy counts them.
+describe('a space open in the text', () => {
+  const text = () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<div class="vlx-b">Il danno ingiusto.</div><div class="vlx-b">Obbliga al risarcimento.</div>';
+    document.body.replaceChildren(root);
+    return root;
+  };
+  const open = (root: HTMLElement) => {
+    const slot = document.createElement('div');
+    slot.setAttribute(READER_SLOT_ATTR, '');
+    slot.innerHTML = '<h2>Annotazioni</h2><p>Vedi Cass. 2020</p>';
+    root.firstElementChild!.after(slot);
+    return slot;
+  };
+  const select = (root: HTMLElement, from: Node, fromOffset: number, to: Node, toOffset: number) => {
+    const range = document.createRange();
+    range.setStart(from, fromOffset);
+    range.setEnd(to, toOffset);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return getSelectionAnchor(root, selection);
+  };
+
+  it('leaves the anchors after it where they are', () => {
+    const root = text();
+    const second = root.children[1].firstChild!;
+    const closed = select(root, second, 0, second, 7);
+    open(root);
+    expect(select(root, second, 0, second, 7)).toEqual(closed);
+    expect(plainOffsetAt(root, second, 0)).toBe('Il danno ingiusto.'.length);
+    expect(rangeFromPlainOffsets(root, 18, 25)?.toString()).toBe('Obbliga');
+  });
+
+  it('keeps its words out of a selection across it, and gives none for words inside it', () => {
+    const root = text();
+    const slot = open(root);
+    const first = root.children[0].firstChild!;
+    const second = root.children[2].firstChild!;
+    expect(select(root, first, 9, second, 7)).toEqual({ text: 'ingiusto.Obbliga', startOffset: 9 });
+    expect(select(root, slot.querySelector('p')!.firstChild!, 0, slot.querySelector('p')!.firstChild!, 4)).toBeNull();
+    expect(plainOffsetAt(root, slot.querySelector('p')!.firstChild!, 0)).toBe(-1);
+  });
+
+  it('is not searched', () => {
+    const root = text();
+    open(root);
+    expect(collectSearchableText(root).text).not.toMatch(/Cass|Annotazioni/);
   });
 });

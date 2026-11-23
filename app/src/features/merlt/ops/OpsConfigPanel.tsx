@@ -79,7 +79,7 @@ export function OpsConfigPanel() {
       const res = await getOpsConfig();
       setState({ status: 'success', params: res.params });
       setAcks({});
-      setToast({ message: 'Motore riavviato — modifiche applicate', type: 'success' });
+      setToast({ message: 'Motore riavviato: modifiche applicate', type: 'success' });
     } catch (err) {
       console.error('OpsConfigPanel: failed to reinitialize engine:', err);
       setToast({ message: 'Riavvio del motore non riuscito.', type: 'error' });
@@ -136,7 +136,7 @@ export function OpsConfigPanel() {
             disabled={reinitializing}
             className={cn(
               'flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+              'focus-visible:outline-none ',
               reinitializing
                 ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500'
                 : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800',
@@ -195,7 +195,7 @@ function RuntimeRow({
           onChange={(e) => onCommit(e.target.value)}
           className={cn(
             'mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+            'focus-visible:outline-none ',
             'dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200',
           )}
         >
@@ -207,7 +207,7 @@ function RuntimeRow({
         </select>
         {ack === 'saved' && (
           <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
-            applicato — attivo dalla prossima domanda
+            applicato, attivo dalla prossima domanda
           </p>
         )}
       </div>
@@ -234,7 +234,7 @@ function RuntimeRow({
           }}
           className={cn(
             'flex cursor-pointer items-center justify-between rounded-lg border p-3',
-            'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+            'transition-colors focus-visible:outline-none ',
             checked
               ? 'border-primary-300 bg-primary-50 dark:border-primary-800 dark:bg-primary-950/20'
               : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800',
@@ -247,20 +247,20 @@ function RuntimeRow({
           <span
             className={cn(
               'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
-              checked ? 'bg-primary-600' : 'bg-slate-300 dark:bg-slate-600',
+              checked ? 'bg-primary-600 dark:bg-toga-400' : 'bg-slate-300 dark:bg-slate-600',
             )}
           >
             <span
               className={cn(
                 'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
-                checked ? 'translate-x-4' : 'translate-x-0.5',
+                checked ? 'translate-x-4 dark:bg-ink-950' : 'translate-x-0.5',
               )}
             />
           </span>
         </div>
         {ack === 'saved' && (
           <p className="text-xs text-emerald-600 dark:text-emerald-400">
-            applicato — attivo dalla prossima domanda
+            applicato, attivo dalla prossima domanda
           </p>
         )}
       </div>
@@ -301,7 +301,7 @@ function RuntimeRow({
       />
       {ack === 'saved' && (
         <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
-          applicato — attivo dalla prossima domanda
+          applicato, attivo dalla prossima domanda
         </p>
       )}
     </div>
@@ -341,7 +341,7 @@ function EngineStateRow({
           onChange={(e) => onCommit(e.target.value)}
           className={cn(
             'mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+            'focus-visible:outline-none ',
             'dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200',
           )}
         >
@@ -353,7 +353,7 @@ function EngineStateRow({
         </select>
         {ack === 'pending-restart' && (
           <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-            in attesa di riavvio — riavvia il motore per applicare
+            in attesa di riavvio: riavvia il motore per applicare
           </p>
         )}
       </div>
@@ -383,7 +383,7 @@ function EngineStateRow({
           }}
           className={cn(
             'flex cursor-pointer items-center justify-between rounded-lg border p-3',
-            'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+            'transition-colors focus-visible:outline-none ',
             'border-slate-200 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800',
           )}
         >
@@ -396,13 +396,13 @@ function EngineStateRow({
             <span
               className={cn(
                 'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
-                checked ? 'bg-primary-600' : 'bg-slate-300 dark:bg-slate-600',
+                checked ? 'bg-primary-600 dark:bg-toga-400' : 'bg-slate-300 dark:bg-slate-600',
               )}
             >
               <span
                 className={cn(
                   'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
-                  checked ? 'translate-x-4' : 'translate-x-0.5',
+                  checked ? 'translate-x-4 dark:bg-ink-950' : 'translate-x-0.5',
                 )}
               />
             </span>
@@ -410,7 +410,7 @@ function EngineStateRow({
         </div>
         {ack === 'pending-restart' && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
-            in attesa di riavvio — riavvia il motore per applicare
+            in attesa di riavvio: riavvia il motore per applicare
           </p>
         )}
       </div>
@@ -448,7 +448,7 @@ function EngineStateRow({
       />
       {ack === 'pending-restart' && (
         <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-          in attesa di riavvio — riavvia il motore per applicare
+          in attesa di riavvio: riavvia il motore per applicare
         </p>
       )}
     </div>

@@ -36,6 +36,7 @@ vi.mock('../../../../plugins/PluginSlot', () => ({
     return null;
   },
 }));
+vi.mock('../../rassegne/RassegnePanel', () => ({ RassegnePanel: () => <div data-testid="rassegne-panel" /> }));
 // The real comparison state, with the call to open it recorded.
 vi.mock('../../../../hooks/useCompare', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../hooks/useCompare')>();
@@ -208,11 +209,13 @@ describe('ArticleTabContent — a past text is a reading', () => {
       expect(button).toBeDisabled();
       expect(button.title).toContain(LOCKED);
     }
-    const menu = openMore();
-    for (const name of ['Glosse sull’articolo', 'Aggiungi alle norme rapide']) {
-      expect(entry(menu, name)).toBeDisabled();
-      expect(entry(menu, name)).toHaveTextContent(LOCKED);
+    for (const glosses of screen.getAllByRole('button', { name: 'Glosse' })) {
+      expect(glosses).toBeDisabled();
+      expect(glosses.title).toContain(LOCKED);
     }
+    const menu = openMore();
+    expect(entry(menu, 'Aggiungi alle norme rapide')).toBeDisabled();
+    expect(entry(menu, 'Aggiungi alle norme rapide')).toHaveTextContent(LOCKED);
   });
 
   it('shows nothing of Brocardi, even when an older answer carried it (D-078)', () => {
@@ -222,10 +225,10 @@ describe('ArticleTabContent — a past text is a reading', () => {
     expect(screen.queryByText(/Brocardi|Nemo iudex|La ratio|Una massima|Massime/)).not.toBeInTheDocument();
   });
 
-  it('keeps «Giurisprudenza» on a past text, with the Massimario slot told it is one', async () => {
+  it('keeps «Giurisprudenza» on a past text, with the Massimario\'s panel (the reviews cite the article, not a version)', async () => {
     show(article(MIDDLE, PAST));
     fireEvent.click(screen.getByRole('button', { name: 'Giurisprudenza' }));
-    expect(slotCalls.find((c) => c.slot === 'article_case_law')?.props).toMatchObject({ isHistorical: true });
+    expect(screen.getByTestId('rassegne-panel')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cerca nell’archivio della Cassazione' })).toBeInTheDocument();
   });
 
@@ -326,23 +329,61 @@ describe('ArticleTabContent — the way back and the way on', () => {
   it('opens the dialog from the chip and asks for a text on a day, keeping the annex', async () => {
     show(article(CURRENT, { versione: 'vigente', data_versione: '' }));
     fireEvent.click(screen.getByRole('button', { name: 'In vigore dal 28 dicembre 2025' }));
-    const dialog = screen.getByRole('dialog', { name: 'Testo alla data' });
+    const dialog = screen.getByRole('region', { name: 'Testo alla data' });
     fireEvent.change(within(dialog).getByLabelText('Data'), { target: { value: '2007-12-29' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /Mostra il testo/ }));
     expect(triggerSearch).toHaveBeenCalledWith({
       act_type: 'codice civile', act_number: '262', date: '1942-03-16', article: '1284',
       version: 'vigente', version_date: '2007-12-29', annex: '2',
     });
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument()); // it fades out
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Testo alla data' })).not.toBeInTheDocument()); // it fades out
   });
 
   it('starts the dialog from the day a shared link wrote in words', async () => {
     show(article(MIDDLE, { versione: 'vigente', data_versione: '12 ottobre 2007' }));
     fireEvent.click(screen.getByRole('button', { name: 'Testo storico · dal 25 dicembre 2003 al 29 dicembre 2007' }));
-    const dialog = screen.getByRole('dialog', { name: 'Testo alla data' });
+    const dialog = screen.getByRole('region', { name: 'Testo alla data' });
     expect(within(dialog).getByLabelText('Data')).toHaveValue('2007-10-12');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Annulla' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Testo alla data' })).not.toBeInTheDocument());
+  });
+
+  // LC139 (L-73): opened from the «⋯» menu, the space under the toolbar takes the focus; Esc gives it back to «⋯».
+  it.each(['Testo alla data…', 'Copia$', 'Esporta…'])('opens «%s» from «⋯» in the page, and Esc gives the focus back to «⋯»', async (item) => {
+    show(article());
+    const menu = openMore();
+    const trigger = screen.getAllByRole('button', { name: 'Altre azioni sull’articolo' })[1];
+    fireEvent.click(entry(menu, item));
+    const region = await screen.findByRole('region', { name: { 'Testo alla data…': 'Testo alla data', 'Copia$': 'Copia contenuto', 'Esporta…': 'Esporta l’articolo' }[item] });
+    expect(region).toHaveFocus();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.keyDown(region, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('region', { name: /Testo alla data|Copia contenuto|Esporta l’articolo/ })).toBeNull());
+    expect(trigger).toHaveFocus();
+  });
+
+  // LC139: a day the article did not exist on. The row read goes with the label pressed (the host puts the answer in
+  // its place): the focus goes to the notice, never to BODY; the label keeps the day and the way back is offered.
+  it('gives the focus to the «non esisteva» notice when the row asked from goes', async () => {
+    const first = show(article(CURRENT, { versione: 'vigente', data_versione: '' }));
+    const chip = screen.getByRole('button', { name: /In vigore/ });
+    chip.focus();
+    fireEvent.click(chip);
+    const space = screen.getByRole('region', { name: 'Testo alla data' });
+    fireEvent.change(within(space).getByLabelText('Data'), { target: { value: '1935-01-01' } });
+    fireEvent.click(within(space).getByRole('button', { name: /Mostra il testo/ }));
+    expect(triggerSearch).toHaveBeenCalled();
+    // The answer comes: the row asked from is replaced, its label gone with it.
+    first.unmount();
+    expect(document.activeElement).toBe(document.body);
+    show(article(NOT_YET, { versione: 'vigente', data_versione: '1935-01-01' }));
+    const notice = screen.getByRole('status');
+    expect(notice).toHaveTextContent('Questo articolo non esisteva al 1° gennaio 1935.');
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toContainElement(notice);
+    expect(screen.getByRole('button', { name: 'Al 1° gennaio 1935 l’articolo non esisteva' })).toBeInTheDocument();
+    fireEvent.click(within(notice).getByRole('button', { name: 'Vai al testo attuale' }));
+    expect(triggerSearch.mock.calls.at(-1)?.[0]).toMatchObject({ version: 'vigente' });
   });
 
   it('refuses an act of the Union in the dialog', () => {
@@ -375,13 +416,13 @@ describe('ArticleTabContent — an article that did not exist yet', () => {
   it('offers to pick another date', () => {
     show(notYet());
     fireEvent.click(screen.getByRole('button', { name: 'Scegli un’altra data' }));
-    expect(screen.getByRole('dialog', { name: 'Testo alla data' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Testo alla data' })).toBeInTheDocument();
   });
 
   it('switches off copying and the dossier', () => {
     show(notYet());
     const reason = 'Non disponibile: l’articolo non esisteva a quella data';
-    screen.getAllByRole('button', { name: 'Al dossier' }).forEach((b) => {
+    screen.getAllByRole('button', { name: 'Alla pratica' }).forEach((b) => {
       expect(b).toBeDisabled();
       expect(b.title).toContain(reason);
     });
@@ -466,7 +507,7 @@ describe('ArticleTabContent — copying a past text', () => {
 
   it('does not let that version be copied or put in a dossier: it would leave the page as the article in force', () => {
     const { container } = show(article({ ...MIDDLE, request_in_window: false }, { versione: 'vigente', data_versione: '2010-01-01' }));
-    screen.getAllByRole('button', { name: 'Al dossier' }).forEach((b) => {
+    screen.getAllByRole('button', { name: 'Alla pratica' }).forEach((b) => {
       expect(b).toBeDisabled();
       expect(b.title).toContain(UNRELIABLE_REASON);
     });
@@ -484,7 +525,7 @@ describe('ArticleTabContent — copying a past text', () => {
   it('keeps copying on for a reliable past text (the control)', () => {
     show(article(MIDDLE, PAST));
     expect(copyButton()).toBeEnabled();
-    screen.getAllByRole('button', { name: 'Al dossier' }).forEach((b) => expect(b).toBeEnabled());
+    screen.getAllByRole('button', { name: 'Alla pratica' }).forEach((b) => expect(b).toBeEnabled());
   });
 
   it('does not export a past text, an unreliable one or a missing article either', () => {
@@ -596,11 +637,11 @@ describe('ArticleTabContent — "Confronta con..." names the version it compares
 
   it('labels a past text with its day, so it cannot pass for the text in force', () => {
     expect(compareLabel(article(MIDDLE, { versione: 'vigente', data_versione: '2007-12-29' })))
-      .toBe('art. 1284 c.c. — testo al 29/12/2007');
+      .toBe('art. 1284 c.c., testo al 29/12/2007');
   });
 
   it('labels the original text as such', () => {
     expect(compareLabel(article(MIDDLE, { versione: 'originale' })))
-      .toBe('art. 1284 c.c. — testo originale');
+      .toBe('art. 1284 c.c., testo originale');
   });
 });

@@ -19,6 +19,7 @@ import {
 } from '../decisions/decisionPdf';
 import { PDF_MARGIN, createPdfWriter, type PdfFont, type PdfWriter } from '../../../utils/pdfWriter';
 import { claudeMarkSentence } from '../../ui/claudeMarkSentence';
+import { notePlainText } from './noteMarkdown';
 import { EXCERPT_GAP, articleTextBetween, excerptParts, type ExcerptPart } from './pdfExcerpts';
 
 /**
@@ -87,9 +88,10 @@ export const PDF_NO_MARKS = 'Nessuna parte evidenziata o annotata';
 export const PDF_MARKS_UNAVAILABLE = 'Evidenziazioni e note non disponibili al momento';
 export const PDF_DECISIONS_HEADING = 'Giurisprudenza';
 
-// A note as the PDF prints it: its text, then who wrote it when an application did.
+// A note as the PDF prints it: its text, then who wrote it when an application did. An application's Markdown is printed
+// without its marks (D4): the writer sets one face per line, so bold inside a line is not drawn.
 function noteLine(note: DossierItem): string {
-  return note.createdBy ? `${String(note.data)} (${claudeMarkSentence(note.createdBy)})` : String(note.data);
+  return note.createdBy ? `${notePlainText(String(note.data))} (${claudeMarkSentence(note.createdBy)})` : String(note.data);
 }
 
 function plain(html: string): string {
@@ -323,10 +325,11 @@ function drawPdfDecision(w: PdfWriter, decision: PdfDecision): void {
 export async function writeDossierPdf(header: DossierPdfHeader, blocks: PdfBlock[]): Promise<jsPDF> {
   const JsPdf = await loadJsPdf();
   const doc = new JsPdf({ unit: 'pt', format: 'a4' });
-  const w = createPdfWriter(doc, { footerLeft: `${header.title} · VisuaLex` });
+  const w = createPdfWriter(doc, { footerLeft: `${header.title} · LexCraft` });
   const { ensureSpace, write } = w;
 
-  doc.setFillColor(30, 64, 175);
+  // Pietra's toga, the app's action colour (`--color-primary-600`, oklch(28.5% 0.004 84.6)): the old blue band was not Pietra (#445).
+  doc.setFillColor(43, 42, 40);
   doc.rect(0, 0, 595, 12, 'F');
   write(header.title, 22, 'bold', 28);
   write(`Fascicolo normativo · ${header.countsLine} · Esportato il ${header.exportedOn}`, 9, 'normal', 18, true);
@@ -365,7 +368,7 @@ export async function writeDossierPdf(header: DossierPdfHeader, blocks: PdfBlock
     w.y += 6;
     block.articles.forEach((article) => {
       ensureSpace(32);
-      const head = `${article.label}${article.rubrica ? ` — ${article.rubrica}` : ''}${article.versionLabel ? ` · ${article.versionLabel}` : ''}`;
+      const head = `${article.label}${article.rubrica ? ` · ${article.rubrica}` : ''}${article.versionLabel ? ` · ${article.versionLabel}` : ''}`;
       write(head, 11, 'bold', 15);
       article.notes.forEach((text) => write(`Nota: ${text}`, 9, 'italic', 12));
       if (article.marksUnavailable) write(PDF_MARKS_UNAVAILABLE, 9, 'italic', 12, true);

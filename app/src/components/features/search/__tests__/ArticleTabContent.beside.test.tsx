@@ -22,6 +22,7 @@ vi.mock('../../../../features/merlt/useMerltFeatures', () => ({
 vi.mock('../../../../features/devMode/useDevMode', () => ({ useDevMode: () => devMode() }));
 // The slots are named, so the test sees which are drawn.
 vi.mock('../../../../plugins/PluginSlot', () => ({ PluginSlot: ({ slot }: { slot: string }) => <div data-testid={`slot-${slot}`} /> }));
+vi.mock('../../rassegne/RassegnePanel', () => ({ RassegnePanel: () => <div data-testid="rassegne-panel" /> }));
 
 import { ArticleTabContent } from '../ArticleTabContent';
 import { FindWindow } from '../FindWindow';
@@ -111,10 +112,13 @@ function openMore(row: HTMLElement) {
 const entries = (menu: HTMLElement) => within(menu).getAllByRole('menuitem').map((item) => item.querySelector('span > span')?.textContent ?? item.textContent);
 
 describe('ArticleTabContent variant="beside" — the compact bar (T12)', () => {
-  it('shows exactly notes and highlights in words, and behind «⋯» discussions, the find window and copy', () => {
+  it('shows exactly notes, highlights, the highlighter, the note tool, «Glosse», and behind «⋯» the find window and copy', () => {
     const { container } = show('beside');
-    expect(labels(desktopRow(container))).toEqual(['Note', 'Evidenziazioni', 'Altre azioni sull’articolo']);
-    expect(entries(openMore(desktopRow(container)))).toEqual(['Glosse sull’articolo', 'Cerca nel testo', 'Copia']);
+    expect(labels(desktopRow(container))).toEqual([
+      'Note', 'Evidenziazioni', 'Evidenziatore (giallo)', 'Colore dell’evidenziatore', 'Cambia il significato dei colori',
+      'Strumento nota (nota personale)', 'Tipo di nota', 'Glosse', 'Altre azioni sull’articolo',
+    ]);
+    expect(entries(openMore(desktopRow(container)))).toEqual(['Cerca nel testo', 'Copia']);
   });
 
   it('«Cerca nel testo» opens the find window on that text, scoped to the window\'s practice', async () => {
@@ -122,7 +126,7 @@ describe('ArticleTabContent variant="beside" — the compact bar (T12)', () => {
     fireEvent.click(within(openMore(desktopRow(container))).getByRole('menuitem', { name: 'Cerca nel testo' }));
     expect(screen.getByRole('search')).toBeInTheDocument();
     expect(entries(openMore(desktopRow(container)))).toContain('Chiudi la ricerca nel testo');
-    expect(screen.getByRole('button', { name: 'Questa pratica' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Questo tavolo' })).toHaveAttribute('aria-pressed', 'true');
     // Registered under the practice, not under the window's own id.
     expect(findRootsFor(PRACTICE)).toHaveLength(1);
     expect(findRootsFor(WINDOW)).toHaveLength(0);
@@ -131,7 +135,7 @@ describe('ArticleTabContent variant="beside" — the compact bar (T12)', () => {
   it('a past text keeps the rules of describeVersion: discussions off', () => {
     const past: ArticleValidity = { state: 'historical', valid_from: '2003-12-25', valid_to: '2007-12-29', version_number: 3, act_updated: null, request_in_window: true };
     const { container } = show('beside', article({ validity: past, norma_data: { ...NORMA, data_versione: '2005-06-01', versione: 'originale' } }));
-    expect(within(openMore(desktopRow(container))).getByRole('menuitem', { name: /^Glosse sull’articolo/ })).toBeDisabled();
+    expect(within(desktopRow(container)).getByRole('button', { name: 'Glosse' })).toBeDisabled();
   });
 });
 
@@ -166,7 +170,7 @@ describe('ArticleTabContent variant="row" — everything as today', () => {
     devMode.mockReturnValue(true);
     const { container } = show('row', article(), vi.fn());
     const desktop = labels(desktopRow(container));
-    expect(desktop).toEqual(expect.arrayContaining(['Note', 'Al dossier', 'Altre azioni sull’articolo']));
+    expect(desktop).toEqual(expect.arrayContaining(['Note', 'Alla pratica', 'Altre azioni sull’articolo']));
     expect(entries(openMore(desktopRow(container)))).toEqual(expect.arrayContaining(['Aggiungi alle norme rapide', 'Esporta…', 'Testo alla data…']));
     // Study Mode: the act's «Studio» on a computer; the phone's «⋯» has it too.
     const phone = container.querySelector('div.flex.md\\:hidden') as HTMLElement;
@@ -193,11 +197,11 @@ describe('ArticleTabContent variant="row" — without the development mode', () 
     expect(brocardiLeft()).toBeNull();
   });
 
-  it('still draws the tracker, «Giurisprudenza» and the Massimario\'s slot', () => {
+  it('still draws the tracker, «Giurisprudenza» and the Massimario\'s panel', () => {
     show('row', article(), vi.fn());
     expect(screen.getByTestId('slot-article_content_after')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Giurisprudenza/ }));
-    expect(screen.getByTestId('slot-article_case_law')).toBeInTheDocument();
+    expect(screen.getByTestId('rassegne-panel')).toBeInTheDocument();
   });
 });
 

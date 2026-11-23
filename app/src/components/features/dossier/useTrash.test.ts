@@ -52,12 +52,12 @@ describe('useTrash', () => {
   it('asks for a dossier when the entry’s own is gone', async () => {
     appStore.setState({ dossiers: [] });
     list.mockResolvedValue([entry()]);
-    restoreCall.mockRejectedValue({ status: 409, message: 'Il dossier non esiste più: scegli dove ripristinare.' });
+    restoreCall.mockRejectedValue({ status: 409, message: 'La pratica non esiste più: scegli dove ripristinare.' });
     const { result } = renderHook(() => useTrash());
     await waitFor(() => expect(result.current.entries).toHaveLength(1));
     let outcome;
     await act(async () => { outcome = await result.current.restore(entry()); });
-    expect(outcome).toEqual({ kind: 'needs-target', message: 'Il dossier non esiste più: scegli dove ripristinare.' });
+    expect(outcome).toEqual({ kind: 'needs-target', message: 'La pratica non esiste più: scegli dove ripristinare.' });
   });
 
   it('says the trash is out of reach when it cannot be read', async () => {
@@ -76,6 +76,34 @@ describe('useTrash', () => {
     await act(async () => { await result.current.purge(entry()); });
     expect(purgeCall).toHaveBeenCalledWith('t1');
     expect(result.current.entries).toEqual([]);
+  });
+});
+
+describe('useTrash — courses of «Percorsi»', () => {
+  const module = entry({ id: 'tm', kind: 'LINGO_CORSO_MODULO', dossierId: null, label: 'Modulo · Corso', cardCount: 2 });
+
+  it('a module whose course is gone stays in the trash, with the server\'s reason', async () => {
+    list.mockResolvedValue([module]);
+    restoreCall.mockRejectedValue({ status: 404, message: 'Il percorso di questo modulo non c’è più.' });
+    const { result } = renderHook(() => useTrash());
+    await waitFor(() => expect(result.current.entries).toHaveLength(1));
+    let outcome;
+    await act(async () => { outcome = await result.current.restore(module); });
+    expect(outcome).toEqual({ kind: 'failed', message: 'Il percorso di questo modulo non c’è più.' });
+    expect(result.current.entries).toHaveLength(1);
+  });
+
+  it('a course\'s entry the trash no longer has is dropped, and a restored course has the cards read again', async () => {
+    list.mockResolvedValueOnce([module]).mockResolvedValueOnce([]);
+    restoreCall.mockRejectedValueOnce({ status: 404, message: 'Elemento del cestino non trovato.' });
+    const { result } = renderHook(() => useTrash());
+    await waitFor(() => expect(result.current.entries).toHaveLength(1));
+    let outcome;
+    await act(async () => { outcome = await result.current.restore(module); });
+    expect(outcome).toEqual({ kind: 'failed', message: GONE_FROM_TRASH });
+    restoreCall.mockResolvedValueOnce({ dossierId: null });
+    await act(async () => { await result.current.restore(entry({ id: 'tc', kind: 'LINGO_CORSO', dossierId: null })); });
+    expect(invalidateArticleCards).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -109,7 +137,7 @@ describe('useTrash — what can go wrong', () => {
     await waitFor(() => expect(result.current.entries).toHaveLength(1));
     let outcome;
     await act(async () => { outcome = await result.current.restore(entry(), 'd2'); });
-    expect(outcome).toEqual({ kind: 'needs-target', message: 'Il dossier scelto non esiste più: scegline un altro.' });
+    expect(outcome).toEqual({ kind: 'needs-target', message: 'La pratica scelta non esiste più: scegline un’altra.' });
     expect(result.current.entries).toHaveLength(1);
   });
 

@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReadingToolbar, type ReadingToolbarProps } from './ReadingToolbar';
+import { StatusLineEnd } from './statusLineEnd';
 import { NOT_YET_REASON, READ_ONLY_REASON, UNRELIABLE_REASON } from '../../../utils/versionDisplay';
+import { appStore } from '../../../store/useAppStore';
+// Impostazioni is a page (LC84): the gear opens it at «Significato dei colori» (`#colori`).
+const openSettings = vi.hoisted(() => vi.fn());
+vi.mock('../settings/settingsRoute', () => ({ useOpenSettings: () => openSettings }));
 
 function setup(over: Partial<ReadingToolbarProps> = {}) {
     const props: ReadingToolbarProps = {
@@ -102,29 +108,47 @@ describe('ReadingToolbar — one line beside the text', () => {
 });
 
 describe('ReadingToolbar — three tools in words, the rest behind «⋯» (R3)', () => {
-    it('on a computer: «Note», «Evidenziazioni», «Al dossier» and «⋯»', () => {
+    it('on a computer: «Note», «Evidenziazioni», the highlighter, the note tool, «Alla pratica» and «⋯»', () => {
         const { container } = setup({ notesCount: 2, highlightsCount: 3 });
         const names = within(desktopRow(container)).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
-        expect(names).toEqual(['Note, 2', 'Evidenziazioni, 3', 'Al dossier', 'Altre azioni sull’articolo']);
+        expect(names).toEqual([
+            'Note, 2', 'Evidenziazioni, 3', 'Evidenziatore (giallo)', 'Colore dell’evidenziatore', 'Cambia il significato dei colori',
+            'Strumento nota (nota personale)', 'Tipo di nota', 'Alla pratica', 'Glosse', 'Altre azioni sull’articolo',
+        ]);
         // The count is seen beside the word.
         expect(within(desktopRow(container)).getByRole('button', { name: 'Note, 2' })).toHaveTextContent('Note2');
     });
 
-    it('on a phone: «Al dossier» (its icon, named) and «⋯», 44 px each', () => {
+    it('on a phone: the highlighter\'s toggle, «Alla pratica» (icons, named) and «⋯», 44 px each', () => {
         const { container } = setup();
         const buttons = within(phoneRow(container)).getAllByRole('button');
         expect(buttons[0]).toHaveTextContent('');
         // Close together, the last one's target reaching into the page's margin: the status keeps one line at 320 (R3b).
         expect(phoneRow(container)).toHaveClass('-mr-3');
         expect(phoneRow(container)).not.toHaveClass('gap-1');
-        expect(buttons.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Al dossier', 'Altre azioni sull’articolo']);
-        buttons.forEach((b) => expect(b).toHaveClass('min-h-[44px]', 'min-w-[44px]'));
+        expect(buttons.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual(['Evidenziatore (giallo)', 'Alla pratica', 'Glosse', 'Altre azioni sull’articolo']);
+        buttons.forEach((b) => expect(b).toHaveClass('min-h-11', 'min-w-11'));
+    });
+
+    it('on a phone, the note tool\'s toggle shows while the tool is on, so it can be turned off where there is no Esc', () => {
+        appStore.setState({ readingTool: 'note' });
+        try {
+            const { container } = setup();
+            const buttons = within(phoneRow(container)).getAllByRole('button');
+            expect(buttons.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
+                'Evidenziatore (giallo)', 'Strumento nota (nota personale)', 'Alla pratica', 'Glosse', 'Altre azioni sull’articolo',
+            ]);
+            fireEvent.click(within(phoneRow(container)).getByRole('button', { name: 'Strumento nota (nota personale)' }));
+            expect(appStore.getState().readingTool).toBeNull();
+        } finally {
+            appStore.setState({ readingTool: null });
+        }
     });
 
     it('the visible tools are 36 px on a computer, neutral (no colour of their own)', () => {
         const { container } = setup();
         within(desktopRow(container)).getAllByRole('button').forEach((b) => {
-            expect(b).toHaveClass('md:h-9');
+            expect(b).toHaveClass('md:min-h-9');
             expect(b.className).not.toMatch(/(amber|purple|blue|emerald|violet)-/);
         });
     });
@@ -132,17 +156,24 @@ describe('ReadingToolbar — three tools in words, the rest behind «⋯» (R3)'
     it('the computer\'s «⋯» holds every other tool', () => {
         const { container } = setup({ find: { isOpen: false, onToggle: vi.fn() }, url: 'https://example.org/art' });
         expect(entryNames(openMore(desktopRow(container)))).toEqual([
-            'Aggiungi alle norme rapide', 'Glosse sull’articolo', 'Cerca nel testo', 'Copia',
+            'Aggiungi alle norme rapide', 'Cerca nel testo', 'Copia',
             'Condividi link', 'Esporta…', 'Testo alla data…', 'Confronta con…',
         ]);
     });
 
-    it('the phone\'s «⋯» adds Study Mode and the source, which its row does not show', () => {
-        const { container } = setup({ find: { isOpen: false, onToggle: vi.fn() }, url: 'https://example.org/art' });
-        expect(entryNames(openMore(phoneRow(container)))).toEqual([
-            'Aggiungi alle norme rapide', 'Glosse sull’articolo', 'Cerca nel testo', 'Copia', 'Modalità studio', 'Apri la fonte',
-            'Condividi link', 'Esporta…', 'Testo alla data…', 'Confronta con…',
+    it('the phone\'s «⋯» adds the notes, the highlights, Study Mode and the source, which its row does not show', () => {
+        const props = setup({ find: { isOpen: false, onToggle: vi.fn() }, url: 'https://example.org/art' });
+        const { container } = props;
+        const menu = openMore(phoneRow(container));
+        expect(entryNames(menu)).toEqual([
+            'Aggiungi alle norme rapide', 'Cerca nel testo', 'Copia', 'Note', 'Evidenziazioni', 'Modalità studio', 'Apri la fonte',
+            'Condividi link', 'Esporta…', 'Testo alla data…', 'Confronta con…', 'Cambia il significato dei colori',
         ]);
+        // LC139: their spaces open from here on a phone.
+        fireEvent.click(within(menu).getByRole('menuitem', { name: 'Note' }));
+        expect(props.onToggleNotes).toHaveBeenCalledTimes(1);
+        fireEvent.click(within(openMore(phoneRow(container))).getByRole('menuitem', { name: 'Evidenziazioni' }));
+        expect(props.onToggleHighlightsPeek).toHaveBeenCalledTimes(1);
     });
 
     it('runs each entry\'s action', () => {
@@ -153,8 +184,6 @@ describe('ReadingToolbar — three tools in words, the rest behind «⋯» (R3)'
         };
         run('Aggiungi alle norme rapide');
         expect(props.onToggleQuickNorm).toHaveBeenCalledTimes(1);
-        run('Glosse sull’articolo');
-        expect(props.onToggleDiscussion).toHaveBeenCalledTimes(1);
         run('Copia');
         expect(props.onOpenCopyModal).toHaveBeenCalledTimes(1);
         run('Condividi link');
@@ -181,7 +210,6 @@ describe('ReadingToolbar — three tools in words, the rest behind «⋯» (R3)'
         const { container } = setup({ isPinnedQuick: true, isDiscussionOpen: true });
         const names = entryNames(openMore(desktopRow(container)));
         expect(names).toContain('Togli dalle norme rapide');
-        expect(names).toContain('Chiudi le glosse');
     });
 
     it('opens the notes and the highlights from their words', () => {
@@ -189,10 +217,41 @@ describe('ReadingToolbar — three tools in words, the rest behind «⋯» (R3)'
         const row = desktopRow(props.container);
         fireEvent.click(within(row).getByRole('button', { name: 'Note' }));
         fireEvent.click(within(row).getByRole('button', { name: 'Evidenziazioni' }));
-        fireEvent.click(within(row).getByRole('button', { name: 'Al dossier' }));
+        fireEvent.click(within(row).getByRole('button', { name: 'Alla pratica' }));
         expect(props.onToggleNotes).toHaveBeenCalledTimes(1);
         expect(props.onToggleHighlightsPeek).toHaveBeenCalledTimes(1);
         expect(props.onOpenDossier).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('ReadingToolbar — «Glosse», a button of its own before «⋯» (LC74)', () => {
+    it('is out of «⋯», just before it on both rows, and toggles the margin', () => {
+        const props = setup();
+        for (const row of [desktopRow(props.container), phoneRow(props.container)]) {
+            const buttons = within(row).getAllByRole('button');
+            expect(buttons.at(-2)).toHaveAttribute('data-glosses-button');
+            expect(buttons.at(-2)).toHaveClass('vlx-hover-tile');
+            expect(entryNames(openMore(row)).some((name) => /glosse/i.test(name ?? ''))).toBe(false);
+        }
+        fireEvent.click(within(desktopRow(props.container)).getByRole('button', { name: 'Glosse' }));
+        expect(props.onToggleDiscussion).toHaveBeenCalledTimes(1);
+    });
+
+    it('carries the count: «Glosse 3» on a computer, the icon and the number on a phone, named «Glosse, 3» on both', () => {
+        const { container } = setup({ discussionCount: 3 });
+        expect(within(desktopRow(container)).getByRole('button', { name: 'Glosse, 3' })).toHaveTextContent('Glosse3');
+        const phone = within(phoneRow(container)).getByRole('button', { name: 'Glosse, 3' });
+        expect(phone).toHaveTextContent('3');
+        expect(phone).toHaveClass('min-h-11', 'min-w-11');
+    });
+
+    it('stays pressed while the margin is open', () => {
+        const closed = setup();
+        within(desktopRow(closed.container)).getAllByRole('button', { name: 'Glosse' }).forEach((b) => expect(b).toHaveAttribute('aria-pressed', 'false'));
+        closed.container.remove();
+        const { container } = setup({ isDiscussionOpen: true });
+        expect(within(desktopRow(container)).getByRole('button', { name: 'Glosse' })).toHaveAttribute('aria-pressed', 'true');
+        expect(within(phoneRow(container)).getByRole('button', { name: 'Glosse' })).toHaveAttribute('aria-pressed', 'true');
     });
 });
 
@@ -205,19 +264,27 @@ describe('ReadingToolbar — a past text is a reading', () => {
             expect(button).toBeDisabled();
             expect(button.title).toContain(READ_ONLY_REASON);
         }
+        const glosses = within(row).getByRole('button', { name: 'Glosse' });
+        expect(glosses).toBeDisabled();
+        expect(glosses.title).toContain(READ_ONLY_REASON);
         const menu = openMore(row);
-        for (const name of ['Aggiungi alle norme rapide', 'Glosse sull’articolo']) {
-            const entry = within(menu).getByRole('menuitem', { name: new RegExp(name) });
-            expect(entry).toBeDisabled();
-            expect(entry).toHaveTextContent(READ_ONLY_REASON);
-        }
+        const entry = within(menu).getByRole('menuitem', { name: /Aggiungi alle norme rapide/ });
+        expect(entry).toBeDisabled();
+        expect(entry).toHaveTextContent(READ_ONLY_REASON);
         const phoneMenu = openMore(phoneRow(container));
         expect(within(phoneMenu).getByRole('menuitem', { name: /Modalità studio/ })).toBeDisabled();
     });
 
+    it('offers no highlighter, on a text that takes none (H1, A4)', () => {
+        const { container } = setup({ lockedReason: READ_ONLY_REASON });
+        expect(within(desktopRow(container)).queryByRole('button', { name: /^Evidenziatore|^Colore dell/ })).toBeNull();
+        expect(within(phoneRow(container)).queryByRole('button', { name: /^Evidenziatore/ })).toBeNull();
+        expect(within(openMore(phoneRow(container))).queryAllByRole('menuitemradio')).toEqual([]);
+    });
+
     it('leaves the reading tools alone', () => {
         const { container } = setup({ lockedReason: READ_ONLY_REASON });
-        screen.getAllByRole('button', { name: 'Al dossier' }).forEach((button) => expect(button).toBeEnabled());
+        screen.getAllByRole('button', { name: 'Alla pratica' }).forEach((button) => expect(button).toBeEnabled());
         const menu = openMore(desktopRow(container));
         for (const name of ['Copia', 'Condividi link', 'Testo alla data…', 'Confronta con…']) {
             expect(within(menu).getByRole('menuitem', { name })).toBeEnabled();
@@ -241,7 +308,7 @@ describe('ReadingToolbar — there is no article to copy or save', () => {
     it('switches off copying and the dossier', () => {
         const reason = 'Non disponibile: l’articolo non esisteva a quella data';
         const { container } = setup({ copyLockedReason: reason });
-        screen.getAllByRole('button', { name: 'Al dossier' }).forEach((button) => {
+        screen.getAllByRole('button', { name: 'Alla pratica' }).forEach((button) => {
             expect(button).toBeDisabled();
             expect(button.title).toContain(reason);
         });
@@ -323,26 +390,235 @@ describe('ReadingToolbar — «Cerca nel testo»', () => {
 describe('ReadingToolbar — the compact form of a light window (spec §4.1)', () => {
     const find = { isOpen: false, onToggle: vi.fn() };
 
-    it('the computer\'s row holds notes, highlights and «⋯»: discussions, the magnifier and copy', () => {
+    it('the computer\'s row holds notes, highlights, the highlighter, the note tool, «Glosse» and «⋯»: the magnifier and copy', () => {
         const { container } = setup({ compact: true, find, url: 'https://example.org/x' });
         const row = desktopRow(container);
-        expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent))
-            .toEqual(['Note', 'Evidenziazioni', 'Altre azioni sull’articolo']);
-        expect(entryNames(openMore(row))).toEqual(['Glosse sull’articolo', 'Cerca nel testo', 'Copia']);
+        expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
+            'Note', 'Evidenziazioni', 'Evidenziatore (giallo)', 'Colore dell’evidenziatore', 'Cambia il significato dei colori',
+            'Strumento nota (nota personale)', 'Tipo di nota', 'Glosse', 'Altre azioni sull’articolo',
+        ]);
+        expect(entryNames(openMore(row))).toEqual(['Cerca nel testo', 'Copia']);
     });
 
-    it('the phone\'s row holds «⋯» alone: no quick norm, dossier, Study Mode or source link', () => {
+    it('the phone\'s row holds the highlighter\'s toggle and «⋯»: no quick norm, dossier, Study Mode or source link', () => {
         const { container } = setup({ compact: true, find, url: 'https://example.org/x' });
         const row = phoneRow(container);
         // The card's padding is its edge (the full-screen reader): no reach into it, which cut the focus ring (R3b).
         expect(row).not.toHaveClass('-mr-3');
-        expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Altre azioni sull’articolo']);
-        expect(entryNames(openMore(row))).toEqual(['Glosse sull’articolo', 'Cerca nel testo', 'Copia']);
+        expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Evidenziatore (giallo)', 'Glosse', 'Altre azioni sull’articolo']);
+        expect(entryNames(openMore(row))).toEqual(['Cerca nel testo', 'Copia', 'Cambia il significato dei colori']);
     });
 
     it('keeps the status and the annex, which say which text this is', () => {
         setup({ compact: true, versionChip: HISTORICAL_CHIP, normaData: { tipo_atto: 'legge', data: '1990-08-07', numero_articolo: '1', allegato: 'A' } });
         expect(screen.getByRole('button', { name: HISTORICAL_CHIP.label })).toBeInTheDocument();
         expect(screen.getByText('Allegato A')).toBeInTheDocument();
+    });
+});
+
+describe('ReadingToolbar — the highlighter and its inks (H1, A4)', () => {
+    const color = () => appStore.getState().settings.highlightColor;
+    afterEach(() => appStore.setState((st) => ({ readingTool: null, highlighterEraser: false, settings: { ...st.settings, highlightColor: 'yellow' } })));
+
+    it('on a computer: a split button beside «Evidenziazioni», its menu each colour with what it is suggested for', () => {
+        const { container } = setup();
+        const row = desktopRow(container);
+        const toggle = within(row).getByRole('button', { name: 'Evidenziatore (giallo)' });
+        expect(toggle).toHaveAttribute('aria-pressed', 'false');
+        fireEvent.click(within(row).getByRole('button', { name: 'Colore dell’evidenziatore' }));
+        const menu = within(row).getByRole('menu');
+        // The meanings are a suggestion, and the menu says so.
+        expect(menu).toHaveAccessibleDescription('Colore dell’evidenziatore: uso suggerito');
+        const choices = within(menu).getAllByRole('menuitemradio');
+        expect(choices.map((c) => [c.textContent, c.getAttribute('aria-checked')])).toEqual([
+            ['GialloPunto centrale', 'true'],
+            ['VerdeCondizione o presupposto', 'false'],
+            ['RossoDa rivedere', 'false'],
+            ['BluDefinizione o eccezione', 'false'],
+            ['Nessun coloreToglie le evidenziazioni', 'false'],
+        ]);
+        expect(choices[0]).toHaveAccessibleName('Giallo, uso suggerito: punto centrale');
+        fireEvent.click(choices[1]);
+        expect(color()).toBe('green');
+        // Chosen with nothing selected, the colour turns the tool on with it.
+        expect(within(row).getByRole('button', { name: 'Evidenziatore (verde)' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('on a phone, where the row has room for the toggle alone: the inks close the «⋯», under a title, as a setting', () => {
+        const { container } = setup();
+        const menu = openMore(phoneRow(container));
+        // Long now: capped under the bar, it scrolls on its own, so the last colour is never off the screen.
+        expect(menu).toHaveClass('max-h-[calc(100dvh-12rem)]', 'overflow-y-auto');
+        expect(within(menu).getByText('Colore dell’evidenziatore: uso suggerito')).toBeInTheDocument();
+        const choices = within(menu).getAllByRole('menuitemradio');
+        // Named for what they set, never «Evidenzia in…», which reads as «highlight now».
+        expect(choices.map((c) => c.getAttribute('aria-label'))).toEqual([
+            'Evidenziatore in giallo, uso suggerito: punto centrale',
+            'Evidenziatore in verde, uso suggerito: condizione o presupposto',
+            'Evidenziatore in rosso, uso suggerito: da rivedere',
+            'Evidenziatore in blu, uso suggerito: definizione o eccezione',
+            'Evidenziatore senza colore: toglie le evidenziazioni',
+        ]);
+        expect(choices[0]).toHaveAttribute('aria-checked', 'true');
+        fireEvent.click(choices[3]);
+        expect(color()).toBe('blue');
+        // A setting there: the tool stays as it was.
+        expect(appStore.getState().readingTool).toBeNull();
+        fireEvent.click(within(openMore(phoneRow(container))).getByRole('menuitemradio', { name: /senza colore/ }));
+        expect(appStore.getState()).toMatchObject({ highlighterEraser: true, settings: { highlightColor: 'blue' } });
+        expect(within(phoneRow(container)).getByRole('button', { name: 'Evidenziatore (nessun colore)' })).toBeInTheDocument();
+    });
+});
+
+describe('ReadingToolbar — the colours mean what the user says', () => {
+    afterEach(() => appStore.setState((st) => ({
+        settings: { ...st.settings, highlightColorMeanings: {} },
+        settingsDialog: { open: false, section: null },
+    })));
+
+    it('the menu words each colour with the user\'s own meaning, the default where none was given', () => {
+        appStore.setState((st) => ({ settings: { ...st.settings, highlightColorMeanings: { green: 'Termini e scadenze', blue: 'GDPR' } } }));
+        const { container } = setup();
+        fireEvent.click(within(desktopRow(container)).getByRole('button', { name: 'Colore dell’evidenziatore' }));
+        const choices = within(desktopRow(container)).getAllByRole('menuitemradio');
+        expect(choices.map((c) => c.textContent)).toEqual([
+            'GialloPunto centrale', 'VerdeTermini e scadenze', 'RossoDa rivedere', 'BluGDPR', 'Nessun coloreToglie le evidenziazioni',
+        ]);
+        // Inside the name its first letter is lowered, an acronym kept as written.
+        expect(choices[1]).toHaveAccessibleName('Verde, uso suggerito: termini e scadenze');
+        expect(choices[3]).toHaveAccessibleName('Blu, uso suggerito: GDPR');
+    });
+
+    it('one gear beside the colour, never a «?», opens Impostazioni at the colours\' meanings', () => {
+        const { container } = setup();
+        const row = desktopRow(container);
+        const gear = within(row).getByRole('button', { name: 'Cambia il significato dei colori' });
+        expect(gear).toHaveAttribute('title', 'Cambia il significato dei colori');
+        expect(within(row).queryByRole('button', { name: /\?|aiuto|spiega/i })).toBeNull();
+        fireEvent.click(gear);
+        expect(openSettings).toHaveBeenCalledWith('colori');
+    });
+
+    it('on a phone the gear is the entry after the inks in the «⋯»', () => {
+        const { container } = setup();
+        const menu = openMore(phoneRow(container));
+        const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'));
+        expect(items.at(-1)).toHaveAccessibleName('Cambia il significato dei colori');
+        expect(items.at(-2)).toHaveAccessibleName(/^Evidenziatore senza colore/);
+        fireEvent.click(items.at(-1)!);
+        expect(openSettings).toHaveBeenCalledWith('colori');
+    });
+
+    it('a text that takes no highlight shows neither the colour nor its gear', () => {
+        const { container } = setup({ lockedReason: READ_ONLY_REASON });
+        expect(within(desktopRow(container)).queryByRole('button', { name: 'Cambia il significato dei colori' })).toBeNull();
+        expect(within(openMore(phoneRow(container))).queryByRole('menuitem', { name: 'Cambia il significato dei colori' })).toBeNull();
+    });
+});
+
+describe('ReadingToolbar — «Copia link Normattiva»', () => {
+    it('stands after «Copia» behind «⋯», on a computer, on a phone and in a window', () => {
+        const onCopyLink = vi.fn();
+        const { container } = setup({ onCopyLink });
+        const names = entryNames(openMore(desktopRow(container)));
+        expect(names.indexOf('Copia link Normattiva')).toBe(names.indexOf('Copia') + 1);
+        fireEvent.click(screen.getByRole('menuitem', { name: /Copia link Normattiva/ }));
+        expect(onCopyLink).toHaveBeenCalledTimes(1);
+        expect(entryNames(openMore(phoneRow(container)))).toContain('Copia link Normattiva');
+    });
+
+    it('is in the compact form too', () => {
+        const { container } = setup({ onCopyLink: vi.fn(), compact: true });
+        expect(entryNames(openMore(desktopRow(container)))).toEqual(['Copia', 'Copia link Normattiva']);
+    });
+
+    it('is not offered without an address', () => {
+        const { container } = setup();
+        expect(entryNames(openMore(desktopRow(container)))).not.toContain('Copia link Normattiva');
+    });
+
+    it('names EUR-Lex for an act of the Union and says the link is the act’s', () => {
+        const { container } = setup({ onCopyLink: vi.fn(), normaData: { tipo_atto: 'regolamento ue', data: '2016', numero_atto: '679', numero_articolo: '5' } });
+        const menu = openMore(desktopRow(container));
+        expect(entryNames(menu)).toContain('Copia link EUR-Lex');
+        expect(within(menu).getByRole('menuitem', { name: /Copia link EUR-Lex/ })).toHaveTextContent('EUR-Lex non ha un indirizzo per articolo');
+    });
+
+    it('is switched off with «Copia» when the text may not be copied', () => {
+        const { container } = setup({ onCopyLink: vi.fn(), copyLockedReason: NOT_YET_REASON });
+        expect(within(openMore(desktopRow(container))).getByRole('menuitem', { name: /Copia link Normattiva/ })).toBeDisabled();
+    });
+});
+
+describe('ReadingToolbar — the tabs\' ground under the pointer (LC72)', () => {
+    /** The selector the ground answers to (`index.css`): what it does not match stays still. */
+    const ANSWERS = '.vlx-hover-tile:not(:disabled, [aria-pressed="true"], [aria-expanded="true"])';
+
+    it('is on every command of the bar, on a computer and on a phone', () => {
+        const { container } = setup();
+        const desktop = within(desktopRow(container)).getAllByRole('button');
+        // Note, Evidenziazioni, the highlighter, its inks, its meanings, the note tool, its kind, «Alla pratica», «Glosse», «⋯».
+        expect(desktop).toHaveLength(10);
+        for (const button of desktop) expect(button, button.getAttribute('aria-label') ?? button.textContent ?? '').toHaveClass('vlx-hover-tile');
+        for (const button of within(phoneRow(container)).getAllByRole('button')) expect(button).toHaveClass('vlx-hover-tile');
+    });
+
+    it('does not answer on a disabled command, nor on a pressed one', () => {
+        const { container } = setup({ lockedReason: READ_ONLY_REASON });
+        const notes = within(desktopRow(container)).getByRole('button', { name: /^Note/ });
+        expect(notes).toBeDisabled();
+        expect(notes.matches(ANSWERS)).toBe(false);
+        expect(within(desktopRow(container)).getByRole('button', { name: 'Altre azioni sull’articolo' }).matches(ANSWERS)).toBe(true);
+    });
+
+    it('stays still on the highlighter while it is on', () => {
+        appStore.setState({ readingTool: 'highlight' });
+        try {
+            const { container } = setup();
+            const toggle = within(desktopRow(container)).getByRole('button', { name: /^Evidenziatore/ });
+            expect(toggle).toHaveAttribute('aria-pressed', 'true');
+            expect(toggle.matches(ANSWERS)).toBe(false);
+        } finally {
+            appStore.setState({ readingTool: null });
+        }
+    });
+});
+
+describe('ReadingToolbar — the selector on the status line (LC70)', () => {
+    const CURRENT = { tone: 'current' as const, label: 'In vigore dal 10 novembre 1944', title: '' };
+    const bar = (end: ReactNode) => render(
+        <StatusLineEnd.Provider value={end}>
+            <ReadingToolbar {...baseProps()} versionChip={CURRENT} />
+        </StatusLineEnd.Provider>,
+    );
+    function baseProps(): ReadingToolbarProps {
+        return {
+            normaData: { tipo_atto: 'codice civile', data: '1942-03-16', numero_articolo: '1' },
+            versionChip: null, articleText: 'testo', isNotesPeekOpen: false, notesCount: 0, isHighlightsPeekOpen: false,
+            highlightsCount: 0, isDiscussionOpen: false, isPinnedQuick: false, onToggleNotes: vi.fn(),
+            onToggleHighlightsPeek: vi.fn(), onToggleDiscussion: vi.fn(), onToggleQuickNorm: vi.fn(), onMobileCopy: vi.fn(),
+            onOpenStudyMode: vi.fn(), onOpenCopyModal: vi.fn(), onOpenDossier: vi.fn(), onShareLink: vi.fn(),
+            onOpenAdvancedExport: vi.fn(), onOpenVersionInput: vi.fn(), onCompare: vi.fn(),
+        };
+    }
+
+    it('the status, then the selector, on one line; the one rule under it; the tools after', () => {
+        const { container } = bar(<button type="button">Art. 1</button>);
+        const line = container.querySelector<HTMLElement>('[data-status-line]')!;
+        const status = within(line).getByRole('button', { name: CURRENT.label });
+        const selector = within(line).getByRole('button', { name: 'Art. 1' });
+        expect(status.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(line).toHaveClass('border-b');
+        expect(line.parentElement).not.toHaveClass('border-b');
+        expect(container.querySelectorAll('.border-b')).toHaveLength(1);
+        // The tools come after the line, not on it.
+        expect(within(line).queryByRole('button', { name: 'Altre azioni sull’articolo' })).toBeNull();
+        expect(line.compareDocumentPosition(desktopRow(container)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('without a selector the bar keeps its own rule and no status line', () => {
+        const { container } = bar(null);
+        expect(container.querySelector('[data-status-line]')).toBeNull();
+        expect(container.firstElementChild).toHaveClass('border-b');
     });
 });

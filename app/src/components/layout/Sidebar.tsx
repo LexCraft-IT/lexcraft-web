@@ -1,28 +1,31 @@
 import { useState, useRef, useEffect, useCallback, type FocusEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { MenuSurface } from '../ui/MenuSurface';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, LayoutGroup, useReducedMotion } from 'framer-motion';
-import { Search, Folder, FolderOpen, CalendarCheck, CalendarDays, Inbox, MessagesSquare, Clock, Moon, Sun, Settings, LogOut, Shield, Keyboard, FileSearch, Scale, Network, Bot, ScrollText, MessageSquarePlus, Repeat, ChartColumn, Layers, ClipboardCheck, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
+import { Plug, Search, Folder, FolderOpen, CalendarCheck, MessagesSquare, Clock, Moon, Sun, Settings, LogOut, Shield, Keyboard, FileSearch, Library, Scale, Network, ScrollText, Bug, Repeat, ChartColumn, Layers, ClipboardCheck, PanelLeftClose, PanelLeftOpen, Route, EyeOff, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { isMerltEnabled } from '../../features/merlt/featureFlag';
 import { isMerltGraphEnabled } from '../../features/merlt/graph/featureFlag';
 import { SectionSwitcher } from '../../features/sections/SectionSwitcher';
+import { SectionTabs } from '../../features/sections/SectionTabs';
 import { useSection } from '../../features/sections/useSection';
-import { useEntriesEntrance } from '../../features/sections/useEntriesEntrance';
-import { useAppStore } from '../../store/useAppStore';
 import { PALETTE_SHORTCUT, focusSearchField } from '../../utils/searchFieldControl';
 import { useAuth } from '../../hooks/useAuth';
-import { useIsDesktop } from '../../hooks/useIsDesktop';
 import { useForumNotifications } from '../../hooks/useForumNotifications';
 import type { ServiceHealthReading } from '../../hooks/useServiceHealth';
 import { ServiceHealthDot, ServiceHealthMenuEntry } from '../ui/ServiceHealthMenuEntry';
 import { serviceHealthLabel, serviceHealthNeedsNotice } from '../../utils/serviceHealth';
 import { Z_INDEX } from '../../constants/zIndex';
 import { preparePage } from '../../pageCode';
-import { spring } from '../../lib/motion';
+import { focusLanding } from '../../utils/focusPage';
+import { REPEAT_CLOSE, REPEAT_OPEN, dur, ease, spring } from '../../lib/motion';
+import { BookMark } from '../ui/BookMark';
+import { LexCraftLogo } from '../ui/LexCraftLogo';
 import type { SidebarLayout } from './sidebarWidth';
 import { plannerStore } from '../features/planner/plannerStore';
 import { todayCountLabel } from '../features/planner/taskDates';
+import { useCoursesSwitch } from '../features/studia/corsi/coursesSwitch';
 
 interface SidebarProps {
   theme: string;
@@ -31,8 +34,8 @@ interface SidebarProps {
   closeMobile: () => void;
   openSettings: () => void;
   openKeyboardShortcuts: () => void;
-  /** Opens the feedback form: on a phone an entry of the user menu, «Invia un commento» (M1); from `md` the floating
-   *  button does it. Not given, no entry. */
+  /** Opens «Segnala un problema» (LC92, `/impostazioni#segnala`): the bug beside «Impostazioni» and an entry of the
+   *  user menu, at every width (the rail has no «Impostazioni» at its foot). Not given, neither. */
   openFeedback?: () => void;
   /** Icons only (the desktop between `lg` and `xl`, or narrowed), icons and words (from `xl`), or the
    *  phone's drawer (icons and words, rows of 44 px). */
@@ -41,21 +44,31 @@ interface SidebarProps {
   onToggleWide?: () => void;
   /** `Layout`'s one probe of the services: the user menu's «Stato dei servizi» and the dot on the user button. */
   serviceHealth: ServiceHealthReading;
+  /** The logo's sweep is due (once a browser session, `Layout`): it plays as the bar appears. Never in the rail. */
+  logoSweep?: boolean;
 }
 
 interface NavItemProps {
   to: string;
   icon: React.ElementType;
   label: string;
+  /** The word shown in the bar where `label` would be cut (Luca 16-11: «Analizza docum…»); the name stays `label`. */
+  shortLabel?: string;
   onClick?: () => void;
   id?: string;
   badgeCount?: number;
-  /** What the count counts, for the name: «Oggi, 3 compiti per oggi o scaduti». Without it, «N notifiche». */
+  /** What the count counts, for the name: «Attività, 3 compiti per oggi o scaduti». Without it, «N notifiche». */
   badgeLabel?: string;
   /** Active on its own address only, not under it: «Dossier pubblici» (`/forum`) beside «Community» (`/forum/community`). */
   end?: boolean;
   /** The keyboard shortcut that does the same, shown in the hover label (not part of the name). */
   hint?: string;
+  /** A feature on its way (D-315): «in arrivo» under the word, in the hover label and in the name. `'dev'` (LC47): it
+   *  works but is still being built, «in sviluppo» in the same three places; the entry still leads to its page. */
+  soon?: boolean | 'dev';
+  /** Other addresses (and those under them) where the entry is lit, so the bar says where one is: «Scadenziario» on the
+   *  planner's other views, «Ricerca» on the Corpus tools, «Assistente» on the hub's pages (#448). */
+  activeOn?: string[];
   layout: SidebarLayout;
 }
 
@@ -80,13 +93,13 @@ function normaChangesLabel(count: number): string {
   return count === 1 ? '1 norma salvata cambiata' : `${count} norme salvate cambiate`;
 }
 
-/** A count drawn on a control; the control's name says what it counts. 11 px on red 600: no smaller, and AA. */
+/** A count drawn on a control; the control's name says what it counts. 11 px in ink, not red: a count of tasks is not a danger (LC32). */
 function CountBadge({ count, className }: { count: number; className?: string }) {
   return (
     <span
       aria-hidden
       className={cn(
-        'min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-600 text-white text-[11px] font-semibold leading-none',
+        'min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-[11px] font-semibold leading-none',
         className,
       )}
     >
@@ -121,7 +134,7 @@ function SidebarTooltip({ anchor, label, hint, onDismiss }: { anchor: HTMLElemen
       initial={{ opacity: 0, x: -8, scale: 0.95 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: -8, scale: 0.95 }}
-      transition={{ duration: 0.15 }}
+      transition={{ duration: dur.pop, ease: ease.out }}
       aria-hidden
       data-sidebar-tooltip
       style={{ left: rect.right + 12, top: rect.top + rect.height / 2, translateY: '-50%' }}
@@ -167,38 +180,50 @@ function useSidebarLabel() {
   return { shown, hide, handlers };
 }
 
-function NavItem({ to, icon: Icon, label, onClick, id, badgeCount, badgeLabel, hint, layout, end }: NavItemProps) {
+function NavItem({ to, icon: Icon, label, shortLabel, onClick, id, badgeCount, badgeLabel, hint, soon, activeOn, layout, end }: NavItemProps) {
   const { shown: showTooltip, hide, handlers } = useSidebarLabel();
   // State, not a ref object: the tooltip reads the element while rendering (gotcha 13).
   const [linkEl, setLinkEl] = useState<HTMLAnchorElement | null>(null);
   const showBadge = (badgeCount ?? 0) > 0;
   const words = layout !== 'rail';
-  // The active dot slides between neighbouring entries («Dossier pubblici», «Community»): under reduced motion it jumps.
-  const reduceMotion = useReducedMotion();
+  // NavLink's rule (its address, or under it unless `end`; «/» on itself only), plus `activeOn`. A `Link`, since NavLink
+  // gives `aria-current` only on its own address.
+  const { pathname } = useLocation();
+  const under = (path: string, exact?: boolean) => pathname === path || (!exact && path !== '/' && pathname.startsWith(`${path}/`));
+  const isActive = under(to, end) || (activeOn ?? []).some((path) => under(path));
 
   // In the rail the whole control is an icon, and `label` only ever reached the eye — the
   // tooltip is `hidden md:block` and shows on hover, so a screen reader and a
   // keyboard user got an unnamed link. The count rides the name because a badge
   // announced on its own arrives without saying what it counts.
-  const accessibleName = showBadge ? `${label}, ${badgeLabel ?? `${badgeCount} notifiche`}` : label;
+  const status = soon === 'dev' ? 'in sviluppo' : soon ? 'in arrivo' : undefined;
+  const accessibleName = showBadge ? `${label}, ${badgeLabel ?? `${badgeCount} notifiche`}` : status ? `${label}, ${status}` : label;
 
   return (
-    <NavLink
+    <Link
       ref={setLinkEl}
       to={to}
-      end={end}
       id={id}
       aria-label={accessibleName}
-      className={({ isActive }) => cn(
-        "relative flex shrink-0 items-center rounded-xl transition-colors duration-200",
+      // «page» on its own address only; lit for a page under it or of its own, «true», so a screen reader does not
+      // hear «current page» twice (on `/work/prossimi`, here and on the planner's tab, #448).
+      aria-current={pathname === to ? 'page' : isActive ? 'true' : undefined}
+      className={cn(
+        "relative flex shrink-0 items-center rounded-xl transition-colors duration-(--dur-pop)",
         "hover:bg-slate-100 dark:hover:bg-slate-800",
-        // The icon keeps the same 44 px box in every layout, so widening the bar moves no icon.
-        words ? "w-full h-11 overflow-hidden pr-2" : "w-11 h-11",
-        isActive && "bg-primary-50 dark:bg-primary-900/10"
+        // The icon keeps the same 44 px box in every layout, so widening the bar moves no icon. No `overflow-hidden`:
+        // it clipped the active column, which sits left of the row; the words truncate on their own.
+        // LC21: with words the row is the prototype's, 36 px (the drawer's 44, a touch target), the icon 12 px in and 12 from the
+        // words; the rail keeps its 44 px square.
+        words ? cn("w-full gap-3 pl-3 pr-2", layout === 'drawer' ? "h-11" : "h-9") : "w-11 h-11",
+        isActive && "bg-primary-50 dark:bg-primary-900/25"
       )}
       onClick={() => {
         hide();
         onClick?.();
+        // From the phone's drawer (LC98): the focus goes to the title of the page reached, as on a computer, not to the
+        // menu button the closing drawer parks it on.
+        if (layout === 'drawer') focusLanding(to !== pathname);
       }}
       // With its words written, the row needs no label of its own.
       {...(words ? {} : handlers)}
@@ -207,35 +232,35 @@ function NavItem({ to, icon: Icon, label, onClick, id, badgeCount, badgeLabel, h
       onPointerDown={() => preparePage(to)}
       onFocus={(e: FocusEvent<HTMLAnchorElement>) => { preparePage(to); if (!words) handlers.onFocus(e); }}
     >
-      {({ isActive }) => (
-        <>
-          {/* A navigation entry is seen tens of times a day: its hover is the colour alone. */}
-          <motion.div
-            whileTap={reduceMotion ? undefined : { scale: 0.95 }}
-            transition={spring.snappy}
-            className="grid h-11 w-11 shrink-0 place-items-center"
-          >
+      <>
+          {/* A navigation entry is seen tens of times a day: its hover is the colour alone. The press is CSS: framer-motion's
+              `whileTap` gave this box `tabindex="0"`, a second Tab stop in every entry (#448). */}
+          <div className={cn("grid shrink-0 place-items-center transition-transform duration-(--dur-press) motion-safe:active:scale-95", words ? "h-5 w-5" : "h-11 w-11")}>
             <Icon
-              size={22}
+              size={words ? 18 : 22}
               aria-hidden
               className={cn(
-                "transition-colors duration-200",
-                isActive
-                  ? "text-primary-600 dark:text-primary-400 stroke-[2.5px]"
-                  : "text-slate-500 dark:text-slate-400 stroke-[2px]"
+                "transition-colors duration-(--dur-pop)",
+                words
+                  ? cn("stroke-[1.5px]", isActive ? "text-slate-900 dark:text-slate-50" : "text-slate-600 dark:text-slate-400")
+                  : isActive
+                    ? "text-primary-600 dark:text-primary-400 stroke-[2.5px]"
+                    : "text-slate-500 dark:text-slate-400 stroke-[2px]"
               )}
             />
-          </motion.div>
+          </div>
 
           {words && (
             <span
               aria-hidden
               className={cn(
                 "min-w-0 flex-1 truncate whitespace-nowrap text-sm",
-                isActive ? "font-semibold text-primary-700 dark:text-primary-300" : "font-medium text-slate-700 dark:text-slate-300"
+                isActive ? "font-semibold text-slate-900 dark:text-slate-50" : "font-medium text-slate-800 dark:text-slate-300"
               )}
             >
-              {label}
+              {shortLabel ?? label}
+              {/* Under the name, not beside it: beside, it cut «Anonimizzatore» in the 224 px bar (#448). */}
+              {status && <span className={cn("block text-[11px] font-medium leading-none", SIDEBAR_SMALL_TEXT)}>{status}</span>}
             </span>
           )}
           {/* The shortcut, for a keyboard: not in the phone's drawer. */}
@@ -243,42 +268,38 @@ function NavItem({ to, icon: Icon, label, onClick, id, badgeCount, badgeLabel, h
             <kbd aria-hidden className={cn("ml-2 shrink-0 font-sans text-[11px]", SIDEBAR_SMALL_TEXT)}>{hint}</kbd>
           )}
 
-          {/* Active indicator dot */}
-          {isActive && (
-            <motion.span
-              layoutId="activeIndicator"
-              className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-primary-600 rounded-r-full"
-              transition={reduceMotion ? { duration: 0 } : spring.snappy}
-            />
-          )}
+          {/* LC27 (Luca, 15 Nov: «la mini colonnina … va tolta»): the active entry is its tile alone, in the rail too. */}
 
-          {/* Notification badge: on the icon in the rail, at the end of the row with words. */}
+          {/* Notification badge: on the icon in the rail, at the end of the row with words, 4 px after the word: with the
+              largest text the bold «Scadenze» of the lit entry needed the other 4 (#524). */}
           {showBadge && (
             <CountBadge
               count={badgeCount ?? 0}
-              className={words ? "ml-2 shrink-0" : "absolute top-1 right-1 ring-2 ring-white dark:ring-slate-900"}
+              className={words ? "ml-1 shrink-0" : "absolute top-1 right-1 ring-2 ring-white dark:ring-slate-900"}
             />
           )}
 
           {/* Tooltip - the rail's only, hidden on mobile */}
           <AnimatePresence>
-            {!words && showTooltip && <SidebarTooltip anchor={linkEl} label={label} hint={hint} onDismiss={hide} />}
+            {!words && showTooltip && <SidebarTooltip anchor={linkEl} label={label} hint={status ?? hint} onDismiss={hide} />}
           </AnimatePresence>
-        </>
-      )}
-    </NavLink>
+      </>
+    </Link>
   );
 }
 
 /**
  * A group of entries, named for a screen reader; with words, its name is also written over it. In the
- * rail a thin line stands for the heading.
+ * rail a thin line stands for the heading. `unnamed`: a group that bears its section's name is not a group again
+ * inside the section's (a screen reader said «Learn» twice, LC4); only the heading is drawn.
  */
-function NavGroup({ name, heading, layout, children }: { name: string; heading?: boolean; layout: SidebarLayout; children: React.ReactNode }) {
+function NavGroup({ name, heading, unnamed, layout, children }: { name: string; heading?: boolean; unnamed?: boolean; layout: SidebarLayout; children: React.ReactNode }) {
   return (
-    <div role="group" aria-label={name} className="flex w-full flex-col items-start gap-3 md:gap-2">
-      {heading && layout !== 'rail' && (
-        <p aria-hidden className={cn("w-full truncate whitespace-nowrap px-3 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em]", SIDEBAR_SMALL_TEXT)}>
+    <div role={unnamed ? undefined : 'group'} aria-label={unnamed ? undefined : name} className={cn("flex w-full flex-col items-start", layout === 'rail' ? "gap-3 md:gap-2" : "gap-0.5")}>
+      {/* LC21: the section's own name is not written again over its entries (it is on the tab above); a group's heading is the
+          prototype's small capitals. */}
+      {heading && !unnamed && layout !== 'rail' && (
+        <p aria-hidden className={cn("w-full truncate whitespace-nowrap px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-[0.06em]", SIDEBAR_SMALL_TEXT)}>
           {name}
         </p>
       )}
@@ -305,15 +326,16 @@ function WidthToggle({ layout, onToggle }: { layout: SidebarLayout; onToggle: ()
       }}
       {...(wide ? {} : handlers)}
       className={cn(
-        "flex h-11 shrink-0 items-center rounded-xl transition-colors duration-200",
+        "flex shrink-0 items-center rounded-xl transition-colors duration-(--dur-pop)",
+        wide ? "h-9 rounded-lg pl-3 gap-3" : "h-11",
         SIDEBAR_TOGGLE_TEXT,
         "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500",
+        "focus-visible:outline-none ",
         wide ? "w-full overflow-hidden" : "w-11",
       )}
     >
-      <span className="grid h-11 w-11 shrink-0 place-items-center"><Icon size={20} aria-hidden /></span>
-      {wide && <span aria-hidden className="min-w-0 truncate whitespace-nowrap text-sm">Riduci</span>}
+      <span className={cn("grid shrink-0 place-items-center", wide ? "h-5 w-5" : "h-11 w-11")}><Icon size={wide ? 18 : 20} strokeWidth={wide ? 1.5 : 2} aria-hidden /></span>
+      {wide && <span aria-hidden className="min-w-0 truncate whitespace-nowrap text-sm font-medium">Riduci</span>}
       <AnimatePresence>
         {!wide && shown && <SidebarTooltip anchor={el} label={label} onDismiss={hide} />}
       </AnimatePresence>
@@ -321,15 +343,15 @@ function WidthToggle({ layout, onToggle }: { layout: SidebarLayout; onToggle: ()
   );
 }
 
-export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings, openKeyboardShortcuts, openFeedback, layout = 'rail', onToggleWide, serviceHealth }: SidebarProps) {
+export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings, openKeyboardShortcuts, openFeedback, layout = 'rail', onToggleWide, serviceHealth, logoSweep = false }: SidebarProps) {
   const navigate = useNavigate();
-  const quickNorms = useAppStore((s) => s.quickNorms);
   const { user, isAdmin, isValidator, logout } = useAuth();
+  const coursesOn = useCoursesSwitch() === 'on';
   const { section, active } = useSection();
-  const sectionEntries = useEntriesEntrance(section);
   const { count: forumNotifications } = useForumNotifications(!!user);
-  // Overdue plus today's tasks (`PlannerHost` reads them): beside «Oggi» in Opus.
-  const todayCount = plannerStore((s) => s.todayCount) ?? 0;
+  // Overdue plus today's tasks (`PlannerHost` reads them): beside «Attività», Work's and Learn's each (LC130).
+  const todayCount = plannerStore((s) => s.todayCount?.work) ?? 0;
+  const studyTodayCount = plannerStore((s) => s.todayCount?.learn) ?? 0;
   // Cronologia lives in the user menu (the owner, 13 Oct 2026); the saved norms that changed are
   // counted on the avatar and beside the entry («ok come raccomandi»).
   const normaChanges = forumNotifications.normaChanges ?? 0;
@@ -340,9 +362,8 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuPosition, setMenuPosition] = useState({ bottom: 0, left: 0, maxHeight: 0 });
 
+  const logoReduce = useReducedMotion();
   const words = layout !== 'rail';
-  // The floating feedback button covered the foot of every page on a phone: there it is this menu's entry (M1).
-  const feedbackInMenu = !useIsDesktop() && openFeedback !== undefined;
 
   // Placed when it opens, in the same update, so its first paint has its height bounded before an entry takes
   // focus (opened on «Esci» in a low window, the focused entry would otherwise end up out of view).
@@ -364,6 +385,10 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
     focusSearchField({ focus: true }, { wait: true });
     closeMobile();
   };
+  // The search: «Ricerca» over every section but Work, and among Work's entries (D-315, LC48).
+  const searchEntry = (label: string, activeOn?: string[]) => (
+    <NavItem to="/" activeOn={activeOn} icon={Search} label={label} hint={PALETTE_SHORTCUT} id="tour-nav-search" onClick={handleSearchClick} layout={layout} />
+  );
 
   // Academia's entries: the section is offered only with the development mode (sections spec S12), and
   // the MERL-T flags still decide each entry. Plain flag functions (not useMerltFeatures) keep the
@@ -440,24 +465,77 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
         // The desktop copy is as wide as its column, which `Layout` sizes (64 px, or 224 with words);
         // the phone's drawer has room for its words.
         layout === 'drawer' ? "w-[17rem] max-w-[85vw]" : "w-full",
-        // Clean Slate/Glass effect
-        "bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl",
+        // Solid: nothing scrolls under the rail on a computer, and on a phone the drawer has its own scrim.
+        // LC21: the prototype's bar, a step darker than the page in the light, the page's own ground in the dark.
+        "bg-slate-100 dark:bg-slate-950",
         "border-r border-slate-200 dark:border-slate-800",
-        // Mobile slide
-        "transform transition-transform duration-300 ease-smooth-out",
-        // `relative`, not `static`: backdrop-blur makes this aside a stacking
+        // Mobile slide: its times in `style` (below)
+        "transform transition-transform",
+        // `relative`, not `static`: the transform makes this aside a stacking
         // context, so anything inside it (hover tooltips) is trapped at the
         // aside's own level. Static would leave z-50 inert and page content
         // would paint over the tooltips.
         "lg:translate-x-0 lg:relative",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}
+      // A repeated action (LC133, the frequency rule): 200 ms in on the drawer's curve, 150 out; it was 320 both ways.
+      style={layout === 'drawer' ? { transitionDuration: `${(isOpen ? REPEAT_OPEN : REPEAT_CLOSE).duration}ms`, transitionTimingFunction: (isOpen ? REPEAT_OPEN : REPEAT_CLOSE).easing } : undefined}
     >
-      {/* The section switcher, where the open book was (sections spec S3). Below `lg`, in the drawer, it sits where
-          the phone's bar is (M1), clear of the iPhone's top edge. Every column keeps 10 px of side padding, so a 44 px
-          control in the 64 px rail sits where it sits in the wide bar. */}
-      <div id="tour-section-switcher" className="flex items-center px-2.5 pt-[calc(0.375rem+env(safe-area-inset-top))] pb-2 lg:p-0 lg:px-2.5 lg:h-16 border-b border-slate-100 dark:border-slate-800/50">
-        <SectionSwitcher forumCount={forumNotifications.total} onChoose={closeMobile} withName={words} inDrawer={layout === 'drawer'} />
+      {/* LexCraft's logo (LC16), a link home and the bar's first Tab stop, in a row of its own over the switcher: the
+          wordmark 120 px wide, its «L» flush with the switcher's mark (the box starts 11 of its 716 units, 1.8 px,
+          before it); in the rail the column alone, centred over the icons (32 px from the edge), never in line with the
+          entries' column-cursor, and still. In the drawer it is the head, clear of the iPhone's top edge. */}
+      {/* Luca, 15 November: the wordmark centred over the section tabs and a step larger (150 px), not flush left. */}
+      <div className={cn("flex shrink-0 items-center justify-center px-2.5", layout === 'rail' ? "h-12" : "h-16", layout === 'drawer' && "box-content pt-[env(safe-area-inset-top)]")}>
+        <Link
+          to="/"
+          aria-label="LexCraft"
+          onClick={closeMobile}
+          className={cn(
+            "rounded-lg text-primary-600 dark:text-primary-400 focus-visible:outline-none ",
+            layout === 'rail' ? "grid h-11 w-11 place-items-center" : "flex h-11 items-center px-2",
+          )}
+        >
+          {/* LC27 (Luca, 15 Nov): narrowing the bar, LEX and CRAFT close in on the column between them and fade, and the
+              column stays, the rail's mark; widening, they open out of it again. The wordmark's column sits at 37.8 % of
+              its width (x 260 of the 716-unit box): the halves scale from there. Under reduced motion it simply changes. */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {layout === 'rail' ? (
+              <motion.span
+                key="column"
+                className="grid place-items-center"
+                initial={logoReduce ? false : { opacity: 0, scaleY: 0.7 }}
+                animate={{ opacity: 1, scaleY: 1 }}
+                exit={logoReduce ? undefined : { opacity: 0, transition: { duration: dur.press } }}
+                transition={{ duration: dur.panel, ease: ease.out }}
+              >
+                <BookMark size={32} />
+              </motion.span>
+            ) : (
+              <motion.span
+                key="wordmark"
+                className="block"
+                style={{ transformOrigin: '37.8% 50%' }}
+                initial={logoReduce ? false : { opacity: 0, scaleX: 0.08 }}
+                animate={{ opacity: 1, scaleX: 1 }}
+                exit={logoReduce ? undefined : { opacity: 0, scaleX: 0.08 }}
+                transition={{ duration: dur.panel, ease: ease.out }}
+              >
+                <LexCraftLogo motion={logoSweep ? 'sweep' : 'still'} className="h-auto w-[150px]" />
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </Link>
+      </div>
+
+      {/* The section switcher, where the open book was (sections spec S3), under the logo. Every column keeps 10 px of
+          side padding, so a 44 px control in the 64 px rail sits where it sits in the wide bar. */}
+      {/* LC21: with words the sections are a row of tabs under the logo (the prototype of 12 November); the rail, which four
+          words would not fit, keeps the one button and its menu. */}
+      <div id="tour-section-switcher" className={cn("flex items-center", words ? "px-3 pb-3 pt-1" : "px-2.5 pt-1.5 pb-2 lg:p-0 lg:px-2.5 lg:h-16 border-b border-slate-100 dark:border-slate-800/50")}>
+        {words
+          ? <SectionTabs forumCount={forumNotifications.total} onChoose={closeMobile} inDrawer={layout === 'drawer'} />
+          : <SectionSwitcher forumCount={forumNotifications.total} onChoose={closeMobile} withName={false} inDrawer={false} />}
       </div>
 
       {/* Navigation */}
@@ -468,51 +546,67 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
       <motion.nav
         layoutScroll
         id="tour-sidebar"
-        className="min-h-0 flex-1 flex flex-col items-start overflow-y-auto overflow-x-hidden overscroll-contain px-2.5 py-4 gap-3 md:gap-2 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1"
+        className={cn("min-h-0 flex-1 flex flex-col items-start overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1", words ? "px-3 py-2 gap-0.5" : "px-2.5 py-4 gap-3 md:gap-2")}
       >
-        <NavItem to="/" icon={Search} label="Ricerca" hint={PALETTE_SHORTCUT} id="tour-nav-search" onClick={handleSearchClick} layout={layout} />
-        {quickNorms.length > 0 && (
-          <div className="-mt-1 ml-3 w-5 h-1 rounded-full bg-amber-500/60" title={`${quickNorms.length} preferiti`} />
+        {/* Corpus's entries over the other sections' (sections spec S6). In Work the search is Work's own «Ricerca» (D-315, LC48), and
+            the two tools are links of the search page (`Scrivania`, LC8). */}
+        {section !== 'opus' && (
+          <>
+            {searchEntry('Ricerca')}
+            <NavItem to="/documents" icon={FileSearch} label="Analizza documento" shortLabel="Analizza" onClick={closeMobile} layout={layout} />
+            <NavItem to="/rassegne" icon={Library} label="Rassegne" onClick={closeMobile} layout={layout} />
+          </>
         )}
-        <NavItem to="/documents" icon={FileSearch} label="Analizza documento" onClick={closeMobile} layout={layout} />
         {/* The active section's entries, after the Corpus ones above (sections spec S6); a new section's fade in (T1).
-            Each section names its own active dot, so the dot does not slide from the old section's entries. */}
-        <LayoutGroup id={section}>
-          <div ref={sectionEntries} role="group" aria-label={active.name} className="mt-1 flex w-full flex-col items-start gap-3 md:gap-2 border-t border-slate-100 dark:border-slate-800/50 pt-3 md:pt-2">
+            Each section names its own active column (`layoutId` within the section's group), and the phone's drawer apart:
+            `Layout` keeps both copies mounted, and with one name the desktop's column took its start from the hidden
+            drawer's (a box of nothing), so it jumped instead of sliding (#448). Keyed by its id: `LayoutGroup` reads `id`
+            once, so without a new group every section kept the first one's name and the column glided in from the old
+            section's entry (#457); a new section's column appears in place. */}
+        <LayoutGroup key={layout === 'drawer' ? `drawer-${section}` : section} id={layout === 'drawer' ? `drawer-${section}` : section}>
+          <div role="group" aria-label={active.name} className={cn("flex w-full flex-col items-start", words ? "gap-0.5" : "gap-3 md:gap-2", section !== 'opus' && "mt-1 border-t border-slate-100 dark:border-slate-800/50 pt-3 md:pt-2")}>
             {section === 'gymnasium' && (
               <>
                 {/* Studying, then writing and validating (Gymnasium spec §4). */}
-                <NavGroup name="Studia" heading layout={layout}>
-                  <NavItem to="/studia/ripasso" icon={Repeat} label="Oggi" onClick={closeMobile} layout={layout} />
-                  <NavItem to="/studia/progressi" icon={ChartColumn} label="Progressi" onClick={closeMobile} layout={layout} />
-                  <NavItem to="/dossier" icon={Folder} label="Dossier" onClick={closeMobile} id="tour-nav-dossier" layout={layout} />
+                <NavGroup name="Learn" heading unnamed layout={layout}>
+                  <NavItem to="/learn/ripasso" icon={Repeat} label="Oggi" onClick={closeMobile} layout={layout} />
+                  {/* Second, behind the switch `lingo_courses` (courses spec §6.1). */}
+                  {coursesOn && <NavItem to="/learn/percorsi" icon={Route} label="Percorsi" onClick={closeMobile} layout={layout} />}
+                  <NavItem to="/learn/progressi" icon={ChartColumn} label="Progressi" onClick={closeMobile} layout={layout} />
+                  {/* Learn's own to-do list, the «studio» tasks, with Work's icon (LC130). */}
+                  <NavItem to="/learn/attivita/scadenziario" activeOn={['/learn/attivita']} icon={CalendarCheck} label="Attività" onClick={closeMobile} badgeCount={studyTodayCount} badgeLabel={todayCountLabel(studyTodayCount)} layout={layout} />
+                  <NavItem to="/pratiche" icon={Folder} label="Pratiche" onClick={closeMobile} id="tour-nav-dossier" layout={layout} />
                 </NavGroup>
                 {layout === 'rail' && <div aria-hidden className="mx-auto h-px w-6 bg-slate-200 dark:bg-slate-700" />}
                 <NavGroup name="Contribuisci" heading layout={layout}>
-                  <NavItem to="/studia/schede" icon={Layers} label="Le mie schede" onClick={closeMobile} layout={layout} />
-                  {isValidator && <NavItem to="/studia/valida" icon={ClipboardCheck} label="Da validare" onClick={closeMobile} layout={layout} />}
+                  <NavItem to="/learn/schede" icon={Layers} label="Le mie schede" onClick={closeMobile} layout={layout} />
+                  {isValidator && <NavItem to="/learn/valida" icon={ClipboardCheck} label="Da validare" onClick={closeMobile} layout={layout} />}
                 </NavGroup>
               </>
             )}
-            {(section === 'opus' || section === 'forum' || (section === 'academia' && showAssistant)) && words && (
-              <p aria-hidden className={cn("w-full truncate whitespace-nowrap px-3 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em]", SIDEBAR_SMALL_TEXT)}>
-                {active.name}
-              </p>
-            )}
             {section === 'opus' && (
               <>
-                {/* The planner's views, then the dossiers (the planner, wave 1). */}
-                <NavItem to="/opus/oggi" icon={CalendarCheck} label="Oggi" onClick={closeMobile} badgeCount={todayCount} badgeLabel={todayCountLabel(todayCount)} layout={layout} />
-                <NavItem to="/opus/prossimi" icon={CalendarDays} label="Prossimi giorni" onClick={closeMobile} layout={layout} />
-                <NavItem to="/opus/ingresso" icon={Inbox} label="Lista d'ingresso" onClick={closeMobile} layout={layout} />
-                <NavItem to="/dossier" icon={Folder} label="Dossier" onClick={closeMobile} id="tour-nav-dossier" layout={layout} />
+                {/* Scadenziario, Ricerca, Dossier, then the tools that are coming (D-315, LC47, LC48). «Prossimi
+                    giorni» and «Lista d'ingresso» are tabs of Work's page (`OpusPage`), «Rassegne» a link of the search page (LC8). */}
+                <NavItem to="/work/scadenziario" activeOn={['/work/prossimi', '/work/ingresso', '/work/cestino']} icon={CalendarCheck} label="Attività" onClick={closeMobile} badgeCount={todayCount} badgeLabel={todayCountLabel(todayCount)} layout={layout} />
+                {searchEntry('Ricerca', ['/rassegne'])}
+                <NavItem to="/pratiche" icon={Folder} label="Pratiche" onClick={closeMobile} id="tour-nav-dossier" layout={layout} />
+                <div aria-hidden className={cn("h-px bg-slate-200 dark:bg-slate-700", layout === 'rail' ? "mx-auto w-6" : "my-1.5 w-full")} />
+                <NavGroup name="Strumenti sul documento" layout={layout}>
+                  <NavItem to="/documents" icon={FileSearch} label="Analizza documento" shortLabel="Analizza" soon="dev" onClick={closeMobile} layout={layout} />
+                  {/* The desktop app's (D-324): announced on the web, its page says what it will do. */}
+                  {/* «Pseudonimizza» in the bar: the whole word is cut at the larger text sizes (LC48). */}
+                  <NavItem to="/work/pseudonimizzatore" icon={EyeOff} label="Pseudonimizzatore" shortLabel="Pseudonimizza" soon onClick={closeMobile} layout={layout} />
+                  {/* The knowledge graph of the user's practices, the desktop app's too (LC48). */}
+                  <NavItem to="/work/grafo-pratiche" icon={Network} label="Grafo delle pratiche" shortLabel="Grafo pratiche" soon onClick={closeMobile} layout={layout} />
+                </NavGroup>
               </>
             )}
             {section === 'academia' && showAssistant && (
               <>
-                <NavItem to="/merlt" icon={Scale} label="Assistente" onClick={closeMobile} layout={layout} />
-                {/* Slice 4 Decision A: /grafo is the Q&A surface; the hub stays at /merlt. */}
-                {showGraph && <NavItem to="/grafo" icon={Network} label="Grafo" onClick={closeMobile} layout={layout} />}
+                <NavItem to="/labs" end activeOn={['/labs/contribuisci', '/labs/valida']} icon={Scale} label="Assistente" onClick={closeMobile} layout={layout} />
+                {/* Slice 4 Decision A: /labs/grafo is the Q&A surface; the hub stays at /labs. */}
+                {showGraph && <NavItem to="/labs/grafo" icon={Network} label="Grafo" onClick={closeMobile} layout={layout} />}
               </>
             )}
             {/* The section keeps its name; its areas are named apart, so «Forum» is not written twice. */}
@@ -529,7 +623,7 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
       {/* User Menu, and on the desktop from `xl` the control that narrows or widens the bar. On a phone the
           drawer's foot clears the home indicator. */}
       <div className={cn(
-        "flex flex-col items-start gap-1 px-2.5 py-4 border-t border-slate-100 dark:border-slate-800/50",
+        "flex flex-col items-start gap-0.5 border-t border-slate-200 dark:border-slate-800", words ? "px-3 py-3" : "px-2.5 py-4",
         layout === 'drawer' && "pb-[max(1rem,env(safe-area-inset-bottom))]",
       )}>
         <button
@@ -541,16 +635,16 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
           onClick={() => (showUserMenu ? closeMenu(false) : openMenu('first'))}
           onKeyDown={onTriggerKeyDown}
           className={cn(
-            "relative flex shrink-0 items-center rounded-xl transition-colors duration-200",
+            "relative flex shrink-0 items-center rounded-xl transition-colors duration-(--dur-pop)",
             "hover:bg-slate-100 dark:hover:bg-slate-800",
             // The avatar is 36 px below `md` and 32 px from it: inset as in the rail, so widening moves it not.
-            words ? "w-full h-11 gap-2.5 overflow-hidden px-1 md:px-1.5 text-left" : "justify-center w-11 h-11",
-            showUserMenu && "bg-primary-50 dark:bg-primary-900/10"
+            words ? cn("w-full gap-2.5 overflow-hidden px-2 text-left", layout === 'drawer' ? "h-11" : "h-10") : "justify-center w-11 h-11",
+            showUserMenu && "bg-primary-50 dark:bg-primary-900/25"
           )}
         >
+          {/* No `whileTap`: it made this box a second Tab stop inside the button (`tabindex="0"`). */}
           <motion.div
             whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.95 }}
             transition={spring.snappy}
             className={cn(
               "relative shrink-0 rounded-lg flex items-center justify-center text-sm font-semibold",
@@ -573,24 +667,74 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
             <CountBadge count={normaChanges} className={words ? "shrink-0" : "absolute top-0 right-0 ring-2 ring-white dark:ring-slate-900"} />
           )}
         </button>
+        {/* LC21: «Impostazioni» in sight at the bar's foot, as the prototype has it (it stays in the user menu too). With words
+            only: the rail keeps its two controls. */}
+        {words && (
+          <div className="flex w-full shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              closeMobile();
+              openSettings();
+            }}
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-3 rounded-lg pl-3 text-left transition-colors duration-(--dur-pop)",
+              layout === 'drawer' ? "h-11" : "h-9",
+              SIDEBAR_TOGGLE_TEXT,
+              "hover:bg-slate-200/70 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+              "focus-visible:outline-none ",
+            )}
+          >
+            <span className="grid h-5 w-5 shrink-0 place-items-center"><Settings size={18} strokeWidth={1.5} aria-hidden /></span>
+            <span className="min-w-0 truncate whitespace-nowrap text-sm font-medium">Impostazioni</span>
+          </button>
+          {/* LC92: «Segnala un problema», the bug beside «Impostazioni»; it was «Commenti» at the top right. */}
+          {openFeedback && (
+            <button
+              type="button"
+              onClick={() => {
+                closeMobile();
+                openFeedback();
+              }}
+              aria-label="Dicci cosa ti serve"
+              title="Dicci cosa ti serve"
+              className={cn(
+                "grid shrink-0 place-items-center rounded-lg transition-colors duration-(--dur-pop)",
+                layout === 'drawer' ? "h-11 w-11" : "h-9 w-9",
+                SIDEBAR_TOGGLE_TEXT,
+                "hover:bg-slate-200/70 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                "focus-visible:outline-none ",
+              )}
+            >
+              <Bug size={18} strokeWidth={1.5} aria-hidden />
+            </button>
+          )}
+          </div>
+        )}
         {onToggleWide && layout !== 'drawer' && <WidthToggle layout={layout} onToggle={onToggleWide} />}
 
         {/* User Dropdown Menu - rendered via Portal */}
-        {showUserMenu && createPortal(
+        {createPortal(
           <>
             {/* Backdrop - cattura click esterni */}
-            <div
-              className={cn("fixed inset-0", Z_INDEX.menuBackdrop)}
-              onClick={() => closeMenu(false)}
-            />
-            {/* Menu popup */}
-            <div
+            {showUserMenu && (
+              <div
+                className={cn("fixed inset-0", Z_INDEX.menuBackdrop)}
+                onClick={() => closeMenu(false)}
+              />
+            )}
+            {/* Menu popup: it appears over the user button by a fade and a 4 px shift (`MenuSurface`, LC102). */}
+            <AnimatePresence>
+            {showUserMenu && (
+            <MenuSurface
+              key="user-menu"
               ref={menuRef}
+              above
               role="menu"
               aria-label="Menu utente"
               onKeyDown={onMenuKeyDown}
               style={{ bottom: menuPosition.bottom, left: menuPosition.left, maxHeight: menuPosition.maxHeight > 0 ? menuPosition.maxHeight : undefined }}
-              className={cn("fixed w-56 overflow-y-auto overscroll-contain bg-white dark:bg-slate-800 rounded-xl shadow-md border border-slate-200 dark:border-slate-700 py-2 animate-in fade-in zoom-in-95 duration-150", Z_INDEX.menuPanel)}
+              className={cn("fixed w-56 overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white py-2 shadow-md dark:border-slate-700 dark:bg-slate-800", Z_INDEX.menuPanel)}
             >
               {/* User Info */}
               <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700">
@@ -625,17 +769,17 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
                   {normaChanges > 0 && <CountBadge count={normaChanges} />}
                 </button>
                 <button type="button" role="menuitem" tabIndex={-1} onClick={fromMenu(() => navigate('/collega-app'))} className={menuItemClass}>
-                  <Bot size={16} />
+                  <Plug size={16} />
                   Collega un'app AI
                 </button>
                 <button type="button" role="menuitem" tabIndex={-1} onClick={fromMenu(() => navigate('/crediti'))} className={menuItemClass}>
                   <ScrollText size={16} />
                   Crediti
                 </button>
-                {feedbackInMenu && (
+                {openFeedback && (
                   <button type="button" role="menuitem" tabIndex={-1} onClick={fromMenu(openFeedback)} className={menuItemClass}>
-                    <MessageSquarePlus size={16} />
-                    Invia un commento
+                    <Bug size={16} />
+                    Dicci cosa ti serve
                   </button>
                 )}
                 <ServiceHealthMenuEntry health={serviceHealth} itemClassName={menuItemClass} />
@@ -674,7 +818,9 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
                   Esci
                 </button>
               </div>
-            </div>
+            </MenuSurface>
+            )}
+            </AnimatePresence>
           </>,
           document.body
         )}

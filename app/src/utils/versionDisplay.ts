@@ -104,10 +104,12 @@ export interface VersionChip {
   /** `upcoming`: the text in force today, which a later text will repeal or change (G-355). */
   tone: ValidityState | 'upcoming';
   label: string;
+  /** The same words with the day in figures («In vigore dal 19/4/1942»), for a phone's status line (LC70). */
+  short?: string;
   title: string;
 }
 
-export type BannerAction = 'go_current' | 'copy_citation' | 'open_next_day' | 'pick_date';
+export type BannerAction = 'go_current' | 'copy_citation' | 'copy_link' | 'open_next_day' | 'pick_date';
 export type BannerKind = 'historical' | 'not_yet' | 'unreliable' | 'current_in_window' | 'upcoming';
 
 export interface VersionBanner {
@@ -158,7 +160,13 @@ export interface VersionDisplay {
   updateNotesOpen: boolean;
 }
 
-function chipFor(validity: ArticleValidity): VersionChip {
+/** «In vigore dal 19/4/1942»: the day in figures, no leading zeros; undefined when the day is not an ISO one. */
+function shortFrom(isoDate: string | null | undefined): string | undefined {
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate ?? '');
+  return day ? `In vigore ${withPreposition('dal', `${Number(day[3])}/${Number(day[2])}/${day[1]}`)}` : undefined;
+}
+
+function chipFor(validity: ArticleValidity, requestedDay?: string): VersionChip {
   // The days in full, as a lawyer writes them (R3): «dal 1° gennaio 2005», «dall'8 agosto».
   const from = validity.valid_from ? withPreposition('dal', formatDateForCitation(validity.valid_from)) : '';
   const to = validity.valid_to ? withPreposition('al', formatDateForCitation(validity.valid_to)) : '';
@@ -166,7 +174,7 @@ function chipFor(validity: ArticleValidity): VersionChip {
   const title = `${SOURCE_NOTE}${version}`;
   switch (validity.state) {
     case 'current':
-      return { tone: 'current', label: from ? `In vigore ${from}` : 'In vigore', title };
+      return { tone: 'current', label: from ? `In vigore ${from}` : 'In vigore', short: shortFrom(validity.valid_from), title };
     case 'historical':
       return {
         tone: 'historical',
@@ -175,8 +183,11 @@ function chipFor(validity: ArticleValidity): VersionChip {
       };
     case 'abrogated':
       return { tone: 'abrogated', label: from ? `Abrogato ${from}` : 'Abrogato', title };
-    case 'not_yet':
-      return { tone: 'not_yet', label: 'Non ancora esistente', title };
+    case 'not_yet': {
+      // The day asked for stays in the row, which keeps the reader's place (LC139): «Al 1° gennaio 1935 l’articolo non esisteva».
+      const at = requestedDay ? withPreposition('al', formatDateForCitation(requestedDay)) : '';
+      return { tone: 'not_yet', label: at ? `${at[0].toUpperCase()}${at.slice(1)} l’articolo non esisteva` : 'Non ancora esistente', title };
+    }
   }
 }
 
@@ -201,7 +212,7 @@ function bannerFor(
       title: 'Articolo non ancora esistente',
       body: `Questo articolo non esisteva${asOf ? ` ${withPreposition('al', formatDateForCitation(asOf))}` : ''}.`
         + (firstDay ? ` È in vigore ${withPreposition('dal', formatDateForCitation(firstDay))}.` : ''),
-      actions: firstDay ? ['open_next_day', 'pick_date'] : ['pick_date'],
+      actions: firstDay ? ['go_current', 'open_next_day', 'pick_date'] : ['go_current', 'pick_date'],
       ...(firstDay ? { nextDay: firstDay } : {}),
     };
   }
@@ -216,7 +227,7 @@ function bannerFor(
         + 'Il testo in vigore a una data non dice quale disciplina si applichi al fatto: possono contare '
         + 'disposizioni transitorie, efficacia retroattiva o norme più favorevoli.',
       note: 'Note ed evidenziazioni non sono mostrate su un testo storico.',
-      actions: canCite ? ['go_current', 'copy_citation'] : ['go_current'],
+      actions: canCite ? ['go_current', 'copy_citation', 'copy_link'] : ['go_current'],
     };
   }
   if (validity.state === 'current' && requestedDay) {
@@ -306,7 +317,7 @@ export function describeVersion(
   const notYet = validity?.state === 'not_yet';
   const canCite = !notYet && !unreliable;
 
-  const chip = validity ? chipFor(validity) : null;
+  const chip = validity ? chipFor(validity, requestedDay) : null;
   const banner = validity ? bannerFor(validity, requestedDay, canCite) : null;
   // A later text announced only beside today's: a text asked for by date or as the original says nothing of it; a
   // change the web does not know (G-357 adds more), or none, says nothing; a text the source puts in force after today
@@ -360,11 +371,11 @@ export function buildTextAtDateParams(norma: NormaVisitata, choice: TextAtDateCh
   };
 }
 
-/** The tab suffix of a past text: " — testo al 29/12/2007", " — testo originale", or nothing. */
+/** The tab suffix of a past text: ", testo al 29/12/2007", ", testo originale", or nothing. */
 export function versionTabSuffix(request: { version?: string | null; versionDate?: string | null }): string {
   const date = textOf(request.versionDate);
-  if (date) return ` — testo al ${formatDateForDisplay(date)}`;
-  return asksForOriginal(request.version) ? ' — testo originale' : '';
+  if (date) return `, testo al ${formatDateForDisplay(date)}`;
+  return asksForOriginal(request.version) ? ', testo originale' : '';
 }
 
 /** The label a dossier shows on an item that holds a past text, or null for the text in force. */

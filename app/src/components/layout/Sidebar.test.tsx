@@ -13,12 +13,14 @@ vi.mock('../../hooks/useForumNotifications', () => ({
 
 import { Sidebar, SIDEBAR_SMALL_TEXT, SIDEBAR_TOGGLE_TEXT } from './Sidebar';
 import { appStore } from '../../store/useAppStore';
+import { REPEAT_CLOSE, REPEAT_OPEN } from '../../lib/motion';
 import { subscribeSearchField } from '../../utils/searchFieldControl';
 import { sectionStore } from '../../features/sections/useSection';
 import { plannerStore } from '../features/planner/plannerStore';
 
-/** Opus's entries: the planner's three views, then the dossiers. */
-const OPUS_HREFS = ['/', '/documents', '/opus/oggi', '/opus/prossimi', '/opus/ingresso', '/dossier'];
+/** Work's entries (D-315, LC47; no «Atti» since LC53, the dossier's tab): Attività, Ricerca, Dossier, then the two features with an AI model behind them,
+ *  «Analizza documento» and the Pseudonimizzatore. The planner's other two views are tabs of Work's page. */
+const OPUS_HREFS = ['/work/scadenziario', '/', '/pratiche', '/documents', '/work/pseudonimizzatore', '/work/grafo-pratiche'];
 import type { ServiceHealthState } from '../../services/healthService';
 
 /** `Layout`'s one probe of the services, handed to the sidebar (S1). */
@@ -76,7 +78,7 @@ beforeEach(() => {
 
 describe('Sidebar — accessible names', () => {
   it('names every link', () => {
-    renderSidebar();
+    renderSidebar('/forum');
     for (const name of [/Ricerca/, /Dossier/, /Analizza documento/]) {
       expect(screen.getByRole('link', { name })).toBeInTheDocument();
     }
@@ -85,7 +87,7 @@ describe('Sidebar — accessible names', () => {
   });
 
   it('has no «Ricerca Veloce» and no «Sentenze»: «Ricerca» leads to the field, ⌘K opens the palette', () => {
-    renderSidebar();
+    renderSidebar('/forum');
     expect(screen.queryByRole('button', { name: /Ricerca Veloce/ })).toBeNull();
     expect(screen.queryByRole('link', { name: /Ricerca Veloce/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Sentenze/ })).toBeNull();
@@ -93,20 +95,17 @@ describe('Sidebar — accessible names', () => {
     expect(screen.getByRole('link', { name: 'Ricerca' })).toHaveAttribute('href', '/');
   });
 
-  it('keeps the quick norms dot, now under «Ricerca»', () => {
+  it('draws no mark for the quick norms under «Ricerca» (M1: an orange dash that said nothing)', () => {
     appStore.setState({ quickNorms: [{ id: 'q1' } as never] });
     renderSidebar();
-    const dot = screen.getByTitle('1 preferiti');
-    const search = screen.getByRole('link', { name: 'Ricerca' });
-    expect(search.compareDocumentPosition(dot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(document.getElementById('tour-sidebar')).toContainElement(dot);
+    expect(screen.queryByTitle(/preferiti/)).toBeNull();
     appStore.setState({ quickNorms: [] });
   });
 
   it('«Ricerca» goes to the search page with the cursor in its field, no window over it (the owner, D1)', () => {
     const field = vi.fn();
     const unsubscribe = subscribeSearchField(field);
-    renderSidebar('/dossier');
+    renderSidebar('/forum');
     fireEvent.click(screen.getByRole('link', { name: 'Ricerca' }));
     expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/);
     expect(field).toHaveBeenCalledWith({ focus: true });
@@ -115,7 +114,7 @@ describe('Sidebar — accessible names', () => {
   });
 
   it('gives «Ricerca» the id the tours point at', () => {
-    renderSidebar();
+    renderSidebar('/forum');
     expect(document.getElementById('tour-nav-search')).toBe(screen.getByRole('link', { name: 'Ricerca' }));
     expect(document.getElementById('tour-quick-search')).toBeNull();
   });
@@ -129,7 +128,7 @@ describe('Sidebar — accessible names', () => {
   it('has the section switcher and the user menu as its only buttons, with no system buttons beside them', () => {
     renderSidebar();
     expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Sezione: Opus, cambia sezione, nuove attività nel Forum',
+      'Sezione: Work, cambia sezione, nuove attività nel Forum',
       'Menu utente',
     ]);
   });
@@ -160,70 +159,268 @@ describe('Sidebar — accessible names', () => {
   });
 });
 
-const hrefs = () => screen.getAllByRole('link').map((a) => a.getAttribute('href'));
+// The entries' addresses: the logo's link home, over them, is not an entry.
+const hrefs = () => screen.getAllByRole('link').filter((a) => a.getAttribute('aria-label') !== 'LexCraft').map((a) => a.getAttribute('href'));
 
 describe('Sidebar — the entries of each section (sections spec S6)', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('starts every section with the Corpus entries, «Ricerca» and «Analizza documento»', () => {
-    for (const path of ['/', '/studia/ripasso', '/forum']) {
+  it('starts every section but Work with the Corpus entries, «Ricerca» and «Analizza documento» (Work has its own «Ricerca»)', () => {
+    for (const path of ['/learn/ripasso', '/forum']) {
       const { unmount } = render(
         <MemoryRouter initialEntries={[path]}>
           <Sidebar theme="light" isOpen serviceHealth={serviceHealth} {...handlers} />
         </MemoryRouter>,
       );
-      expect(hrefs().slice(0, 2)).toEqual(['/', '/documents']);
+      expect(hrefs().slice(0, 3)).toEqual(['/', '/documents', '/rassegne']);
       unmount();
     }
   });
 
-  it("Opus: the planner's views, then the dossiers", () => {
+  it('Work: exactly Attività, Ricerca, Dossier, then «Analizza documento» and the Pseudonimizzatore, in this order (LC47)', () => {
     renderSidebar('/');
     expect(hrefs()).toEqual(OPUS_HREFS);
-    const opus = screen.getByRole('group', { name: 'Opus' });
-    expect(within(opus).getAllByRole('link').map((a) => a.getAttribute('aria-label'))).toEqual(['Oggi', 'Prossimi giorni', "Lista d'ingresso", 'Dossier']);
+    const opus = screen.getByRole('group', { name: 'Work' });
+    const names = within(opus).getAllByRole('link').map((a) => a.getAttribute('aria-label'));
+    expect(names).toEqual(['Attività', 'Ricerca', 'Pratiche', 'Analizza documento, in sviluppo', 'Pseudonimizzatore, in arrivo', 'Grafo delle pratiche, in arrivo']);
+    // The two apart, in a group named for a screen reader, with no heading written over them.
+    const tools = within(opus).getByRole('group', { name: "Strumenti sul documento" });
+    expect(within(tools).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['/documents', '/work/pseudonimizzatore', '/work/grafo-pratiche']);
+    expect(screen.queryByText("Strumenti sul documento")).toBeNull();
+    // Work's way to the search is its own «Ricerca», once.
+    expect(screen.getAllByRole('link', { name: 'Ricerca' })).toHaveLength(1);
   });
 
-  it('counts the overdue and today\'s tasks beside «Oggi», and says it in words (row 16)', () => {
-    plannerStore.setState({ todayCount: 3 });
+  it('Work: «Ricerca» leads to the search with the cursor in its field, and carries the id the tours point at', () => {
+    const field = vi.fn();
+    const unsubscribe = subscribeSearchField(field);
+    renderSidebar('/pratiche');
+    const corpus = screen.getByRole('link', { name: 'Ricerca' });
+    expect(document.getElementById('tour-nav-search')).toBe(corpus);
+    expect(document.getElementById('tour-nav-dossier')).toBe(screen.getByRole('link', { name: 'Pratiche' }));
+    fireEvent.click(corpus);
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/);
+    expect(field).toHaveBeenCalledWith({ focus: true });
+    unsubscribe();
+  });
+
+  it.each(['wide', 'drawer'] as const)('Work: the bar writes and names the tasks\' entry «Attività» (%s, LC130)', (layout) => {
+    // The owner, 19 Nov 2026: «al posto di scadenze io scriverei in tutta l'app […] attività».
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <Sidebar theme="light" isOpen layout={layout} serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    const entry = screen.getByRole('link', { name: /^Attività/ });
+    expect(entry.getAttribute('href')).toBe('/work/scadenziario');
+    expect(entry).toHaveTextContent(/Attività/);
+    expect(entry).not.toHaveTextContent(/Scadenz/);
+  });
+
+  it.each(['wide', 'drawer'] as const)('Learn: its own «Attività», with Work\'s icon and the «studio» tasks\' count (%s, LC130)', (layout) => {
+    plannerStore.setState({ todayCount: { work: 3, learn: 2 } });
     try {
-      renderSidebar('/opus/oggi');
-      const today = screen.getByRole('link', { name: 'Oggi, 3 compiti per oggi o scaduti' });
+      render(
+        <MemoryRouter initialEntries={['/learn/attivita/prossimi']}>
+          <Sidebar theme="light" isOpen layout={layout} serviceHealth={serviceHealth} {...handlers} />
+        </MemoryRouter>,
+      );
+      const entry = screen.getByRole('link', { name: 'Attività, 2 compiti per oggi o scaduti' });
+      expect(entry.getAttribute('href')).toBe('/learn/attivita/scadenziario');
+      // Active on every view of Learn's planner («page» on its own address, as Work's).
+      expect(entry).toHaveAttribute('aria-current', 'true');
+      expect(entry.querySelector('svg')?.getAttribute('class')).toMatch(/lucide-calendar-check/);
+      // Work's count stays Work's.
+      expect(screen.queryByText('3')).toBeNull();
+    } finally {
+      plannerStore.setState({ todayCount: null });
+    }
+  });
+
+  it.each(['wide', 'drawer'] as const)('Work: «Analizza documento» says «in sviluppo» and the Pseudonimizzatore «in arrivo» under the word (%s, LC47)', (layout) => {
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <Where />
+        <Sidebar theme="light" isOpen layout={layout} serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    const review = screen.getByRole('link', { name: 'Analizza documento, in sviluppo' });
+    expect(review).toHaveTextContent(/^Analizzain sviluppo$/);
+    expect(screen.getByRole('link', { name: 'Pseudonimizzatore, in arrivo' })).toHaveTextContent(/^Pseudonimizzain arrivo$/);
+    expect(screen.getByRole('link', { name: 'Grafo delle pratiche, in arrivo' })).toHaveTextContent(/^Grafo pratichein arrivo$/);
+    // «in sviluppo» is still a working entry: it leads to the page.
+    fireEvent.click(review);
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/documents$/);
+  });
+
+  it('Work, in the rail: the hover label says «in sviluppo» (LC47)', () => {
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <Sidebar theme="light" isOpen layout="rail" serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    pointerOver(screen.getByRole('link', { name: 'Analizza documento, in sviluppo' }), MOUSE);
+    expect(document.body.querySelector('[data-sidebar-tooltip]')).toHaveTextContent(/Analizza documento.*in sviluppo/);
+  });
+
+  it('Elsewhere «Analizza documento» stays a Corpus tool, with no label (LC47)', () => {
+    for (const path of ['/learn/ripasso', '/forum']) {
+      const { unmount } = render(
+        <MemoryRouter initialEntries={[path]}>
+          <Sidebar theme="light" isOpen layout="wide" serviceHealth={serviceHealth} {...handlers} />
+        </MemoryRouter>,
+      );
+      expect(screen.getByRole('link', { name: 'Analizza documento' })).toHaveTextContent(/^Analizza$/);
+      expect(screen.queryByText('in sviluppo')).toBeNull();
+      unmount();
+    }
+  });
+
+  it('Work: no «Atti» entry since LC53 (the acts are the dossier\'s tab)', () => {
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <Sidebar theme="light" isOpen layout="wide" serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('link', { name: 'Atti' })).toBeNull();
+  });
+
+  // LC27 (Luca, 15 Nov: «la mini colonnina … va tolta»): no sliding column in any layout; the active entry is its tile.
+  it.each(['rail', 'wide'] as const)('marks the active entry with its tile alone, no column (%s)', (layout) => {
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <Sidebar theme="light" isOpen layout={layout} serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    const today = screen.getByRole('link', { name: 'Attività' });
+    expect(today).toHaveClass('bg-primary-50');
+    expect(document.getElementById('tour-sidebar')!.querySelectorAll('svg.vlx-book')).toHaveLength(0);
+  });
+
+  // LC21: with words the active row is its tile alone; the sliding column is the rail's.
+  it.each(['wide', 'drawer'] as const)('draws no column with words (%s): the active row is marked by its tile', (layout) => {
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <Sidebar theme="light" isOpen layout={layout} serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    const today = screen.getByRole('link', { name: 'Attività' });
+    expect(today).toHaveAttribute('aria-current', 'page');
+    expect(today).toHaveClass('bg-primary-50');
+    expect(document.getElementById('tour-sidebar')!.querySelectorAll('svg.vlx-book')).toHaveLength(0);
+  });
+
+  it('keeps «Attività» lit on the planner\'s other views and the trash, «Ricerca» on the search tools, in Work', () => {
+    for (const path of ['/work/prossimi', '/work/ingresso', '/work/cestino']) {
+      renderSidebar(path);
+      const today = screen.getByRole('link', { name: 'Attività' });
+      // Lit for a page of its own, not its address: «true», so a screen reader says «current page» once, on the tab (#448).
+      expect(today, path).toHaveAttribute('aria-current', 'true');
+      expect(today, path).toHaveClass('bg-primary-50');
+      cleanup();
+    }
+    renderSidebar('/rassegne');
+    expect(screen.getByRole('link', { name: 'Ricerca' })).toHaveAttribute('aria-current', 'true');
+    cleanup();
+    // «Analizza documento» has its own entry in Work (LC47): lit there, «Ricerca» not.
+    renderSidebar('/documents');
+    expect(screen.getByRole('link', { name: 'Ricerca' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Analizza documento, in sviluppo' })).toHaveAttribute('aria-current', 'page');
+    cleanup();
+    // Elsewhere nothing changes: «Ricerca» is not lit on «Analizza documento», which is.
+    sectionStore.setState({ section: 'forum' });
+    renderSidebar('/documents');
+    expect(screen.getByRole('link', { name: 'Ricerca' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Analizza documento' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('says «page» only on the entry\'s own address, «true» when it is lit for a page under it or of its own', () => {
+    renderSidebar('/work/scadenziario');
+    expect(screen.getByRole('link', { name: 'Attività' })).toHaveAttribute('aria-current', 'page');
+    cleanup();
+    renderSidebar('/work/prossimi');
+    expect(screen.getByRole('link', { name: 'Attività' })).toHaveAttribute('aria-current', 'true');
+    cleanup();
+    sectionStore.setState({ section: 'gymnasium' });
+    renderSidebar('/learn/schede/42');
+    expect(screen.getByRole('link', { name: 'Le mie schede' })).toHaveAttribute('aria-current', 'true');
+  });
+
+  // Papiniano, #448 note 8: each entry was two Tab stops, the second (the icon's box, given `tabindex="0"` by
+  // framer-motion's `whileTap`) with the browser's blue ring.
+  it('is one Tab stop per entry, and one for the avatar: nothing focusable inside them', () => {
+    for (const layout of ['wide', 'rail', 'drawer'] as const) {
+      render(
+        <MemoryRouter initialEntries={['/work/scadenziario']}>
+          <Sidebar theme="light" isOpen layout={layout} serviceHealth={serviceHealth} {...handlers} />
+        </MemoryRouter>,
+      );
+      const controls = [...screen.getAllByRole('link'), screen.getByRole('button', { name: /Menu utente/ })];
+      for (const control of controls) {
+        expect(control.querySelectorAll('[tabindex]:not([tabindex="-1"]), a, button'), control.getAttribute('aria-label') ?? '').toHaveLength(0);
+      }
+      cleanup();
+    }
+  });
+
+  it('draws no lone rule over Work\'s entries, where the Corpus ones were', () => {
+    renderSidebar('/work/scadenziario');
+    expect(screen.getByRole('group', { name: 'Work' })).not.toHaveClass('border-t');
+    cleanup();
+    renderSidebar('/forum');
+    expect(screen.getByRole('group', { name: 'Forum' })).toHaveClass('border-t');
+  });
+
+  it('writes «in arrivo» under no Work entry but the Pseudonimizzatore and the Grafo delle pratiche (LC47, LC48)', () => {
+    render(
+      <MemoryRouter initialEntries={['/work/scadenziario']}>
+        <Sidebar theme="light" isOpen layout="wide" serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    expect(within(document.getElementById('tour-sidebar')!).getAllByText('in arrivo')).toHaveLength(2);
+  });
+
+  it('counts the overdue and today\'s tasks beside «Attività», and says it in words (row 16)', () => {
+    plannerStore.setState({ todayCount: { work: 3, learn: 0 } });
+    try {
+      renderSidebar('/work/scadenziario');
+      const today = screen.getByRole('link', { name: 'Attività, 3 compiti per oggi o scaduti' });
       expect(today).toHaveAttribute('aria-current', 'page');
       expect(today).toHaveTextContent('3');
-      cleanupAndRender('/opus/oggi', () => plannerStore.setState({ todayCount: 0 }));
-      expect(screen.getByRole('link', { name: 'Oggi' })).not.toHaveTextContent(/\d/);
+      cleanupAndRender('/work/scadenziario', () => plannerStore.setState({ todayCount: { work: 0, learn: 0 } }));
+      expect(screen.getByRole('link', { name: 'Attività' })).not.toHaveTextContent(/\d/);
     } finally {
       plannerStore.setState({ todayCount: null });
     }
   });
 
   it('Gymnasium: «Studia» holds Oggi, Progressi and the dossiers, «Contribuisci» Le mie schede and, for a validator only, «Da validare» (Gymnasium spec §4)', () => {
-    renderSidebar('/studia/schede');
-    expect(hrefs()).toEqual(['/', '/documents', '/studia/ripasso', '/studia/progressi', '/dossier', '/studia/schede']);
+    renderSidebar('/learn/schede');
+    expect(hrefs()).toEqual(['/', '/documents', '/rassegne', '/learn/ripasso', '/learn/progressi', '/learn/attivita/scadenziario', '/pratiche', '/learn/schede']);
     expect(screen.getByRole('link', { name: 'Le mie schede' })).toHaveAttribute('aria-current', 'page');
-    const study = screen.getByRole('group', { name: 'Studia' });
-    expect(within(study).getAllByRole('link').map((a) => a.getAttribute('aria-label'))).toEqual(['Oggi', 'Progressi', 'Dossier']);
-    expect(screen.getByRole('group', { name: 'Gymnasium' })).toContainElement(study);
-    cleanupAndRender('/studia/schede', () => { account.isValidator = true; });
-    expect(hrefs()).toEqual(['/', '/documents', '/studia/ripasso', '/studia/progressi', '/dossier', '/studia/schede', '/studia/valida']);
+    // One group reads «Learn» (LC4: the section's, its first heading's entries straight inside it), «Contribuisci» within.
+    const section = screen.getByRole('group', { name: 'Learn' });
+    expect(within(section).getAllByRole('link').map((a) => a.getAttribute('aria-label'))).toEqual(['Oggi', 'Progressi', 'Attività', 'Pratiche', 'Le mie schede']);
+    expect(section).toContainElement(screen.getByRole('group', { name: 'Contribuisci' }));
+    cleanupAndRender('/learn/schede', () => { account.isValidator = true; });
+    expect(hrefs()).toEqual(['/', '/documents', '/rassegne', '/learn/ripasso', '/learn/progressi', '/learn/attivita/scadenziario', '/pratiche', '/learn/schede', '/learn/valida']);
     const contribute = screen.getByRole('group', { name: 'Contribuisci' });
     expect(within(contribute).getAllByRole('link').map((a) => a.getAttribute('aria-label'))).toEqual(['Le mie schede', 'Da validare']);
     // The tours still find the dossiers.
-    expect(document.getElementById('tour-nav-dossier')).toBe(screen.getByRole('link', { name: 'Dossier' }));
+    expect(document.getElementById('tour-nav-dossier')).toBe(screen.getByRole('link', { name: 'Pratiche' }));
   });
 
   it('keeps the section on a Corpus page after it', () => {
     sectionStore.setState({ section: 'gymnasium' });
-    renderSidebar('/dossier');
-    expect(screen.getByRole('group', { name: 'Gymnasium' })).toBeInTheDocument();
+    renderSidebar('/pratiche');
+    expect(screen.getByRole('group', { name: 'Learn' })).toBeInTheDocument();
   });
 
   it('Forum: «Dossier pubblici» with its count, and «Community»; «Forum» is the group, written once', () => {
     renderSidebar('/forum');
-    expect(hrefs()).toEqual(['/', '/documents', '/forum', '/forum/community']);
+    expect(hrefs()).toEqual(['/', '/documents', '/rassegne', '/forum', '/forum/community']);
     const forum = screen.getByRole('group', { name: 'Forum' });
     expect(within(forum).getAllByRole('link').map((a) => a.getAttribute('aria-label'))).toEqual(['Dossier pubblici, 3 notifiche', 'Community']);
     expect(screen.queryByRole('link', { name: /^Forum/ })).toBeNull();
@@ -240,21 +437,29 @@ describe('Sidebar — the entries of each section (sections spec S6)', () => {
 
   it('Academia: «Assistente» and «Grafo», with the development mode only (S12)', () => {
     account.devMode = true;
-    renderSidebar('/merlt');
-    expect(hrefs()).toEqual(['/', '/documents', '/merlt', '/grafo']);
+    renderSidebar('/labs');
+    expect(hrefs()).toEqual(['/', '/documents', '/rassegne', '/labs', '/labs/grafo']);
+    // «Assistente» stays lit on the hub's own pages, not on the graph's (#448).
+    for (const path of ['/labs/contribuisci', '/labs/valida']) {
+      cleanupAndRender(path, () => { account.devMode = true; });
+      expect(screen.getByRole('link', { name: 'Assistente' }), path).toHaveAttribute('aria-current', 'true');
+    }
+    cleanupAndRender('/labs/grafo', () => { account.devMode = true; });
+    expect(screen.getByRole('link', { name: 'Assistente' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Grafo' })).toHaveAttribute('aria-current', 'page');
     // Without the mode the section is not offered: a stored Academia falls back to Opus.
     cleanupAndRender('/', () => { account.devMode = false; sectionStore.setState({ section: 'academia' }); });
     expect(hrefs()).toEqual(OPUS_HREFS);
-    expect(screen.queryByRole('link', { name: /Grafo|Assistente/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /^(Grafo|Assistente)$/ })).toBeNull();
   });
 
   it('Academia follows the MERL-T flags: only «Assistente» with the graph off, nothing with MERL-T off', () => {
     account.devMode = true;
     vi.stubEnv('VITE_FEATURE_MERLT_GRAPH', 'false');
-    renderSidebar('/merlt');
-    expect(hrefs()).toEqual(['/', '/documents', '/merlt']);
-    cleanupAndRender('/merlt', () => vi.stubEnv('VITE_FEATURE_MERLT', 'false'));
-    expect(hrefs()).toEqual(['/', '/documents']);
+    renderSidebar('/labs');
+    expect(hrefs()).toEqual(['/', '/documents', '/rassegne', '/labs']);
+    cleanupAndRender('/labs', () => vi.stubEnv('VITE_FEATURE_MERLT', 'false'));
+    expect(hrefs()).toEqual(['/', '/documents', '/rassegne']);
   });
 
   it('offers no Gymnasium when VITE_FEATURE_STUDIA is off', () => {
@@ -277,25 +482,32 @@ describe('Sidebar — the entries of each section (sections spec S6)', () => {
     fireEvent.click(screen.getByRole('menuitemradio', { name: /Forum/ }));
     expect(screen.getByTestId('where')).toHaveTextContent('/forum');
     expect(handlers.closeMobile).toHaveBeenCalled();
-    expect(hrefs()).toEqual(['/', '/documents', '/forum', '/forum/community']);
+    expect(hrefs()).toEqual(['/', '/documents', '/rassegne', '/forum', '/forum/community']);
   });
 
-  it('fades in the new section\'s entries only, never the Corpus ones above them (T1)', () => {
-    // jsdom has no Web Animations: the spy records which elements fade in.
-    const animate = vi.fn();
+  // Papiniano's pass on #457: from Work to Learn the column glided in from 41 px above. framer-motion's `LayoutGroup`
+  // reads its `id` once, so every section shared the first one's and the columns of two sections were one shape.
+  it('draws a new section\'s entries afresh, so its column appears in place instead of gliding from the old one', () => {
+    renderSidebar('/');
+    const work = screen.getByRole('group', { name: 'Work' });
+    fireEvent.click(screen.getByRole('button', { name: /^Sezione:/ }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Forum/ }));
+    expect(screen.getByRole('group', { name: 'Forum' })).not.toBe(work);
+    expect(work.isConnected).toBe(false);
+  });
+
+  it('draws the new section\'s entries at once, with no cascade (T1, LC129)', () => {
+    // jsdom has no Web Animations: the spy records what moves (the menu's roll-up listens to its end).
+    const animate = vi.fn(() => ({ cancel: vi.fn(), reverse: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn() }));
     Element.prototype.animate = animate as unknown as typeof Element.prototype.animate;
     try {
       renderSidebar('/');
-      expect(animate).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole('button', { name: /^Sezione:/ }));
       fireEvent.click(screen.getByRole('menuitemradio', { name: /Forum/ }));
-      // The switcher's own menu moves too (S6); the navigation's entries are what this counts.
+      // The switcher's own menu moves (S6); nothing in the navigation does.
       const nav = document.getElementById('tour-sidebar')!;
-      const faded = (animate.mock.contexts as HTMLElement[]).filter((el) => nav.contains(el));
-      expect(faded.length).toBeGreaterThan(0);
-      const forum = screen.getByRole('group', { name: 'Forum' });
-      for (const entry of faded) expect(forum).toContainElement(entry);
-      expect(faded).toContain(screen.getByRole('link', { name: 'Community' }));
+      expect((animate.mock.contexts as HTMLElement[]).filter((el) => nav.contains(el))).toEqual([]);
+      expect(screen.getByRole('link', { name: 'Community' })).toBeInTheDocument();
     } finally {
       delete (Element.prototype as Partial<Element>).animate;
     }
@@ -304,7 +516,7 @@ describe('Sidebar — the entries of each section (sections spec S6)', () => {
 
 describe('Sidebar — Cronologia in the user menu (the owner, 13 Oct 2026)', () => {
   it('is not in the navigation: it is an entry of the user menu, after Impostazioni, that opens the history', () => {
-    renderSidebar('/dossier');
+    renderSidebar('/pratiche');
     expect(screen.queryByRole('link', { name: /Cronologia/ })).toBeNull();
     openUserMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Cronologia' }));
@@ -388,7 +600,7 @@ describe('Sidebar — the user menu (spec D2)', () => {
     expect(screen.queryByRole('menu', { name: 'Menu utente' })).toBeNull();
   });
 
-  it('holds «Invia un commento» on a phone, after «Crediti», and opens the form from it (M1)', () => {
+  it('holds «Dicci cosa ti serve» in the user menu, after «Crediti», and opens it from there (LC92)', () => {
     const openFeedback = vi.fn();
     render(
       <MemoryRouter>
@@ -397,11 +609,37 @@ describe('Sidebar — the user menu (spec D2)', () => {
     );
     openUserMenu();
     const names = screen.getAllByRole('menuitem').map((e) => e.textContent?.trim());
-    expect(names.indexOf('Invia un commento')).toBe(names.indexOf('Crediti') + 1);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Invia un commento' }));
+    expect(names.indexOf('Dicci cosa ti serve')).toBe(names.indexOf('Crediti') + 1);
+    expect(names).not.toContain('Commenti');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Dicci cosa ti serve' }));
     expect(openFeedback).toHaveBeenCalledTimes(1);
     expect(handlers.closeMobile).toHaveBeenCalled();
     expect(screen.queryByRole('menu', { name: 'Menu utente' })).toBeNull();
+  });
+
+  // LC92: the bug beside «Impostazioni» at the bar's foot, in the drawer and in the wide bar.
+  it.each(['drawer', 'wide'] as const)('draws the bug beside «Impostazioni» (%s) and opens «Dicci cosa ti serve» from it', (layout) => {
+    const openFeedback = vi.fn();
+    render(
+      <MemoryRouter>
+        <Sidebar theme="light" isOpen serviceHealth={serviceHealth} {...handlers} openFeedback={openFeedback} layout={layout} />
+      </MemoryRouter>,
+    );
+    const bug = screen.getByRole('button', { name: 'Dicci cosa ti serve' });
+    expect(bug).toHaveAttribute('title', 'Dicci cosa ti serve');
+    expect(bug.parentElement).toBe(screen.getByRole('button', { name: 'Impostazioni' }).parentElement);
+    fireEvent.click(bug);
+    expect(openFeedback).toHaveBeenCalledTimes(1);
+    expect(handlers.closeMobile).toHaveBeenCalled();
+  });
+
+  it('draws no bug without the handler (signed out)', () => {
+    render(
+      <MemoryRouter>
+        <Sidebar theme="light" isOpen serviceHealth={serviceHealth} {...handlers} layout="drawer" />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('button', { name: 'Dicci cosa ti serve' })).toBeNull();
   });
 
   it('takes the closed drawer out of reach (inert), and only the drawer', () => {
@@ -425,7 +663,24 @@ describe('Sidebar — the user menu (spec D2)', () => {
     expect(container.querySelector('aside')).not.toHaveAttribute('inert');
   });
 
-  it('leaves «Invia un commento» to the floating button from md', () => {
+  it('slides the phone\'s drawer as a repeated action: in on REPEAT_OPEN, out on REPEAT_CLOSE; the rail has no times of its own (LC133)', () => {
+    const at = (isOpen: boolean, layout: 'drawer' | 'rail') => (
+      <MemoryRouter>
+        <Sidebar theme="light" isOpen={isOpen} serviceHealth={serviceHealth} {...handlers} layout={layout} />
+      </MemoryRouter>
+    );
+    const { container, rerender } = render(at(false, 'drawer'));
+    const aside = () => container.querySelector('aside')!;
+    expect(aside().style.transitionDuration).toBe(`${REPEAT_CLOSE.duration}ms`);
+    rerender(at(true, 'drawer'));
+    expect(aside().style.transitionDuration).toBe(`${REPEAT_OPEN.duration}ms`);
+    expect(aside().style.transitionTimingFunction).toBe(REPEAT_OPEN.easing);
+    expect(aside().className).not.toMatch(/duration-\(--dur-scene\)/);
+    rerender(at(true, 'rail'));
+    expect(aside().style.transitionDuration).toBe('');
+  });
+
+  it('keeps «Dicci cosa ti serve» in the user menu from md too: the rail has no bug at its foot (LC92)', () => {
     const original = window.matchMedia;
     window.matchMedia = ((query: string) => ({ ...original(query), matches: query === '(min-width: 768px)' })) as typeof window.matchMedia;
     try {
@@ -434,8 +689,9 @@ describe('Sidebar — the user menu (spec D2)', () => {
           <Sidebar theme="light" isOpen serviceHealth={serviceHealth} {...handlers} openFeedback={vi.fn()} />
         </MemoryRouter>,
       );
+      expect(screen.queryByRole('button', { name: 'Dicci cosa ti serve' })).toBeNull();
       openUserMenu();
-      expect(screen.queryByRole('menuitem', { name: 'Invia un commento' })).toBeNull();
+      expect(screen.getByRole('menuitem', { name: 'Dicci cosa ti serve' })).toBeInTheDocument();
     } finally {
       window.matchMedia = original;
     }
@@ -663,10 +919,10 @@ describe('Sidebar — it fits a low window', () => {
 
   it('draws a hover label outside the scrolling navigation and the aside, and removes it on leave', async () => {
     renderSidebar();
-    const link = screen.getByRole('link', { name: 'Dossier' });
+    const link = screen.getByRole('link', { name: 'Pratiche' });
     pointerOver(link, MOUSE);
     const tooltip = document.body.querySelector('[data-sidebar-tooltip]') as HTMLElement;
-    expect(tooltip).toHaveTextContent('Dossier');
+    expect(tooltip).toHaveTextContent('Pratiche');
     expect(document.getElementById('tour-sidebar')).not.toContainElement(tooltip);
     expect(screen.getByRole('complementary')).not.toContainElement(tooltip);
     expect(tooltip).toHaveClass('fixed', 'z-[1400]');
@@ -677,7 +933,7 @@ describe('Sidebar — it fits a low window', () => {
 
 // A label that stays on screen after a tap, or over a dialog opened by the click, is worse than none.
 describe.each([
-  ['a link', () => screen.getByRole('link', { name: 'Dossier' })],
+  ['a link', () => screen.getByRole('link', { name: 'Pratiche' })],
 ])('Sidebar — when the label of %s shows', (_name, control) => {
   it('for a mouse pointer over it, not for a touch', () => {
     renderSidebar();
@@ -736,6 +992,7 @@ describe('Sidebar — the words', () => {
   function renderLayout(layout: 'rail' | 'wide' | 'drawer', path = '/', onToggleWide?: () => void) {
     render(
       <MemoryRouter initialEntries={[path]}>
+        <Where />
         <Sidebar theme="light" isOpen layout={layout} onToggleWide={onToggleWide} serviceHealth={serviceHealth} {...handlers} />
       </MemoryRouter>,
     );
@@ -743,32 +1000,44 @@ describe('Sidebar — the words', () => {
 
   it.each(['wide', 'drawer'] as const)('writes each entry beside its icon (%s), with the same names and ids', (layout) => {
     renderLayout(layout, '/forum');
-    for (const name of ['Ricerca', 'Analizza documento']) {
-      expect(screen.getByRole('link', { name })).toHaveTextContent(name);
-    }
+    expect(screen.getByRole('link', { name: 'Ricerca' })).toHaveTextContent('Ricerca');
+    // «Analizza documento» would be cut in the 224 px bar: the word «Analizza», the name whole (it starts with it).
+    expect(screen.getByRole('link', { name: 'Analizza documento' })).toHaveTextContent(/^Analizza$/);
     expect(document.getElementById('tour-nav-search')).toBe(screen.getByRole('link', { name: 'Ricerca' }));
     // The count rides the name and sits at the end of the row.
     const forum = screen.getByRole('link', { name: 'Dossier pubblici, 3 notifiche' });
     expect(forum).toHaveTextContent(/^Dossier pubblici3$/);
     expect(screen.getByRole('link', { name: 'Community' })).toHaveTextContent(/^Community$/);
-    // The section is named beside its mark, on the split button's left part, which goes to its home (S6).
-    expect(screen.getByRole('button', { name: 'Vai a Forum: Dossier pubblici' })).toHaveTextContent('Forum');
-    expect(screen.getByRole('button', { name: 'Cambia sezione' })).toHaveAttribute('aria-haspopup', 'menu');
+    // The sections are a row of tabs (LC21); the active one says it goes to its home (S6). No switcher menu.
+    const tabs = screen.getByRole('group', { name: 'Sezioni' });
+    expect(within(tabs).getAllByRole('button').map((b) => b.textContent)).toEqual(['Work', 'Learn', 'Forum']);
+    const current = within(tabs).getByRole('button', { name: 'Vai a Forum: Dossier pubblici' });
+    expect(current).toHaveAttribute('aria-current', 'true');
+    expect(within(tabs).getAllByRole('button').filter((b) => b.hasAttribute('aria-current'))).toEqual([current]);
+    expect(screen.queryByRole('button', { name: 'Cambia sezione' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Sezione:/ })).toBeNull();
+    // Rows of 36 px (44 in the drawer, a touch target), icons of 18.
+    const community = screen.getByRole('link', { name: 'Community' });
+    expect(community).toHaveClass(layout === 'drawer' ? 'h-11' : 'h-9');
+    expect(community.querySelector('svg')).toHaveAttribute('width', '18');
     // The username is shown, so the name carries it (label in name).
     expect(screen.getByRole('button', { name: 'Menu utente di tester' })).toHaveTextContent('tester');
   });
 
-  it('writes the group headings: the section, or Gymnasium\'s «Studia» and «Contribuisci»', () => {
-    renderLayout('wide', '/dossier');
-    expect(within(screen.getByRole('group', { name: 'Opus' })).getByText('Opus')).toBeInTheDocument();
+  it('writes no section name over its entries (it is on the tab above), only the other headings, as «Contribuisci»', () => {
+    renderLayout('wide', '/pratiche');
+    expect(within(screen.getByRole('group', { name: 'Work' })).queryByText('Work')).toBeNull();
     cleanup();
-    renderLayout('wide', '/studia/ripasso');
-    expect(within(screen.getByRole('group', { name: 'Studia' })).getByText('Studia')).toBeInTheDocument();
-    expect(within(screen.getByRole('group', { name: 'Contribuisci' })).getByText('Contribuisci')).toBeInTheDocument();
+    renderLayout('wide', '/forum');
+    expect(within(screen.getByRole('group', { name: 'Forum' })).queryByText('Forum')).toBeNull();
+    cleanup();
+    renderLayout('wide', '/learn/ripasso');
+    expect(within(screen.getByRole('group', { name: 'Learn' })).queryByText('Learn')).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Contribuisci' })).getByText('Contribuisci')).toHaveClass('uppercase', 'text-[11px]');
     cleanup();
     // The rail has no room for them.
-    renderLayout('rail', '/studia/ripasso');
-    expect(screen.queryByText('Studia')).toBeNull();
+    renderLayout('rail', '/learn/ripasso');
+    expect(screen.queryByText('Learn')).toBeNull();
     expect(screen.getByRole('link', { name: 'Oggi' }).textContent).toBe('');
   });
 
@@ -790,30 +1059,69 @@ describe('Sidebar — the words', () => {
   });
 
   it('draws its 11 px texts, the headings and the shortcut, in the colour that keeps AA (theme.test.ts)', () => {
-    renderLayout('wide', '/studia/ripasso');
-    expect(within(screen.getByRole('group', { name: 'Studia' })).getByText('Studia')).toHaveClass(...SIDEBAR_SMALL_TEXT.split(' '));
+    renderLayout('wide', '/learn/ripasso');
+    expect(within(screen.getByRole('group', { name: 'Contribuisci' })).getByText('Contribuisci')).toHaveClass('text-[11px]', ...SIDEBAR_SMALL_TEXT.split(' '));
     const shortcut = screen.getByRole('link', { name: 'Ricerca' }).querySelector('kbd') as HTMLElement;
     expect(shortcut).toHaveClass('text-[11px]', ...SIDEBAR_SMALL_TEXT.split(' '));
   });
 
+  it('offers Labs as a fourth tab in the development mode only, and a tab goes to its section\'s home', () => {
+    account.devMode = true;
+    renderLayout('drawer', '/work/scadenziario');
+    const tabs = screen.getByRole('group', { name: 'Sezioni' });
+    expect(within(tabs).getAllByRole('button').map((b) => b.textContent)).toEqual(['Work', 'Learn', 'Forum', 'Labs']);
+    expect(within(tabs).getByRole('button', { name: 'Vai a Work: Attività' })).toHaveAttribute('aria-current', 'true');
+    // 44 px in the drawer, a touch target.
+    expect(within(tabs).getByRole('button', { name: 'Labs' })).toHaveClass('h-11');
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Learn' }));
+    expect(screen.getByTestId('where')).toHaveTextContent('/learn/ripasso');
+    expect(handlers.closeMobile).toHaveBeenCalled();
+  });
+
+  it('keeps the one switcher button in the rail, which four words would not fit', () => {
+    renderLayout('rail', '/forum');
+    expect(screen.queryByRole('group', { name: 'Sezioni' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Sezione: Forum, cambia sezione/ })).toBeInTheDocument();
+  });
+
+  it.each(['wide', 'drawer'] as const)('keeps «Impostazioni» in sight at the foot (%s), between the user button and «Riduci»; it opens the settings and closes the drawer', (layout) => {
+    renderLayout(layout, '/', layout === 'wide' ? vi.fn() : undefined);
+    const settings = screen.getByRole('button', { name: 'Impostazioni' });
+    expect(settings).toHaveClass(layout === 'drawer' ? 'h-11' : 'h-9');
+    const user = screen.getByRole('button', { name: 'Menu utente di tester' });
+    expect(user.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    if (layout === 'wide') {
+      const narrow = screen.getByRole('button', { name: 'Riduci la barra laterale' });
+      expect(settings.compareDocumentPosition(narrow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    fireEvent.click(settings);
+    expect(handlers.openSettings).toHaveBeenCalledTimes(1);
+    expect(handlers.closeMobile).toHaveBeenCalled();
+  });
+
+  it('draws no «Impostazioni» button in the rail, which keeps it in the user menu', () => {
+    renderLayout('rail');
+    expect(screen.queryByRole('button', { name: 'Impostazioni' })).toBeNull();
+  });
+
   it('shows no hover label where the word is written', () => {
     renderLayout('wide');
-    pointerOver(screen.getByRole('link', { name: 'Dossier' }), MOUSE);
+    pointerOver(screen.getByRole('link', { name: 'Pratiche' }), MOUSE);
     expect(label()).toBeNull();
   });
 
   it('shows the palette\'s shortcut beside «Ricerca» on the desktop, as the keyboard writes it, not in the phone\'s drawer', () => {
-    renderLayout('wide');
+    renderLayout('wide', '/forum');
     // Read once when the module loads, from `navigator.platform`: «⌘K» on a Mac, «Ctrl K» elsewhere.
     expect(screen.getByRole('link', { name: 'Ricerca' })).toHaveTextContent(/^Ricerca(⌘K|Ctrl K)$/);
     cleanup();
-    renderLayout('drawer');
+    renderLayout('drawer', '/forum');
     expect(screen.getByRole('link', { name: 'Ricerca' })).toHaveTextContent(/^Ricerca$/);
   });
 
   it('gives the drawer rows of 44 px and a foot clear of the home indicator', () => {
     renderLayout('drawer');
-    for (const link of screen.getAllByRole('link')) expect(link).toHaveClass('h-11', 'w-full');
+    for (const link of within(screen.getByRole('navigation')).getAllByRole('link')) expect(link).toHaveClass('h-11', 'w-full');
     expect(screen.getByRole('complementary')).toHaveClass('w-[17rem]');
     expect(screen.getByRole('button', { name: 'Menu utente di tester' }).parentElement).toHaveClass('pb-[max(1rem,env(safe-area-inset-bottom))]');
   });
@@ -826,6 +1134,45 @@ describe('Sidebar — the words', () => {
     const menu = screen.getByRole('menu', { name: 'Menu utente' });
     expect(menu.style.left).toBe('10px');
     expect(menu.style.bottom).toBe(`${window.innerHeight - 700 + 8}px`);
+  });
+
+  it.each(['wide', 'drawer'] as const)('heads the bar with the LexCraft logo (%s), a link home and its first Tab stop (LC16)', (layout) => {
+    renderLayout(layout, '/forum');
+    const home = screen.getAllByRole('link')[0];
+    expect(home).toHaveAccessibleName('LexCraft');
+    expect(home).toHaveAttribute('href', '/');
+    // The wordmark, not the column alone; still unless the shell asks for its sweep.
+    const logo = within(home).getByRole('img', { name: 'LexCraft' });
+    expect(logo).toHaveClass('vlx-logo');
+    expect(logo).not.toHaveClass('vlx-logo-sweep');
+    // Its own row, over the switcher's (the tours still find the switcher).
+    expect(home.compareDocumentPosition(document.getElementById('tour-section-switcher')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('in the rail keeps only the column, the same link, centred over the icons and still', () => {
+    renderLayout('rail', '/forum');
+    const home = screen.getAllByRole('link')[0];
+    expect(home).toHaveAccessibleName('LexCraft');
+    expect(home).toHaveAttribute('href', '/');
+    expect(home.querySelector('.vlx-logo')).toBeNull();
+    expect(home.querySelector('.vlx-book')).not.toBeNull();
+    expect(home.parentElement).toHaveClass('justify-center');
+  });
+
+  it('sweeps the logo when the shell says it is due, never in the rail', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Sidebar theme="light" isOpen layout="wide" logoSweep serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('img', { name: 'LexCraft' })).toHaveClass('vlx-logo-sweep');
+    cleanup();
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Sidebar theme="light" isOpen layout="rail" logoSweep serviceHealth={serviceHealth} {...handlers} />
+      </MemoryRouter>,
+    );
+    expect(document.querySelector('.vlx-logo-sweep')).toBeNull();
   });
 
   it('offers the toggle that narrows or widens the bar only when the layout gives one, never in the drawer', () => {

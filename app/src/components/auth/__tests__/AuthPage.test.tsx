@@ -50,8 +50,24 @@ describe('AuthPage: two tabs on one page', () => {
     expect(tab('Accedi')).toHaveAttribute('aria-selected', 'true');
     expect(tab('Registrati')).toHaveAttribute('aria-selected', 'false');
     expect(panel()).toHaveAttribute('aria-labelledby', 'auth-tab-login');
-    expect(tab('Accedi')).toHaveAttribute('aria-controls', 'auth-panel-login');
+    // The common row (LC116) names the box of the two panels; each panel is named by its tab.
+    expect(tab('Accedi')).toHaveAttribute('aria-controls', 'auth');
+    expect(document.getElementById('auth')).toContainElement(panel());
     expect(within(panel()).getByRole('button', { name: 'Accedi' })).toBeInTheDocument();
+  });
+
+  // LC116: the common fields keep what a password manager reads: the same ids, types and `autocomplete`, no `name` added.
+  it('keeps every field\'s id, type and autocomplete as before', () => {
+    renderAuth('/login');
+    const fields = [...document.querySelectorAll('input')].map((input) => [input.id, input.type, input.getAttribute('autocomplete'), input.getAttribute('name')]);
+    expect(fields).toEqual([
+      ['login-email', 'email', 'email', null],
+      ['login-password', 'password', 'current-password', null],
+      ['register-email', 'email', 'email', null],
+      ['register-username', 'text', 'username', null],
+      ['register-password', 'password', 'new-password', null],
+      ['register-confirm-password', 'password', 'new-password', null],
+    ]);
   });
 
   it('opens «Registrati» from /register', () => {
@@ -113,13 +129,14 @@ describe('AuthPage: two tabs on one page', () => {
     expect(within(panel()).getByLabelText('Email')).toHaveFocus();
   });
 
-  it('slides the mark under the tabs with a transform', () => {
+  // LC116: the app's one row of tabs, small (44 px on a phone, 36 from md), its mark under the chosen tab.
+  it('draws the tabs with the common row, its mark under the chosen one', () => {
     renderAuth('/login');
-    const mark = screen.getByTestId('auth-tab-mark');
-    expect(mark.style.transform).toBe('translateX(0)');
-    expect(mark.className).toContain('transition-transform');
+    expect(tab('Accedi')).toHaveClass('min-h-11', 'md:min-h-8', 'rounded-md');
+    expect(tab('Accedi').querySelector('[data-segmented-mark]')).not.toBeNull();
     fireEvent.click(tab('Registrati'));
-    expect(mark.style.transform).toBe('translateX(100%)');
+    expect(tab('Accedi').querySelector('[data-segmented-mark]')).toBeNull();
+    expect(tab('Registrati').querySelector('[data-segmented-mark]')).not.toBeNull();
   });
 
   it('fades the form out, hidden and out of reach, while the next one comes in from the side of its tab', () => {
@@ -151,16 +168,12 @@ describe('AuthPage: two tabs on one page', () => {
     expect(within(panel()).getByLabelText('Email')).toHaveValue('avv@studio.it');
   });
 
-  it('the first field still disabled while the user is read takes the focus once enabled', () => {
+  it('keeps «Accedi» and its fields enabled while the session is checked on mounting: only a sign-in disables them (LC131)', () => {
+    // The check `useAuth` runs on mounting drew the button at half opacity for a frame, then faded it in.
     authLoading = true;
-    const { rerenderSame } = renderAuth('/register');
-    fireEvent.click(tab('Accedi'));
-    const email = within(panel()).getByLabelText('Email');
-    expect(email).toBeDisabled();
-    expect(email).not.toHaveFocus();
-    authLoading = false;
-    rerenderSame();
-    expect(email).toHaveFocus();
+    renderAuth('/login');
+    expect(within(panel()).getByRole('button', { name: 'Accedi' })).toBeEnabled();
+    expect(within(panel()).getByLabelText('Email')).toBeEnabled();
   });
 
   it('opens «Registrati» from an address written in capitals', () => {
@@ -225,7 +238,7 @@ describe('AuthPage: two tabs on one page', () => {
     expect(address()).toHaveTextContent('/login');
     expect(tab('Accedi')).toHaveAttribute('aria-selected', 'true');
     await act(async () => finish());
-    expect(await screen.findByRole('status', { name: 'Accesso a VisuaLex' })).toBeInTheDocument();
+    expect(await screen.findByRole('status', { name: 'Accesso a LexCraft' })).toBeInTheDocument();
   });
 
   it('holds the tabs still while a sign-up is on its way, so its confirmation shows', async () => {
@@ -269,16 +282,14 @@ describe('AuthPage: two tabs on one page', () => {
     expect(allPanels()).toHaveLength(2);
   });
 
-  it('centres the colophon against the card on a computer, above it on a phone', () => {
+  // LC31 (Luca, 15 Nov): one centred column, the wordmark large and the slogan close under it, the card under both.
+  it('centres the wordmark, the slogan and the card in one column', () => {
     renderAuth('/login');
     const colophon = screen.getByRole('banner');
-    // The card hangs from the top of its row; the colophon is as tall as the card on «Accedi» and centred in it.
-    expect(colophon.parentElement!.className).toContain('md:items-start');
-    expect(colophon).toHaveClass('md:min-h-[var(--login-card-h,32rem)]', 'md:justify-center');
-    expect(colophon.className).toMatch(/(^|\s)items-center\b/);
-    expect(colophon.className).toMatch(/(^|\s)text-center\b/);
-    expect(colophon.className).toContain('md:items-start');
-    expect(colophon.className).toContain('md:text-left');
+    expect(colophon.parentElement!).toHaveClass('mx-auto', 'max-w-[420px]', 'flex-col');
+    expect(colophon).toHaveClass('items-center', 'text-center', 'gap-3');
+    expect(colophon).toHaveTextContent('La legge è ancora uguale per tutti');
+    expect(colophon.nextElementSibling).toBe(screen.getByRole('main'));
   });
 
   /** The end of the box's height transition: jsdom has no `TransitionEvent`, so its `propertyName` is given by hand. */
@@ -306,12 +317,12 @@ describe('AuthPage: two tabs on one page', () => {
     expect(frame.style.height).toBe('');
     expect(frame).toHaveClass('overflow-clip');
     expect(page.style.getPropertyValue('--login-card-h')).toBe('420px');
-    expect(page.querySelector('.md\\:pt-\\[max\\(1\\.5rem\\2c calc\\(\\(100dvh-4rem-var\\(--login-card-h\\2c 32rem\\)\\)\\/2\\)\\)\\]')).not.toBeNull();
+    expect(page.querySelector('.md\\:pt-\\[max\\(2rem\\2c calc\\(\\(100dvh-4rem-11rem-var\\(--login-card-h\\2c 32rem\\)\\)\\/2\\)\\)\\]')).not.toBeNull();
 
     fireEvent.click(tab('Registrati'));
     // From the old height to the new, in 220 ms; the page's centre is still «Accedi»'s.
     expect(frame.style.height).toBe('300px');
-    expect(frame).toHaveClass('transition-[height]', 'duration-[220ms]');
+    expect(frame).toHaveClass('transition-[height]', 'duration-(--dur-panel)');
     await waitFor(() => expect(frame.style.height).toBe('560px'));
     expect(page.style.getPropertyValue('--login-card-h')).toBe('420px');
     // Let go at the end of the transition: at rest again, as tall as the form shown.
@@ -387,9 +398,8 @@ describe('AuthPage: two tabs on one page', () => {
     expect(panel()).toHaveAttribute('id', 'auth-panel-register');
     expect(panel().className).not.toContain('animate-in');
     expect(panel().className).not.toContain('slide-in');
-    // Nor a fade on the way out, nor a slide of the mark.
+    // Nor a fade on the way out (the mark is the common row's, drawn in place under reduced motion).
     expect(document.getElementById('auth-panel-login')!.className).toContain('motion-reduce:transition-none');
-    expect(screen.getByTestId('auth-tab-mark').className).toContain('motion-reduce:transition-none');
     // Nor a height that moves.
     const frame = document.getElementById('auth-panel-login')!.parentElement!;
     expect(frame).not.toHaveClass('transition-[height]');
@@ -397,7 +407,7 @@ describe('AuthPage: two tabs on one page', () => {
   });
 
   it('keeps the way back after the login across changes of tab', async () => {
-    renderAuth({ pathname: '/login', state: { from: { pathname: '/dossier', search: '?dossier=7' } } });
+    renderAuth({ pathname: '/login', state: { from: { pathname: '/pratiche', search: '?dossier=7' } } });
     fireEvent.click(tab('Registrati'));
     fireEvent.click(tab('Accedi'));
     fireEvent.change(within(panel()).getByLabelText('Email'), { target: { value: 'a@b.it' } });
@@ -405,78 +415,40 @@ describe('AuthPage: two tabs on one page', () => {
     await act(async () => {
       fireEvent.click(within(panel()).getByRole('button', { name: 'Accedi' }));
     });
-    await waitFor(() => expect(screen.getByTestId('landed')).toHaveTextContent('/dossier?dossier=7'), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByTestId('landed')).toHaveTextContent('/pratiche?dossier=7'), { timeout: 2000 });
   });
 });
 
-// The wordmark written in ink (A3): one face, one ink; the word one text throughout, nothing left on the finished page.
-describe('AuthPage: the wordmark written in ink', () => {
-  // jsdom's events carry no `animationName`: it is written on them as a browser would.
-  const animation = (target: Element, type: 'animationend' | 'animationcancel', animationName: string) => {
-    const event = new Event(type, { bubbles: true });
-    Object.defineProperty(event, 'animationName', { value: animationName });
-    act(() => {
-      target.dispatchEvent(event);
-    });
-  };
-  const copy = () => document.querySelector('.vlx-ink-bleed');
-
-  it('names the page «VisuaLex» with one text, its blurred copy and the book hidden from a reader', () => {
+// The LexCraft logo (LC16): it takes the place of the column and the word written in ink, and of their two motions.
+describe('AuthPage: the LexCraft logo', () => {
+  // LC31: the cursor's sweep over CRAFT, not the intro whose column dropped from above and moved the word off centre.
+  it('names the page «LexCraft» with the logo, which plays the cursor\'s sweep once', () => {
     renderAuth('/login');
-    const title = screen.getByRole('heading', { level: 1, name: 'VisuaLex' });
-    // The word itself is never split into letters (WebKit kerns no pair across two elements).
-    const ink = title.querySelector('.vlx-ink-word')!;
-    expect(ink.childNodes).toHaveLength(1);
-    expect(ink.textContent).toBe('VisuaLex');
-    expect(copy()).toHaveAttribute('aria-hidden', 'true');
-    expect(copy()).toHaveClass('select-none');
-    expect(document.querySelector('svg.vlx-ink-book')).toHaveAttribute('aria-hidden', 'true');
-    expect(title.querySelector('svg')).toBeNull();
+    const title = screen.getByRole('heading', { level: 1, name: 'LexCraft' });
+    const logo = within(title).getByRole('img', { name: 'LexCraft' });
+    expect(logo).toHaveClass('vlx-logo', 'vlx-logo-sweep');
+    expect(logo).not.toHaveClass('vlx-logo-intro');
+    expect(document.querySelector('.vlx-ink-book, .vlx-ink-word, .vlx-ink-bleed, .vlx-ink-plain')).toBeNull();
   });
 
-  it('drops the copy and the mask once the ink is written, and only then', () => {
+  it('is large: 300 px on a phone, 420 px (the card\'s width) from sm', () => {
     renderAuth('/login');
-    const title = screen.getByRole('heading', { level: 1 });
-    // The copy's own end bubbles up: it is not the ink's.
-    animation(copy()!, 'animationend', 'vlx-ink-bleed');
-    expect(copy()).not.toBeNull();
-    animation(title.querySelector('.vlx-ink-word')!, 'animationend', 'vlx-ink-write');
-    expect(copy()).toBeNull();
-    expect(title.querySelector('.vlx-ink-word')).toBeNull();
-    expect(title).toHaveTextContent(/^VisuaLex$/);
-    expect(screen.getByRole('heading', { level: 1, name: 'VisuaLex' })).toBe(title);
+    expect(screen.getByRole('img', { name: 'LexCraft' })).toHaveClass('w-[300px]', 'sm:w-[420px]');
   });
 
-  it('ends the writing when it is cancelled, reduced motion turned on halfway', () => {
-    renderAuth('/login');
-    animation(document.querySelector('.vlx-ink-word')!, 'animationcancel', 'vlx-ink-write');
-    expect(copy()).toBeNull();
-    expect(document.querySelector('.vlx-ink-word')).toBeNull();
-  });
-
-  it('only fades the word in from the left on WebKit for iOS: no mask, no blurred copy', () => {
-    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15');
-    renderAuth('/login');
-    const title = screen.getByRole('heading', { level: 1, name: 'VisuaLex' });
-    expect(title.querySelector('.vlx-ink-plain')).toHaveTextContent('VisuaLex');
-    expect(title.querySelector('.vlx-ink-word')).toBeNull();
-    expect(copy()).toBeNull();
-    animation(title.querySelector('.vlx-ink-plain')!, 'animationend', 'vlx-ink-plain');
-    expect(title.querySelector('.vlx-ink-plain')).toBeNull();
-  });
-
-  it('turns the colophon\'s opacity on after its first frames, the fade reduced motion sees', async () => {
-    renderAuth('/login');
-    const header = screen.getByRole('heading', { level: 1 }).closest('header')!;
-    expect(header).toHaveClass('motion-reduce:opacity-0');
-    await waitFor(() => expect(header).not.toHaveClass('motion-reduce:opacity-0'));
-  });
-
-  it('never writes the word under reduced motion', () => {
+  it('stands still under reduced motion', () => {
     reduceMotion(true);
     renderAuth('/login');
-    const title = screen.getByRole('heading', { level: 1, name: 'VisuaLex' });
-    expect(title.querySelector('.vlx-ink-word, .vlx-ink-plain')).toBeNull();
-    expect(copy()).toBeNull();
+    expect(screen.getByRole('img', { name: 'LexCraft' })).not.toHaveClass('vlx-logo-sweep');
+  });
+  // Papiniano's pass on #464: after «Esci» in the same session the intro played again.
+  it('plays the sweep once a browser session: drawn again, it stands still in the same box', () => {
+    const { unmount } = renderAuth('/login');
+    expect(screen.getByRole('img', { name: 'LexCraft' })).toHaveClass('vlx-logo-sweep');
+    unmount();
+    renderAuth('/login');
+    const logo = screen.getByRole('img', { name: 'LexCraft' });
+    expect(logo).not.toHaveClass('vlx-logo-sweep');
+    expect(logo).toHaveAttribute('viewBox', '-11.0 -96.9 716.3 130.9');
   });
 });

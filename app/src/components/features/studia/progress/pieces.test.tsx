@@ -19,9 +19,14 @@ describe('GoalRing', () => {
   it('names today’s goal, and says when it is reached', () => {
     const { rerender } = render(<GoalRing ripassi={6} obiettivo={10} raggiunto={false} />);
     expect(screen.getByRole('img', { name: 'Obiettivo di oggi: 6 di 10 ripassi' })).toBeInTheDocument();
-    expect(screen.getByText('di 10 ripassi')).toBeInTheDocument();
+    // LC39: a line and an ink bar at the true share, never full before the goal.
+    expect(screen.getByText(/su 10/)).toBeInTheDocument();
+    expect(screen.getByTestId('goal-arc')).toHaveStyle({ width: '0%' });
     rerender(<GoalRing ripassi={3} obiettivo={10} raggiunto />);
     expect(screen.getByRole('img', { name: 'Obiettivo di oggi: 3 di 10 ripassi, raggiunto' })).toBeInTheDocument();
+    // Reached (the day counts, as the missions read it): the line says so, no count to contradict it, the bar full.
+    expect(screen.getByText('Obiettivo di oggi raggiunto')).toBeInTheDocument();
+    expect(screen.queryByText(/su 10/)).toBeNull();
   });
 });
 
@@ -139,6 +144,11 @@ describe('DueForecast', () => {
     expect(screen.getByText('oggi')).toHaveClass('font-semibold');
   });
 
+  it('draws its columns still: no growth on every visit (LC145, the frequency rule)', () => {
+    const { container } = render(<DueForecast prossimi={prossimi} />);
+    expect(container.querySelector('.vlx-grow-y, .vlx-grow-x, [class*="animate-"]')).toBeNull();
+  });
+
   it('draws a day with nothing due as a hollow mark, not a gap', () => {
     const empty = prossimi.map((d, i) => ({ ...d, schede: i === 3 ? 0 : d.schede }));
     const { container } = render(<DueForecast prossimi={empty} />);
@@ -162,6 +172,16 @@ describe('the subject filter', () => {
     { materia: 'DIRITTO_PROCESSUALE_CIVILE', nuove: 0, apprendimento: 2, consolidate: 2, ripassi30: 0 },
     { materia: 'DIRITTO_PROCESSUALE_PENALE', nuove: 0, apprendimento: 1, consolidate: 0, ripassi30: 0 },
   ];
+
+  it('draws the bars of Progressi still: no growth on every visit (LC145, the frequency rule)', () => {
+    const { container } = render(
+      <>
+        <SubjectProgress materie={materie} selected={undefined} onSelect={vi.fn()} />
+        <CardStatesBar stati={{ nuove: 1, apprendimento: 2, consolidate: 1 }} />
+      </>,
+    );
+    expect(container.querySelector('.vlx-grow-x, .vlx-grow-y')).toBeNull();
+  });
 
   it('lists the five subjects, each a button that sets the filter and, pressed again, clears it', async () => {
     const onSelect = vi.fn();
@@ -191,21 +211,17 @@ describe('the subject filter', () => {
     expect(screen.queryByText(/da ripassare/)).toBeNull();
   });
 
-  it('offers «Tutte le materie» and the five subjects as chips, one pressed', async () => {
+  it('offers «Tutte le materie» and the five subjects as the common choice in a row, one chosen', async () => {
     const onSelect = vi.fn();
-    render(<SubjectChips selected="DIRITTO_PENALE" onSelect={onSelect} />);
-    const group = screen.getByRole('group', { name: 'Materia' });
-    expect(within(group).getAllByRole('button')).toHaveLength(6);
-    // 44 px tall at every width, a computer too.
-    for (const chip of within(group).getAllByRole('button')) {
-      expect(chip).toHaveClass('min-h-[44px]');
-      expect(chip.className).not.toMatch(/\bmd:(?:min-h|h|py)-/);
-    }
+    const { container } = render(<SubjectChips selected="DIRITTO_PENALE" onSelect={onSelect} />);
+    // LC112: `SegmentedTabs size="sm"`, a radiogroup, as the app's other choices in a row.
+    const group = screen.getByRole('radiogroup', { name: 'Materia' });
+    expect(within(group).getAllByRole('radio')).toHaveLength(6);
     // A phone's sideways row with no bar drawn: in dark mode it showed light (theme.test.ts checks the CSS).
-    expect(group).toHaveClass(...HIDDEN_SCROLLBAR.split(' '));
-    expect(within(group).getByRole('button', { name: 'Diritto penale' })).toHaveAttribute('aria-pressed', 'true');
-    expect(within(group).getByRole('button', { name: 'Tutte le materie' })).toHaveAttribute('aria-pressed', 'false');
-    await userEvent.setup().click(within(group).getByRole('button', { name: 'Tutte le materie' }));
+    expect(container.firstElementChild).toHaveClass(...HIDDEN_SCROLLBAR.split(' '));
+    expect(within(group).getByRole('radio', { name: 'Diritto penale' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getByRole('radio', { name: 'Tutte le materie' })).toHaveAttribute('aria-checked', 'false');
+    await userEvent.setup().click(within(group).getByRole('radio', { name: 'Tutte le materie' }));
     expect(onSelect).toHaveBeenCalledWith(undefined);
   });
 });

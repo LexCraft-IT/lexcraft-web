@@ -3,27 +3,61 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { FOCUS_BUTTON_CLEARANCE, PAGE_KICKER, PAGE_TITLE, PageFrame } from './PageFrame';
+import { Button } from '../ui/Button';
 import { SECTION_PHRASES, kickerOf, sectionKicker } from '../../features/sections/sections';
 
 describe('PageFrame (W2)', () => {
   it('takes the layout\'s width, with nothing narrower, and heads it with the title, the sentence and the action', () => {
     const { container } = render(
-      <PageFrame title="Dossier pubblici" line="I dossier di studio pubblicati dalla comunità" action={<button type="button">Pubblica un dossier</button>}>
+      <PageFrame title="Dossier pubblici" line="Le pratiche di studio pubblicati dalla comunità" action={<button type="button">Pubblica una pratica</button>}>
         <p>corpo</p>
       </PageFrame>,
     );
     const frame = container.firstElementChild as HTMLElement;
     expect(frame.className).not.toMatch(/\bmax-w-|\bmx-auto\b/);
     const title = screen.getByRole('heading', { level: 1, name: 'Dossier pubblici' });
-    // One size on every page: Newsreader, 28 px on a phone, 30 px from `md`.
+    // One size on every page: EB Garamond, 28 px on a phone, 30 px from `md`.
     expect(title).toHaveClass(...PAGE_TITLE.split(' '));
     expect(title.querySelector('svg')).toBeNull();
-    expect(screen.getByText('I dossier di studio pubblicati dalla comunità')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Pubblica un dossier' })).toBeInTheDocument();
+    expect(screen.getByText('Le pratiche di studio pubblicati dalla comunità')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pubblica una pratica' })).toBeInTheDocument();
     expect(screen.getByText('corpo')).toBeInTheDocument();
   });
 
-  it('keeps a header with an action clear of the Focus button, and only such a header', () => {
+  it('declares the page\'s width once, on its root: the frame by default (U1)', () => {
+    const { container, unmount } = render(
+      <PageFrame title="Dossier">
+        <p>corpo</p>
+      </PageFrame>,
+    );
+    expect(container.firstElementChild).toHaveAttribute('data-page-width', 'work');
+    unmount();
+    const full = render(
+      <PageFrame title="Agenda" width="full">
+        <p>corpo</p>
+      </PageFrame>,
+    );
+    // `Layout`'s frame widens to the full screen's while this page is in it (`FULL_PAGE_FRAME`, through `:has()`).
+    expect(full.container.firstElementChild).toHaveAttribute('data-page-width', 'full');
+    expect(screen.getByText('corpo').parentElement).toBe(full.container.firstElementChild);
+  });
+
+  it('keeps a `reading` page\'s body at the reading measure, never its title (U1)', () => {
+    const { container } = render(
+      <PageFrame title="Rassegne" width="reading" line="Cerca nelle rassegne" action={<button type="button">Azione</button>}>
+        <p>corpo</p>
+      </PageFrame>,
+    );
+    const frame = container.firstElementChild as HTMLElement;
+    expect(frame).toHaveAttribute('data-page-width', 'reading');
+    expect(frame.className).not.toMatch(/\bmax-w-/);
+    expect(screen.getByRole('banner').className).not.toMatch(/\bmax-w-measure\b/);
+    const body = screen.getByText('corpo').parentElement as HTMLElement;
+    expect(body).toHaveClass('max-w-measure');
+    expect(body.parentElement).toBe(frame);
+  });
+
+  it('keeps a header with an action clear of the full-screen button, and only such a header', () => {
     const { unmount } = render(
       <PageFrame title="Cronologia" action={<button type="button">Svuota cronologia</button>}>
         <p>corpo</p>
@@ -47,13 +81,13 @@ describe('PageFrame (W2)', () => {
     );
     const title = screen.getByRole('heading', { level: 1 });
     expect(title).toHaveTextContent(/^Oggi$/);
-    const kicker = screen.getByText('Gymnasium · la tua palestra giuridica');
+    const kicker = screen.getByText('Learn');
     expect(kicker).toHaveClass(...PAGE_KICKER.split(' '));
     // Over the title, in the same header, and not a heading of its own.
     expect(kicker.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(kicker.tagName).toBe('P');
     // The title names only the page: the line describes it, so the focus on it says the section too.
-    expect(title).toHaveAccessibleDescription('Gymnasium · la tua palestra giuridica');
+    expect(title).toHaveAccessibleDescription('Learn');
     unmount();
     render(
       <PageFrame title="Cronologia">
@@ -71,8 +105,8 @@ describe('PageFrame (W2)', () => {
       forum: 'il luogo del dibattito giuridico',
       academia: 'il laboratorio del diritto',
     });
-    expect(sectionKicker('opus')).toBe('Opus · la tua officina giuridica');
-    expect(sectionKicker('forum')).toBe('Forum · il luogo del dibattito giuridico');
+    expect(sectionKicker('opus')).toBe('Work');
+    expect(sectionKicker('forum')).toBe('Forum');
   });
 
   it('draws Academia\'s line over «Assistente» and «Grafo», its phrase chosen (S7b)', () => {
@@ -81,8 +115,8 @@ describe('PageFrame (W2)', () => {
         <p>corpo</p>
       </PageFrame>,
     );
-    expect(kickerOf('academia')).toBe('Academia · il laboratorio del diritto');
-    expect(screen.getByRole('heading', { level: 1, name: 'Assistente' })).toHaveAccessibleDescription('Academia · il laboratorio del diritto');
+    expect(kickerOf('academia')).toBe('Labs');
+    expect(screen.getByRole('heading', { level: 1, name: 'Assistente' })).toHaveAccessibleDescription('Labs');
   });
 
   it('marks a section\'s home title for the section switcher\'s focus, and no other', () => {
@@ -104,11 +138,23 @@ describe('PageFrame (W2)', () => {
     expect(page).not.toHaveAttribute('data-section-title');
     expect(page).not.toHaveAttribute('tabindex');
   });
+
+  it('draws no ring on a landing title, while a button keeps its keyboard ring (LC143)', () => {
+    render(
+      <PageFrame title="Oggi" section="gymnasium" action={<Button>Nuova</Button>}>
+        <p>corpo</p>
+      </PageFrame>,
+    );
+    const title = screen.getByRole('heading', { level: 1 });
+    expect(title).toHaveAttribute('tabindex', '-1');
+    expect(title.className).not.toMatch(/\bring-|focus-visible:|focus:/);
+    expect(screen.getByRole('button', { name: 'Nuova' }).className).not.toMatch(/\bring-/);
+  });
 });
 
 /**
- * The section pages (W2): each draws its title through the frame, or — under a way back — with `PAGE_TITLE`; none writes
- * a title of its own, puts an icon beside it, or narrows the page under the layout's frame.
+ * The section pages (W2, U1): each draws its title through the frame, or — under a way back — with `PAGE_TITLE`; none
+ * writes a title of its own, puts an icon beside it, or narrows the page under the layout's frame.
  */
 const SECTION_PAGES = [
   'components/features/dossier/DossierListView.tsx',
@@ -120,6 +166,8 @@ const SECTION_PAGES = [
   'components/features/studia/StudiaPage.tsx',
   'components/features/planner/OpusPage.tsx',
   'components/features/documents/DocumentReviewPage.tsx',
+  // A `reading` page (U1): the frame narrows its body, the page writes no cap.
+  'components/features/rassegne/RassegneSearchPage.tsx',
   'features/connections/ConnectAiAppPage.tsx',
   'components/features/history/HistoryView.tsx',
   'pages/MerltHubPage.tsx',
@@ -138,8 +186,9 @@ describe('the section pages (W2)', () => {
     // Any `<h1` left is the frame's token alone, with its words and nothing else inside.
     for (const [, inside] of source.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)) expect(inside).not.toMatch(/</);
     expect(source).not.toMatch(/<h1\b(?![^>]*className=\{PAGE_TITLE\})/);
-    // The root of the page is the frame's width.
-    expect(source).not.toMatch(/mx-auto[^"'`]*max-w-(?:3xl|4xl|6xl)|max-w-(?:3xl|4xl|6xl)[^"'`]*mx-auto/);
+    // The root of the page is the frame's width, and the page writes no cap of its own (U1): a page that reads as text
+    // says `width="reading"` to the frame.
+    expect(source).not.toMatch(/\bmax-w-(?:3xl|4xl|5xl|6xl|7xl)\b/);
   });
 });
 

@@ -1,14 +1,25 @@
-import { useRef, type Ref } from 'react';
+import { useContext, useRef, type Ref } from 'react';
+import { StatusLineEnd } from './statusLineEnd';
 import type { ArticleData } from '../../../types';
-import { ExternalLink, Zap, FolderPlus, Copy, MessageCircle, Share2, Download, MoreHorizontal, Clock, BookOpen, GitCompare, Search } from 'lucide-react';
+import { ExternalLink, Zap, FolderPlus, Copy, Link2, MessageCircle, Share2, Download, MoreHorizontal, Clock, BookOpen, GitCompare, Search, StickyNote, Highlighter } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Z_INDEX } from '../../../constants/zIndex';
-import { FOCUS_RING } from '../../../constants/interactions';
+import { Button } from '../../ui/Button';
+import { buttonClassName } from '../../ui/buttonStyles';
 import type { VersionChip } from '../../../utils/versionDisplay';
 import { MenuButton, type MenuItem } from '../../ui/MenuButton';
 import { VersionStatusChip } from './VersionStatusChip';
 import { NotesHighlightsButtons } from './NotesHighlightsButtons';
+import { HighlighterButton } from './HighlighterButton';
+import { NoteToolButton } from './NoteToolButton';
+import { highlightColorItems } from './highlightColorItems';
+import { useAppStore } from '../../../store/useAppStore';
+import { useHighlightColorMeanings } from '../../../hooks/useHighlightColorMeanings';
+import { useHighlighterInk } from '../../../hooks/useHighlighterInk';
 import { namedAnnex } from '../../../utils/sources';
+import { EUROPEAN_LINK_NOTE, normLinkActionLabel } from '../../../utils/normattivaLink';
+import { isEuropeanAct } from '../../../utils/versionDisplay';
+import { useOpenSettings } from '../settings/settingsRoute';
 
 export interface ReadingToolbarProps {
     normaData: ArticleData['norma_data'];
@@ -35,6 +46,8 @@ export interface ReadingToolbarProps {
     highlightsButtonRef?: Ref<HTMLButtonElement | null>;
     highlightsCount: number;
     isDiscussionOpen: boolean;
+    /** The discussions on the article (LC74): «Glosse 3» on its button; none, the word alone. */
+    discussionCount?: number;
     isPinnedQuick: boolean;
     onToggleNotes: () => void;
     onToggleHighlightsPeek: () => void;
@@ -44,13 +57,24 @@ export interface ReadingToolbarProps {
     onOpenStudyMode?: () => void;
     onOpenCopyModal: () => void;
     onOpenDossier: () => void;
+    /** The dossier command's words; default «Al dossier» (a popover to choose one). «Aggiungi a questo dossier» in a
+     *  dossier's «Lettura» (LC55). */
+    dossierLabel?: string;
+    /** Whether the space it opens is open (LC125): its `aria-expanded`; undefined when it adds at once (a host dossier). */
+    dossierExpanded?: boolean;
+    /** The id of that space: its `aria-controls`. */
+    dossierControls?: string;
+    /** No dossier command in the bar (LC61): the row offers it, or the article is already in the hosting dossier. */
+    hideDossier?: boolean;
     onShareLink: () => void;
+    /** «Copia link Normattiva» (the source's address, for a filing's hyperlinks); absent when the norm holds none. */
+    onCopyLink?: () => void;
     onOpenAdvancedExport: () => void;
     onOpenVersionInput: () => void;
     onCompare: () => void;
     /**
      * The compact form of a light window beside a practice's table (spec §4.1, T12): notes and
-     * highlights in words, and behind «⋯» the discussions, the magnifier and copy, nothing else (the
+     * highlights in words, «Glosse» on its own, and behind «⋯» the magnifier and copy, nothing else (the
      * phone row has no notes or highlights buttons to begin with). The status and the annex stay:
      * they say which text this is. The tools the table's row keeps (quick norm, dossier, Study Mode,
      * the source link, sharing, export, a date, a comparison) are the row's.
@@ -68,14 +92,15 @@ export interface ReadingToolbarProps {
     };
 }
 
-/** The article's visible actions (R3): quiet, neutral, the word with the icon; 36 px on a computer, 44 on a phone. */
-const ACTION = cn(
-    'inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-slate-600 transition-colors',
-    'hover:bg-slate-100 hover:text-slate-900 aria-expanded:bg-slate-200/70 aria-expanded:text-slate-900 md:h-9 md:min-h-0 md:min-w-0',
-    'dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white dark:aria-expanded:bg-slate-800 dark:aria-expanded:text-white',
-    'disabled:cursor-not-allowed disabled:opacity-40',
-    FOCUS_RING,
+/** A tool's pressed and open states, on `Button`'s quiet look; square on a phone, where only the icon shows. */
+const TOOL_STATES = cn(
+    // A switched-off tool keeps the pointer, so its tooltip still says why (`Button` drops it when disabled).
+    'vlx-hover-tile min-w-11 gap-1.5 px-2.5 md:min-w-0 disabled:pointer-events-auto',
+    'aria-expanded:bg-ink-300/70 aria-expanded:text-slate-900 aria-pressed:bg-ink-300/70 aria-pressed:text-slate-900',
+    'dark:aria-pressed:bg-ink-700/60 dark:aria-pressed:text-white dark:aria-expanded:bg-ink-700/60 dark:aria-expanded:text-white',
 );
+/** The article's visible actions (R3): quiet, neutral, the word with the icon; 36 px on a computer, 44 on a phone. */
+const TOOL = cn(buttonClassName('quiet'), TOOL_STATES);
 
 export function ReadingToolbar({
     normaData,
@@ -91,6 +116,7 @@ export function ReadingToolbar({
     highlightsButtonRef,
     highlightsCount,
     isDiscussionOpen,
+    discussionCount = 0,
     isPinnedQuick,
     onToggleNotes,
     onToggleHighlightsPeek,
@@ -100,7 +126,12 @@ export function ReadingToolbar({
     onOpenStudyMode,
     onOpenCopyModal,
     onOpenDossier,
+    dossierLabel,
+    dossierExpanded,
+    dossierControls,
+    hideDossier,
     onShareLink,
+    onCopyLink,
     onOpenAdvancedExport,
     onOpenVersionInput,
     onCompare,
@@ -117,13 +148,21 @@ export function ReadingToolbar({
         find.onToggle(shown, find.isOpen);
     };
     // A switched-off tool keeps its name and gains the reason in its tooltip (a menu's entry, under its name).
-    const tip = (name: string, reason?: string) => (reason ? `${name} — ${reason}` : name);
+    const tip = (name: string, reason?: string) => (reason ? `${name}: ${reason}` : name);
     const lock = (reason?: string) => (reason ? { disabled: true } : {});
     // Exporting writes the article out like a copy does, and the export header
     // carries no version: anything that may not be copied, or is a reading, stays in.
     const exportLockedReason = copyLockedReason ?? lockedReason;
 
-    /** The tools behind «⋯» (R3: three in words, the rest here), the phone's adding what its row does not show. */
+    /** The tools behind «⋯» (R3: the reading's own in words, the rest here), the phone's adding what its row does not show. */
+    // The highlighter's ink (H1, A4): its own menu beside «Evidenziazioni» on a computer; on a phone, where the row has
+    // room for the tool's toggle alone, the inks close the «⋯», and the gear's way to their meanings after them.
+    const ink = useHighlighterInk();
+    const setHighlighterInk = useAppStore((s) => s.setHighlighterInk);
+    const openSettings = useOpenSettings();
+    const noteToolOn = useAppStore((s) => s.readingTool === 'note');
+    const statusEnd = useContext(StatusLineEnd);
+    const meanings = useHighlightColorMeanings();
     const moreItems = (phone: boolean): MenuItem[] => [
         ...(compact ? [] : [{
             label: isPinnedQuick ? 'Togli dalle norme rapide' : 'Aggiungi alle norme rapide',
@@ -132,13 +171,6 @@ export function ReadingToolbar({
             disabled: Boolean(lockedReason),
             description: lockedReason,
         }]),
-        {
-            label: isDiscussionOpen ? 'Chiudi le glosse' : 'Glosse sull’articolo',
-            icon: MessageCircle,
-            onSelect: onToggleDiscussion,
-            disabled: Boolean(lockedReason),
-            description: lockedReason,
-        },
         ...(find ? [{ label: find.isOpen ? 'Chiudi la ricerca nel testo' : 'Cerca nel testo', icon: Search, onSelect: toggleFind }] : []),
         {
             label: 'Copia',
@@ -147,8 +179,18 @@ export function ReadingToolbar({
             disabled: Boolean(copyLockedReason),
             description: copyLockedReason,
         },
+        ...(onCopyLink ? [{
+            label: normLinkActionLabel(normaData),
+            icon: Link2,
+            onSelect: onCopyLink,
+            disabled: Boolean(copyLockedReason),
+            description: copyLockedReason ?? (isEuropeanAct(normaData.tipo_atto) ? EUROPEAN_LINK_NOTE : undefined),
+        }] : []),
         ...(compact ? [] : [
             ...(phone ? [
+                // The phone's row has no «Note» and «Evidenziazioni» (LC139): their spaces open from here.
+                { label: isNotesPeekOpen ? 'Chiudi le note' : 'Note', icon: StickyNote, onSelect: onToggleNotes, disabled: Boolean(lockedReason), description: lockedReason },
+                { label: isHighlightsPeekOpen ? 'Chiudi le evidenziazioni' : 'Evidenziazioni', icon: Highlighter, onSelect: onToggleHighlightsPeek, disabled: Boolean(lockedReason), description: lockedReason },
                 { label: 'Modalità studio', icon: BookOpen, onSelect: () => onOpenStudyMode?.(), disabled: Boolean(lockedReason) || !onOpenStudyMode, description: lockedReason },
                 ...(url ? [{ label: 'Apri la fonte', icon: ExternalLink, onSelect: () => { window.open(url, '_blank', 'noopener,noreferrer'); } }] : []),
             ] : []),
@@ -157,24 +199,69 @@ export function ReadingToolbar({
             { label: 'Testo alla data…', icon: Clock, onSelect: onOpenVersionInput },
             { label: 'Confronta con…', icon: GitCompare, onSelect: onCompare },
         ]),
+        // The highlighter's ink (H1, A4), last: a setting, under its own title. Not on a text that takes none.
+        ...(phone && !lockedReason
+            ? highlightColorItems(ink, meanings, setHighlighterInk, {
+                section: true,
+                onChangeMeanings: () => openSettings('colori'),
+            })
+            : []),
     ];
+
+    /**
+     * «Glosse» (LC74): a button of its own before «⋯», pressed while the margin is open, with the count when there is
+     * one. On a phone the icon and the count, the whole name for a screen reader.
+     */
+    const glossesButton = (phone = false) => (
+        <Button
+            type="button"
+            variant="quiet"
+            data-glosses-button=""
+            onClick={onToggleDiscussion}
+            aria-pressed={isDiscussionOpen}
+            aria-label={discussionCount > 0 ? `Glosse, ${discussionCount}` : phone ? 'Glosse' : undefined}
+            title={tip('Glosse sull’articolo', lockedReason)}
+            className={TOOL_STATES}
+            icon={<MessageCircle size={phone ? 18 : 16} aria-hidden />}
+            {...lock(lockedReason)}
+        >
+            {!phone && 'Glosse'}
+            {discussionCount > 0 && <span aria-hidden className="tabular-nums">{discussionCount}</span>}
+        </Button>
+    );
 
     // The annex as the source convention names it: never a code's own (the codice civile is Allegato 2 of its decree).
     const annex = namedAnnex(normaData);
     /** «Al dossier»: its word on a computer; on a phone the icon, so the status and the tools keep one row. */
     const dossierButton = (ref?: Ref<HTMLButtonElement | null>, phone = false) => (
-        <button
+        <Button
             ref={ref}
             type="button"
+            variant="quiet"
             onClick={onOpenDossier}
-            className={ACTION}
-            aria-label={phone ? 'Al dossier' : undefined}
-            title={tip('Aggiungi l’articolo a un dossier', copyLockedReason)}
+            aria-expanded={dossierExpanded}
+            aria-controls={dossierControls}
+            className={TOOL_STATES}
+            icon={<FolderPlus size={phone ? 18 : 16} aria-hidden />}
+            aria-label={phone ? (dossierLabel ?? 'Alla pratica') : undefined}
+            title={tip(dossierLabel ?? 'Aggiungi l’articolo a una pratica', copyLockedReason)}
             {...lock(copyLockedReason)}
         >
-            <FolderPlus size={phone ? 18 : 16} aria-hidden />
-            {!phone && 'Al dossier'}
-        </button>
+            {!phone && (dossierLabel ?? 'Alla pratica')}
+        </Button>
+    );
+
+    const status = (
+        <div className={cn('flex min-w-0 flex-wrap items-center gap-x-2 text-sm text-slate-600 dark:text-slate-400', statusEnd ? 'flex-initial' : 'flex-1 md:flex-initial')}>
+            {versionChip && <VersionStatusChip chip={versionChip} onClick={onOpenVersionInput} />}
+            {annex && (
+                // On a phone the annex has its own line under the status, so no dot ever leads a line or goes missing.
+                <span className="basis-full md:basis-auto">
+                    {versionChip && <span aria-hidden className="mr-2 hidden text-slate-400 md:inline dark:text-slate-600">·</span>}
+                    Allegato {annex}
+                </span>
+            )}
+        </div>
     );
 
     return (
@@ -183,7 +270,9 @@ export function ReadingToolbar({
         <div
             data-pinned-head
             className={cn(
-                'glass-toolbar sticky top-[var(--reading-toolbar-top,0px)] mb-3 flex items-center justify-between gap-x-1 gap-y-1 border-b py-1 backdrop-blur-md md:flex-wrap md:gap-x-2',
+                'glass-toolbar sticky top-[var(--reading-toolbar-top,0px)] mb-3 flex items-center justify-between gap-x-1 gap-y-1 py-1 backdrop-blur-md md:flex-wrap md:gap-x-2',
+                // With the selector the rule is the status line's, over the tools: one rule, not two (LC70).
+                statusEnd ? 'flex-wrap' : 'border-b',
                 compact
                     ? 'border-slate-100 bg-white/95 dark:border-slate-700 dark:bg-slate-800/95'
                     : 'border-slate-200 bg-slate-50/95 dark:border-slate-800 dark:bg-slate-950/95',
@@ -192,31 +281,41 @@ export function ReadingToolbar({
         >
             {/* Which text this is, in words: the status, then the annex. */}
             {/* On a phone it takes what the tools leave (and wraps inside); from `md` its own width, so the tools wrap. */}
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-sm text-slate-600 md:flex-initial dark:text-slate-400">
-                {versionChip && <VersionStatusChip chip={versionChip} onClick={onOpenVersionInput} />}
-                {annex && (
-                    // On a phone the annex has its own line under the status, so no dot ever leads a line or goes missing.
-                    <span className="basis-full md:basis-auto">
-                        {versionChip && <span aria-hidden className="mr-2 hidden text-slate-400 md:inline dark:text-slate-600">·</span>}
-                        Allegato {annex}
-                    </span>
-                )}
-            </div>
+            {statusEnd ? (
+                // The status and the selector on one line, centred on it; on a phone too narrow for both, the selector
+                // goes under the status, to the right. The rule under both, the tools under it (LC70).
+                <div data-status-line className="flex basis-full flex-wrap items-center gap-x-2 border-b pb-1 [border-color:inherit]">
+                    {status}
+                    <div className="ml-auto flex shrink-0 items-center gap-2">{statusEnd}</div>
+                </div>
+            ) : status}
 
             {/* A phone: the dossier and «⋯», 44 px each. */}
             {/* Close together, the last one's 44 px reaching into the page's right margin (`-mr-3`): the status keeps one line
                 at 320 px («In vigore dal 1° gennaio 2005», R3b). Not in the compact bar (the phone's full-screen reader, a
                 window): there the card's padding is the edge, and its overflow would cut the focus ring. */}
             <div className={cn('ml-auto flex flex-shrink-0 items-center md:hidden', !compact && '-mr-3')}>
-                {!compact && dossierButton(undefined, true)}
+                {/* The highlighter's toggle (A4); its inks are at the end of «⋯». */}
+                {!lockedReason && <HighlighterButton toggleOnly triggerClassName={TOOL} />}
+                {/* The note tool has no room here; turned on elsewhere (a decision's bar, Study Mode), its toggle shows,
+                    so it can be turned off where there is no Esc (A4 §6). */}
+                {!lockedReason && noteToolOn && <NoteToolButton triggerClassName={TOOL} />}
+                {!compact && !hideDossier && dossierButton(undefined, true)}
+                {glossesButton(true)}
                 <div ref={phoneMoreRef} className="contents">
-                    <MenuButton label="Altre azioni sull’articolo" triggerClassName={ACTION} items={moreItems(true)}>
+                    {/* Its list is long (the colours close it): capped under the bar, it scrolls on its own. */}
+                    <MenuButton
+                        label="Altre azioni sull’articolo"
+                        triggerClassName={TOOL}
+                        items={moreItems(true)}
+                        menuClassName="max-h-[calc(100dvh-12rem)] overflow-y-auto overscroll-contain"
+                    >
                         <MoreHorizontal size={18} aria-hidden />
                     </MenuButton>
                 </div>
             </div>
 
-            {/* A computer: three tools in words, then «⋯». */}
+            {/* A computer: the tools in words («Note», «Evidenziazioni», «Colore», «Al dossier»), then «⋯». */}
             <div className="hidden flex-shrink-0 items-center gap-1 md:flex">
                 <NotesHighlightsButtons
                     labelled
@@ -230,9 +329,13 @@ export function ReadingToolbar({
                     onToggleHighlights={onToggleHighlightsPeek}
                     lockedReason={lockedReason}
                 />
-                {!compact && dossierButton(dossierButtonRef)}
+                {!lockedReason && <HighlighterButton triggerClassName={TOOL} />}
+                {/* The note tool (A4 §6): a personal note, or a gloss with colleagues. */}
+                {!lockedReason && <NoteToolButton gloss triggerClassName={TOOL} />}
+                {!compact && !hideDossier && dossierButton(dossierButtonRef)}
+                {glossesButton()}
                 <div ref={desktopMoreRef} className="contents">
-                    <MenuButton label="Altre azioni sull’articolo" triggerClassName={ACTION} items={moreItems(false)}>
+                    <MenuButton label="Altre azioni sull’articolo" triggerClassName={TOOL} items={moreItems(false)}>
                         <MoreHorizontal size={18} aria-hidden />
                     </MenuButton>
                 </div>

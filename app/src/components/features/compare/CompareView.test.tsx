@@ -57,12 +57,12 @@ describe('CompareView — the articles of the practices (spec §6.8)', () => {
     render(<CompareView />);
     expect(pickerLabels()).toEqual([
       'art. 1284 c.c.',
-      'art. 1284 c.c. — testo al 29/12/2007',
-      'art. 1284 c.c. — testo originale',
+      'art. 1284 c.c., testo al 29/12/2007',
+      'art. 1284 c.c., testo originale',
     ]);
     expect(within(leftPanel()).getAllByText('Interessi')).toHaveLength(2);
     expect(within(leftPanel()).getByText('Originale')).toBeInTheDocument();
-    expect(within(leftPanel()).getByRole('button', { name: 'Dalle pratiche (3)' })).toBeInTheDocument();
+    expect(within(leftPanel()).getByRole('button', { name: 'Dal tavolo (3)' })).toBeInTheDocument();
   });
 });
 

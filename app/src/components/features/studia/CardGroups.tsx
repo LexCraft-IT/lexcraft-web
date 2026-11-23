@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../../../lib/utils';
 import { ClaudeMark } from '../../ui/ClaudeMark';
+import { CARD_GRID_COLUMNS } from '../../layout/frame';
 import type { Scheda } from '../../../types/studia';
 import { StateChip } from './StateChip';
 import { FOCUS_RING, INK_BORDER, MUTED_TEXT, subjectHue } from './progress/tokens';
@@ -14,7 +15,10 @@ export interface CardGroupsProps {
   /** Institutes folded shut, by their key in `CardGroups` (subject and institute). */
   folded: ReadonlySet<string>;
   onToggleFold: (key: string) => void;
-  /** The cards in a grid (G8): two columns from `lg`, three from `2xl`; one column beside a selected card. */
+  /**
+   * The cards in a grid (G8) of cards of at least 20rem, as many as the list's width holds (`CARD_GRID_COLUMNS`, U1);
+   * one column beside a selected card.
+   */
   grid?: boolean;
 }
 
@@ -33,14 +37,14 @@ function CardTile({ card, selected }: { card: Scheda; selected: boolean }) {
   return (
     <li className="min-w-0">
       <Link
-        to={`/studia/schede/${encodeURIComponent(card.id)}`}
+        to={`/learn/schede/${encodeURIComponent(card.id)}`}
         aria-current={selected ? 'true' : undefined}
         className={cn(
-          'flex h-full min-h-[44px] flex-col gap-2 rounded-xl border p-3.5 transition-colors',
+          'flex h-full min-h-[44px] flex-col gap-2 rounded-[8px] border p-3.5 transition-colors',
           FOCUS_RING,
           selected
             ? cn('border-2 bg-primary-50 dark:bg-primary-900/30', INK_BORDER)
-            : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800/60',
+            : 'border-slate-200 bg-card hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800/60',
         )}
       >
         <span className="line-clamp-3 break-words font-serif text-base leading-snug text-slate-900 dark:text-slate-50">{card.domanda}</span>
@@ -64,8 +68,9 @@ function CardTile({ card, selected }: { card: Scheda; selected: boolean }) {
 
 /**
  * The cards under headings: a subject, named with its hue, then its institutes (the accordion pattern of
- * `DossierActBlock`: the heading holds the toggle), then the cards as tiles — in a grid of two columns from `lg` and three
- * from `2xl` across the page's width (G8), in one column beside a selected card.
+ * `DossierActBlock`: the heading holds the toggle), then the cards as tiles — across the page's width in a grid of cards
+ * of at least 20rem (G8, U1: one column on a phone, two at 768 px, three at 1366 with the sidebar, four at 1920), in one
+ * column beside a selected card.
  */
 export function CardGroups({ groups, selectedId, folded, onToggleFold, grid = false }: CardGroupsProps) {
   return (
@@ -87,14 +92,15 @@ export function CardGroups({ groups, selectedId, folded, onToggleFold, grid = fa
                 return (
                   <div key={key} className="border-t border-slate-200 dark:border-slate-800">
                     <h3>
+                      {/* bare-button: an institute's heading row, folding its cards. */}
                       <button
                         type="button"
                         aria-expanded={!isFolded}
                         onClick={() => onToggleFold(key)}
                         className={cn(
-                          'flex min-h-[44px] w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/60',
+                          'flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/60',
                           FOCUS_RING,
-                          'focus-visible:ring-inset focus-visible:ring-offset-0',
+                          '',
                         )}
                       >
                         <ChevronDown size={16} aria-hidden className={cn('shrink-0 text-slate-500 transition-transform motion-reduce:transition-none dark:text-slate-400', isFolded && '-rotate-90')} />
@@ -103,7 +109,7 @@ export function CardGroups({ groups, selectedId, folded, onToggleFold, grid = fa
                       </button>
                     </h3>
                     {!isFolded && (
-                      <ul className={cn('grid gap-2 pb-4 pt-1', grid && 'lg:grid-cols-2 2xl:grid-cols-3')}>
+                      <ul className={cn('grid gap-2 pb-4 pt-1', grid && CARD_GRID_COLUMNS)}>
                         {institute.cards.map((card) => (
                           <CardTile key={card.id} card={card} selected={card.id === selectedId} />
                         ))}

@@ -28,7 +28,7 @@ export interface ArticleCardsRowProps {
 const PAST_REASON = 'Le schede si ancorano al testo vigente';
 // 44 px at every width, the look of the reader's other quiet entries: words, no box.
 const ACTION =
-  'inline-flex min-h-[44px] items-center rounded px-1 underline-offset-4 transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
+  'inline-flex min-h-[44px] items-center rounded px-1 underline-offset-4 transition-colors hover:underline focus:outline-none ';
 
 /**
  * Under the article, outside its text: «Schede su questo articolo (3) · + Nuova scheda». The count
@@ -57,6 +57,7 @@ export function ArticleCardsRow({ norma, articleText, structure, historical, ref
   if (!urn) return null;
 
   const newCard = (
+    // bare-button: the reader's line under an article, words in a sentence with the count beside them.
     <button
       type="button"
       onClick={() => {
@@ -81,6 +82,7 @@ export function ArticleCardsRow({ norma, articleText, structure, historical, ref
       {status === 'ready' && (
         <>
           {count > 0 ? (
+            // bare-button: the reader's line, as «+ Nuova scheda».
             <button
               type="button"
               ref={setCountButton}

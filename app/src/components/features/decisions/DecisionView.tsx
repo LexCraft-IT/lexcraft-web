@@ -17,6 +17,8 @@ import {
 import { hasDecisionText } from '../../../utils/decisionText';
 import { AddToDossierPopover } from '../dossier/AddToDossierPopover';
 import { sentenzaFromDecision } from '../dossier/dossierUtils';
+import { useHostDossier } from '../practice/readingHost';
+import { addToThisDossier } from '../practice/inDossier';
 import { DecisionDownloads } from './DecisionDownloads';
 import { DecisionAnchorsWithoutText } from './DecisionAnchorsWithoutText';
 import { DecisionTextView } from './DecisionTextView';
@@ -43,7 +45,7 @@ export interface DecisionViewProps {
 
 function Alert({ children }: { children: React.ReactNode }) {
   return (
-    <div role="alert" className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+    <div role="alert" className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
       <AlertCircle size={17} className="mt-0.5 shrink-0" aria-hidden />
       <div>{children}</div>
     </div>
@@ -87,7 +89,9 @@ function FoundView({ answer, onToast, actions, textSlot, noTextSlot, title = 'he
   // The source's own page, only ever over https: the address comes from our server, built on fixed
   // bases, so this is defence in depth.
   const sourceUrl = httpsUrl(answer.fonte.url);
-  const [dossierAnchor, setDossierAnchor] = useState<HTMLElement | null>(null);
+  const [adding, setAdding] = useState(false);
+  // In a dossier's «Lettura» (LC55): «Aggiungi a questo dossier», no choice of dossier.
+  const hostDossier = useHostDossier();
 
   const copy = async (text: string, done: string, what: string) => {
     try {
@@ -110,7 +114,7 @@ function FoundView({ answer, onToast, actions, textSlot, noTextSlot, title = 'he
         tabIndex={title === 'line' ? undefined : -1}
         data-decision-heading
         className={cn(
-          'rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+          'rounded focus:outline-none ',
           title === 'line' ? 'text-sm text-slate-600 dark:text-slate-400' : 'text-xl font-semibold text-slate-900 dark:text-white',
         )}
       >
@@ -142,17 +146,21 @@ function FoundView({ answer, onToast, actions, textSlot, noTextSlot, title = 'he
           variant="secondary"
           size="sm"
           icon={<FolderPlus size={16} />}
-          className={TOUCH_TARGET_RESPONSIVE}
-          onClick={(e) => setDossierAnchor(e.currentTarget)}
+          // 14 px in a dossier's «Lettura», as its rows' commands (the tests of 16-11); 12 elsewhere.
+          className={cn(TOUCH_TARGET_RESPONSIVE, hostDossier && 'text-sm/5')}
+          aria-expanded={hostDossier ? undefined : adding}
+          onClick={() => (hostDossier
+            ? addToThisDossier(hostDossier.id, { sentenza: sentenzaFromDecision(answer.identita, answer.attributi) }, onToast, 'Aggiunta')
+            : setAdding(true))}
         >
-          Aggiungi al dossier
+          {hostDossier ? 'Aggiungi a questa pratica' : 'Aggiungi alla pratica'}
         </Button>
         {sourceUrl && (
           <a
             href={sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-lg px-3 text-sm text-primary-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 md:min-h-0 dark:text-primary-400"
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-md px-3 text-sm text-primary-600 hover:underline focus-visible:outline-none md:min-h-0 dark:text-primary-400"
           >
             <ExternalLink size={16} aria-hidden /> Apri sulla fonte
           </a>
@@ -160,6 +168,15 @@ function FoundView({ answer, onToast, actions, textSlot, noTextSlot, title = 'he
         <DecisionDownloads answer={answer} identity={answer.identita} />
         {actions}
       </div>
+      {/* «Aggiungi alla pratica» opens under the commands, in the page (LC125, L-73). The item keeps the identity and
+          the citation computed from what it keeps (source convention, Q9), never the text. */}
+      <AddToDossierPopover
+        isOpen={adding}
+        onClose={() => setAdding(false)}
+        sentenza={sentenzaFromDecision(answer.identita, answer.attributi)}
+        onAdded={(_dossierId, title) => onToast(`Aggiunta a «${title}»`, 'success')}
+        onDuplicate={(title) => onToast(`Già presente in «${title}»`, 'info')}
+      />
       {/* Found without its text: the notice above says so, no empty block is drawn, and the reader's
           notes and highlights on it are listed instead of dropped. */}
       {hasDecisionText(answer.testo)
@@ -175,16 +192,6 @@ function FoundView({ answer, onToast, actions, textSlot, noTextSlot, title = 'he
       <footer className="border-t border-slate-200 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
         Fonte: {answer.fonte.nome}
       </footer>
-      {/* The item keeps the identity and the citation computed from what it keeps (source
-          convention, Q9), never the text. */}
-      <AddToDossierPopover
-        isOpen={dossierAnchor !== null}
-        anchorEl={dossierAnchor}
-        onClose={() => setDossierAnchor(null)}
-        sentenza={sentenzaFromDecision(answer.identita, answer.attributi)}
-        onAdded={(_dossierId, title) => onToast(`Aggiunta a «${title}»`, 'success')}
-        onDuplicate={(title) => onToast(`Già presente in «${title}»`, 'info')}
-      />
     </article>
   );
 }

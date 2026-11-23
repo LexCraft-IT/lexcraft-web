@@ -26,6 +26,19 @@ export interface Practice {
   decisions: PracticeDecision[];
   /** The light windows beside the table on the desktop, oldest first, at most two (D10, T14). */
   beside: BesideRef[];
+  /** A reading table bound to this dossier (LC51): built from it for the session, never saved in the browser,
+   *  never the Corpus's active practice. Absent on every Corpus practice. */
+  dossierId?: string;
+}
+
+/** The one test every exclusion of a bound table goes through (LC51): the bar, persistence, the moves, the closings. */
+export function isBoundPractice(practice: Pick<Practice, 'dossierId'>): boolean {
+  return practice.dossierId !== undefined;
+}
+
+/** The practices the Corpus lists, in order: the same array when none is bound, so selectors stay stable. */
+export function corpusPractices(practices: Practice[]): Practice[] {
+  return practices.some(isBoundPractice) ? practices.filter((p) => !isBoundPractice(p)) : practices;
 }
 
 export interface PracticeAct {
@@ -111,6 +124,19 @@ export function sameBesideSubject(a: BesideRef, b: BesideRef): boolean {
   if (a.kind === 'article' && b.kind === 'article') return a.actId === b.actId && a.articleKey === b.articleKey;
   if (a.kind === 'decision' && b.kind === 'decision') return a.decisionId === b.decisionId;
   return false;
+}
+
+/** The window that shows the row `rowKey` names — an article of an act, or a decision — or null when the practice holds
+ *  no such row. In the reading view (U2) a revealed row opens beside: there is no row to open in place. */
+export function besideRefOfRow(practice: Practice, rowKey: string): BesideRef | null {
+  for (const act of practice.acts) {
+    for (const article of act.articles) {
+      const articleKey = practiceArticleKey(article);
+      if (articleRowKey(practice.id, act.id, articleKey) === rowKey) return besideRefFor({ kind: 'article', actId: act.id, articleKey });
+    }
+  }
+  const decision = practice.decisions.find((d) => decisionRowKey(practice.id, d.id) === rowKey);
+  return decision ? besideRefFor({ kind: 'decision', decisionId: decision.id }) : null;
 }
 
 /**
@@ -272,6 +298,18 @@ export function practiceCountLine(counts: PracticeCounts): string {
     part(counts.articles, 'articolo', 'articoli'),
     part(counts.decisions, 'sentenza', 'sentenze'),
   ].filter(Boolean).join(' · ');
+}
+
+/**
+ * The name a new Ricerca table takes (LC68, Luca 17-11: «ricerca del» and today's date, not the act searched): «Ricerca
+ * del 17 novembre», «Ricerca dell'8 novembre», «Ricerca del 1º novembre»; the year only when it is not this one.
+ */
+export function searchTableLabel(date: Date, today: Date = new Date()): string {
+  const day = date.getDate();
+  const month = date.toLocaleDateString('it-IT', { month: 'long' });
+  const year = date.getFullYear() === today.getFullYear() ? '' : ` ${date.getFullYear()}`;
+  const of = day === 8 || day === 11 ? "dell'" : 'del ';
+  return `Ricerca ${of}${day === 1 ? '1º' : day} ${month}${year}`;
 }
 
 // --- Saved state is untrusted input (spec §10): checked before use, never thrown on. ---
@@ -524,6 +562,10 @@ export function sanitizePractices(raw: unknown): { practices: Practice[]; droppe
     if (!isObject(entry) || !isText(entry.id) || entry.id === '' || !isText(entry.label) ||
       !Array.isArray(entry.acts) || !Array.isArray(entry.decisions) || !Array.isArray(entry.beside)) {
       dropped.push(`practice #${index}: no id, no label, or not lists of acts, decisions and windows (${shapeOf(entry)})`);
+      return;
+    }
+    if (isBoundPractice(entry as Pick<Practice, 'dossierId'>)) {
+      dropped.push(`practice #${index}: bound to the dossier ${String(entry.dossierId)}, never saved`);
       return;
     }
     if (practices.some((p) => p.id === entry.id)) {

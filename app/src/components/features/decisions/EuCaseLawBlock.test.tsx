@@ -92,6 +92,14 @@ describe('EuCaseLawBlock', () => {
     appStore.setState({ openDecision: saved.openDecision, pushReadingBack: saved.pushReadingBack } as never);
   });
 
+  it('offers «Aggiungi alla pratica» on a judgment, not on an order (LC59)', async () => {
+    service.mockResolvedValue(found([judgment, order]));
+    show();
+    await screen.findByText('Corte giust. UE, C-97/23');
+    expect(screen.getByRole('button', { name: 'Aggiungi alla pratica Corte giust. UE, C-97/23' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Aggiungi alla pratica/ })).toHaveLength(1);
+  });
+
   it('opens an order on EUR-Lex by its CELEX, in a new tab, and says so', async () => {
     service.mockResolvedValue(found([judgment, order]));
     show();
@@ -270,7 +278,7 @@ describe('EuCaseLawBlock — the section\'s controls', () => {
     service.mockResolvedValue(found([judgment, opinion]));
     show();
     await screen.findByText('Corte giust. UE, C-97/23');
-    expect(screen.getByRole('button', { name: /Conclusioni/ })).toHaveClass('min-h-[44px]');
+    expect(screen.getByRole('button', { name: /Conclusioni/ })).toHaveClass('min-h-11');
     expect(screen.getByText('Corte giust. UE, C-97/23').closest('a')).toHaveClass('min-h-[44px]');
   });
 });

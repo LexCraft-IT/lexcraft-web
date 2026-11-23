@@ -4,14 +4,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../Sidebar', () => ({ Sidebar: () => null }));
-vi.mock('../../ui/SettingsModal', () => ({ SettingsModal: () => null }));
-vi.mock('../../ui/FeedbackButton', () => ({ FeedbackButton: () => null }));
 vi.mock('../../ui/ChangelogNotification', () => ({ ChangelogNotification: () => null }));
 vi.mock('../../ui/Toast', () => ({ NotificationHost: () => null }));
 // The planner's host reads the tasks from the server: not under test here.
 vi.mock('../../features/planner/PlannerHost', () => ({ PlannerHost: () => null }));
 vi.mock('../../ui/SyncErrorToast', () => ({ SyncErrorToast: () => null }));
-vi.mock('../../ui/KeyboardShortcutsModal', () => ({ KeyboardShortcutsModal: () => null }));
 vi.mock('../../../hooks/useServiceHealth', () => ({ useServiceHealth: () => ({ snapshot: { overall: 'online', services: [], checkedAt: '' }, refresh: vi.fn() }) }));
 vi.mock('../../features/compare/CompareView', () => ({ CompareView: () => null }));
 vi.mock('../../../plugins/PluginSlot', () => ({ PluginSlot: () => null }));
@@ -24,14 +21,14 @@ import { appStore } from '../../../store/useAppStore';
 import { Layout } from '../Layout';
 
 const at = (path: string) => render(<MemoryRouter initialEntries={[path]}><Layout /></MemoryRouter>);
-const INSET = ['pt-[calc(4.5rem+env(safe-area-inset-top))]', 'md:pt-[calc(4.5rem+env(safe-area-inset-top))]', 'lg:pt-8'];
+const INSET = ['pt-[calc(4.5rem+env(safe-area-inset-top))]', 'md:pt-[calc(4.5rem+env(safe-area-inset-top))]', 'lg:pt-10'];
 
 beforeEach(() => {
   appStore.setState((s) => ({ settings: { ...s.settings, focusMode: false }, commandPaletteOpen: false }));
 });
 
 describe('Layout — the phone\'s bar below lg (M1)', () => {
-  it.each(['/dossier', '/dossier?dossier=d1', '/history', '/forum', '/studia/schede', '/documents'])(
+  it.each(['/pratiche', '/pratiche?dossier=d1', '/history', '/forum', '/learn/schede', '/documents'])(
     'draws the bar with the menu button and starts the content under it on %s',
     (path) => {
       at(path);
@@ -45,7 +42,7 @@ describe('Layout — the phone\'s bar below lg (M1)', () => {
   // jsdom has no IntersectionObserver, where the bar names the page at once; with one, the name waits for the page's
   // title to scroll out (G8, `Layout.phoneBar.test.tsx`).
   it.each([
-    ['/studia/ripasso', 'Oggi'],
+    ['/learn/ripasso', 'Oggi'],
     ['/forum/community', 'Community'],
     ['/collega-app', 'Collega un’app AI'],
   ])('names the page in the middle on %s', (path, title) => {
@@ -53,8 +50,15 @@ describe('Layout — the phone\'s bar below lg (M1)', () => {
     expect(within(screen.getByTestId('phone-top-bar')).getByText(title)).toBeInTheDocument();
   });
 
+  // jsdom cannot measure: the class is the check. 10.5 rem leaves 8 px of air before «Commenti» at 768 (LC4).
+  it('ends its magnifier before «Commenti» from md, with the search field\'s room', () => {
+    at('/pratiche');
+    const row = within(screen.getByTestId('phone-top-bar')).getByRole('button', { name: 'Apri il menu' }).parentElement;
+    expect(row).toHaveClass('md:pr-[10.5rem]');
+  });
+
   it('opens the search menu from its magnifier', async () => {
-    at('/dossier');
+    at('/pratiche');
     await userEvent.click(within(screen.getByTestId('phone-top-bar')).getByRole('button', { name: 'Apri il menu di ricerca' }));
     expect(appStore.getState().commandPaletteOpen).toBe(true);
   });
@@ -64,7 +68,7 @@ describe('Layout — the phone\'s bar below lg (M1)', () => {
     // A phone: the bar moves below md only.
     window.matchMedia = ((query: string) => ({ ...original(query), matches: query === '(max-width: 767.98px)' })) as typeof window.matchMedia;
     try {
-      at('/studia/schede');
+      at('/learn/schede');
       const main = document.querySelector('main')!;
       expect(main).toHaveClass('max-lg:[--phone-bar-offset:calc(3.5rem+env(safe-area-inset-top))]');
       expect(main).not.toHaveClass('max-md:[--phone-bar-offset:0px]');
@@ -95,11 +99,12 @@ describe('Layout — the phone\'s bar below lg (M1)', () => {
     at('/');
     expect(screen.queryByTestId('phone-top-bar')).toBeNull();
     expect(within(screen.getByTestId('search-bar')).getByRole('button', { name: 'Apri il menu' })).toBeInTheDocument();
-    for (const cls of INSET) expect(screen.getByTestId('layout-content')).not.toHaveClass(cls);
+    // `lg:pt-10` is every page's from lg (LC21); the phone's inset is what is left out.
+    for (const cls of INSET.slice(0, 2)) expect(screen.getByTestId('layout-content')).not.toHaveClass(cls);
   });
 
   it('draws no bar under Gymnasium\'s lesson, which covers the shell', () => {
-    at('/studia/ripasso/sessione?materia=DIRITTO_CIVILE');
+    at('/learn/ripasso/sessione?materia=DIRITTO_CIVILE');
     expect(screen.queryByTestId('phone-top-bar')).toBeNull();
   });
 
@@ -110,16 +115,17 @@ describe('Layout — the phone\'s bar below lg (M1)', () => {
 
   it('adds nothing in focus mode, where neither the bar nor the button is drawn', () => {
     appStore.setState((s) => ({ settings: { ...s.settings, focusMode: true } }));
-    at('/dossier');
+    at('/pratiche');
     expect(screen.queryByTestId('phone-top-bar')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Apri il menu' })).toBeNull();
-    for (const cls of INSET) expect(screen.getByTestId('layout-content')).not.toHaveClass(cls);
+    // `lg:pt-10` is every page's from lg (LC21); the phone's inset is what is left out.
+    for (const cls of INSET.slice(0, 2)) expect(screen.getByTestId('layout-content')).not.toHaveClass(cls);
   });
 });
 
 describe('Layout — what a section change animates (T1)', () => {
   it('names the content area only, so the bars and the floating buttons hold still; <main> keeps its stacking context', () => {
-    at('/dossier');
+    at('/pratiche');
     const area = screen.getByTestId('layout-content').parentElement!;
     expect(area).toHaveClass('vlx-page');
     expect(document.querySelectorAll('.vlx-page')).toHaveLength(1);

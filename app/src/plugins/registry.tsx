@@ -1,7 +1,6 @@
 import { ArticleMerltSlot } from '../features/merlt/ArticleMerltSlot';
 import { GlobalMerltSlot } from '../features/merlt/GlobalMerltSlot';
 import { ArticleGraphSideRail } from '../features/merlt/graph/side-rail/ArticleGraphSideRail';
-import { RassegnePanel } from '../features/merlt/rassegne/RassegnePanel';
 import type { PluginSlotName, SlotComponent } from './types';
 
 /**
@@ -9,14 +8,17 @@ import type { PluginSlotName, SlotComponent } from './types';
  *
  * Future stories (Slice 2-3) may register additional slots here for Q&A
  * panels, graph viewer, admin pages, etc. For Slice 1 the registry only
- * mounts the MERL-T tracker via `article_content_after`; the Massimario's reviews
- * panel ("Nelle rassegne della Cassazione") sits in `article_case_law`, which the
- * article's «Giurisprudenza» section hosts.
+ * mounts the MERL-T tracker via `article_content_after`. The Massimario's reviews
+ * panel ("Nelle rassegne della Cassazione") is no plugin: «Giurisprudenza» mounts it
+ * itself, read from the Python API's own store, with MERL-T on or off.
  */
 // Cast individual components to the generic slot signature. Slots accept
 // `Record<string, unknown>` props at the registry boundary; the host
 // passes typed props at the call site (see <PluginSlot ... props={{...}}>),
 // and each slot component knows its own real prop shape.
+/** The article's graph side rail, «Grafo» on the reader's edge. */
+export const GRAPH_SIDE_RAIL = false;
+
 const slotComponents: SlotComponent<Record<string, unknown>>[] = [
     {
         id: 'merlt-article-tracker',
@@ -26,26 +28,21 @@ const slotComponents: SlotComponent<Record<string, unknown>>[] = [
         requiredFlag: 'VITE_FEATURE_MERLT',
     },
     {
-        id: 'merlt-article-rassegne',
-        pluginId: 'visualex-merlt',
-        slot: 'article_case_law',
-        component: RassegnePanel as unknown as React.ComponentType<Record<string, unknown>>,
-        requiredFlag: 'VITE_FEATURE_MERLT',
-    },
-    {
         id: 'merlt-global-tracker',
         pluginId: 'visualex-merlt',
         slot: 'global',
         component: GlobalMerltSlot as unknown as React.ComponentType<Record<string, unknown>>,
         requiredFlag: 'VITE_FEATURE_MERLT',
     },
-    {
+    // shortcut: the graph is off for now (Luca, 17-11, LC68): its tab no longer sits on the reader. Set
+    // GRAPH_SIDE_RAIL to true to bring it back under its flags.
+    ...(GRAPH_SIDE_RAIL ? [{
         id: 'merlt-article-graph-side-rail',
         pluginId: 'visualex-merlt',
-        slot: 'article_sidebar',
+        slot: 'article_sidebar' as const,
         component: ArticleGraphSideRail as unknown as React.ComponentType<Record<string, unknown>>,
         requiredFlag: 'VITE_FEATURE_MERLT_GRAPH',
-    },
+    }] : []),
 ];
 
 /**

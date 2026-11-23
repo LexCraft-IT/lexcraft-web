@@ -5,6 +5,7 @@ import { getErrorMessage } from '../../utils/errors';
 import { connectionsService, type ConnectionInfo } from './connectionsService';
 import { ConnectedAppsSection } from './ConnectedAppsSection';
 import { CopyableCode } from './CopyableCode';
+import { AiWaysDiagram } from './AiWaysDiagram';
 import { PageFrame } from '../../components/layout/PageFrame';
 import { AI_TOOLS, UNSUPPORTED_CLIENTS, aiClients, type AiClient } from './aiClients';
 import {
@@ -30,7 +31,7 @@ const card = 'rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-
 // phone's bar, the iPhone's top edge included (its `scroll-padding-top`), and this adds the page's air.
 const anchorTarget = 'scroll-mt-4 lg:scroll-mt-20';
 const partTitle = 'font-serif text-2xl font-medium tracking-tight text-slate-900 dark:text-slate-50';
-const focusRing = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500';
+const focusRing = 'focus-visible:outline-none ';
 
 /** A page outside VisuaLex, in a new tab, said so to a screen reader; 44 px high at every width. */
 function ExternalAnchor({ href, children }: { href: string; children: string }) {
@@ -92,7 +93,7 @@ function ClientCard({ client }: { client: AiClient | LegalItClient }) {
 
 /** The two parts of the page, named at its top: what each is, in one line. */
 const PARTS: { href: string; name: string; line: string }[] = [
-  { href: '#visualex', name: 'VisuaLex', line: 'Online, con il tuo account' },
+  { href: '#visualex', name: 'LexCraft', line: 'Online, con il tuo account' },
   { href: '#mcp-legal-it', name: 'mcp-legal-it', line: 'Sul tuo computer, senza account' },
 ];
 
@@ -115,7 +116,7 @@ function LegalItSection() {
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
           Un server MCP che aggiunge a Claude oltre 200 strumenti di diritto italiano: le norme da Normattiva ed EUR-Lex, la
           giurisprudenza, i calcoli legali e i modelli di atti. Si installa sul tuo computer e non richiede un account
-          VisuaLex.
+          LexCraft.
         </p>
       </header>
 
@@ -201,19 +202,21 @@ export function ConnectAiAppPage() {
   const mcpUrl = state.status === 'ready' ? state.info.mcpUrl : null;
 
   return (
-    // The title at the frame's edge, as on every section page (W2); the page reads as text, so its body keeps a column
-    // of 768 px.
-    <PageFrame title="Collega un’app AI">
-      <div className="max-w-3xl space-y-8 pb-12">
+    // The title at the frame's edge, as on every section page (W2); the page reads as text, so its body keeps the
+    // reading measure (U1, `reading`).
+    <PageFrame title="Collega un’app AI" width="reading">
+      <div className="space-y-8 pb-12">
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          Un’app di intelligenza artificiale collegata a VisuaLex può leggere i tuoi dossier, crearne di nuovi e aggiungervi
+          Un’app di intelligenza artificiale collegata a LexCraft può leggere le tue pratiche, crearne di nuove e aggiungervi
           norme, sentenze, note e schede di studio, con il tuo account. Il collegamento usa il protocollo MCP: copi
-          l’indirizzo nell’app, accedi a VisuaLex e scegli tu i permessi.
+          l’indirizzo nell’app, accedi a LexCraft e scegli tu i permessi.
         </p>
+
+        <AiWaysDiagram />
 
         <nav aria-label="Le due parti della pagina" className="space-y-2">
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Sono due cose diverse: VisuaLex collega l’app AI al tuo account e ai tuoi dossier, online; mcp-legal-it si installa sul
+            Sono due cose diverse: LexCraft collega l’app AI al tuo account e alle tue pratiche, online; mcp-legal-it si installa sul
             tuo computer e dà all’app AI strumenti di diritto italiano, senza account.
           </p>
           <ul className="grid gap-2 sm:grid-cols-2">
@@ -236,7 +239,7 @@ export function ConnectAiAppPage() {
 
         <section id="visualex" aria-labelledby="visualex-title" className={cn(anchorTarget, 'space-y-8')}>
           <h2 id="visualex-title" className={partTitle}>
-            VisuaLex
+            LexCraft
           </h2>
           <section
             aria-labelledby="ai-personal-data"
@@ -248,7 +251,7 @@ export function ConnectAiAppPage() {
                 Dati personali e app AI
               </h2>
               <p>
-                Un’app AI collegata legge i nomi dei tuoi dossier, i titoli e i riferimenti delle voci e le tue schede di studio, e li
+                Un’app AI collegata legge i nomi delle tue pratiche, i titoli e i riferimenti delle voci, le tue note, il testo degli atti delle tue pratiche, le tue schede e i tuoi percorsi di studio, e li
                 passa al servizio di intelligenza artificiale che usa. Non scrivere lì dati personali dei clienti, oppure collega
                 solo app AI di cui ti fidi.
               </p>
@@ -261,7 +264,7 @@ export function ConnectAiAppPage() {
 
           <section aria-labelledby="mcp-address" className="space-y-2">
             <h2 id="mcp-address" className={sectionTitle}>
-              L’indirizzo di VisuaLex
+              L’indirizzo di LexCraft
             </h2>
             {state.status === 'loading' && <p className="text-sm text-slate-500">Caricamento…</p>}
             {state.status === 'error' && (
@@ -343,7 +346,7 @@ export function ConnectAiAppPage() {
                 </li>
               </ol>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                Ciò che viene eliminato finisce nel cestino per 30 giorni: lo trovi in Dossier → Cestino e puoi ripristinarlo.
+                Ciò che viene eliminato finisce nel cestino per 30 giorni: lo trovi in Pratiche → Cestino e puoi ripristinarlo.
               </p>
             </div>
           </section>

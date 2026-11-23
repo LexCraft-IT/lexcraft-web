@@ -8,8 +8,8 @@ import '@testing-library/jest-dom'
 // going to fail anyway, so a generous one costs nothing on a green run.
 configure({ asyncUtilTimeout: 5000 })
 
-// The tours are driver.js overlays started a moment after a component mounts: none runs under test.
-// A test of the tours themselves mocks `useTour` (or the module) in its own file, which wins.
+// The first-run guide opens over the page on a first visit: none opens under test.
+// The guide's own test takes the real `useTour` back in its file, which wins.
 vi.mock('../hooks/useTour', () => ({
   useTour: () => ({
     startTour: vi.fn(), prepareTour: vi.fn(), stopTour: vi.fn(), resetTour: vi.fn(), resetAndStartTour: vi.fn(),
@@ -17,6 +17,11 @@ vi.mock('../hooks/useTour', () => ({
   }),
   holdTours: vi.fn(),
 }))
+
+// jsdom has no idle time: what waits for it (`whenIdle`, ⌘K's band drawn ahead, LC133) would run on its fallback timer in
+// the middle of a test and take its time from it (a cold boot's pratica went past its 5 s, LC135). It never comes under
+// test; a test of what it starts takes `whenIdle` in its own file and runs it when it says.
+vi.mock('../lib/idle', () => ({ whenIdle: () => () => {} }))
 
 // Cleanup after each test
 afterEach(async () => {
@@ -28,6 +33,10 @@ afterEach(async () => {
   euCaseLaw.clearEuCaseLawCache()
   const articleCards = await import('../utils/articleCardsCache')
   articleCards.clearArticleCardsCache()
+  // No notification, and no countdown of one, outlives its test: a timer firing after jsdom is gone throws (LC136).
+  // A file that mocks the module whole has no reset, and no real notification to clear.
+  const notifications = await import('../components/ui/notifications/notifications')
+  if ('resetNotifications' in notifications) notifications.resetNotifications()
 })
 
 // Mock localStorage

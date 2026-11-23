@@ -8,7 +8,7 @@ import type { MyContribJob } from '../contrib/contribApi';
 /**
  * I miei contributi card (§3.3). Shows the last extraction job status when the
  * user can contribute (`full`), else the action says what is missing (S7b).
- * "Carica appunti" → /merlt/contribuisci.
+ * "Carica appunti" → /labs/contribuisci.
  */
 
 export interface ContribCardProps {
@@ -38,7 +38,7 @@ export function ContribCard({ canContribute, consentGate = 'known', lastContrib 
   const action = !canContribute ? (
     gatedAction(consentGate, 'completo')
   ) : (
-    <HubAction to="/merlt/contribuisci">Carica appunti</HubAction>
+    <HubAction to="/labs/contribuisci">Carica appunti</HubAction>
   );
 
   return (
@@ -51,7 +51,7 @@ export function ContribCard({ canContribute, consentGate = 'known', lastContrib 
           {lastContrib.status === 'error' && <p className={HUB_TEXT}>Contributi non raggiungibili al momento.</p>}
           {lastContrib.status === 'success' && lastContrib.data && (
             <p className={HUB_TEXT}>
-              Ultimo caricamento: doc #{lastContrib.data.documentId} —{' '}
+              Ultimo caricamento: doc #{lastContrib.data.documentId},{' '}
               <span className={STATUS_TONE[lastContrib.data.status]}>{STATUS_LABEL[lastContrib.data.status]}</span>
               {lastContrib.data.candidatesCreated != null && (
                 <span className="text-slate-600 dark:text-slate-400"> ({lastContrib.data.candidatesCreated} candidati)</span>

@@ -582,16 +582,19 @@ Auto-dismiss dopo 3 secondi
 ### 5.3 PDFViewer
 **File:** `components/ui/PDFViewer.tsx`
 
+Il PDF dell'atto si apre nella pagina (LC124, L-73), sopra la lettura: uno spazio `Expand`, non una finestra.
+Esc dentro lo spazio lo chiude e il fuoco torna al comando. «Scarica» c'è sempre, come ripiego dove il PDF
+nell'iframe non si vede (Safari, Chrome per Android). Si apre alla prima pagina.
+
 ```
 ┌────────────────────────────────────────────────┐
-│ Anteprima PDF                            [✕]  │
-├────────────────────────────────────────────────┤
-│ [🔍-] [100%] [🔍+]  [📥 Download] [🖨️ Stampa] │
+│ PDF della norma              [⤓ Scarica] [✕]  │
 ├────────────────────────────────────────────────┤
 │                                                │
-│              PDF Preview                       │
+│              PDF (iframe)                      │
 │                                                │
 └────────────────────────────────────────────────┘
+  l. 8 marzo 2017, n. 24   Studio Struttura PDF ⋯
 ```
 
 ---
@@ -658,6 +661,24 @@ Norma (documento legale)
 | Sans | Inter, system-ui | Default UI |
 | Serif | Georgia, Times | Lettura testi |
 | Mono | JetBrains Mono, monospace | Codice/citazioni |
+
+### Movimento: la regola della frequenza
+
+Le animazioni stanno solo dove aiutano (Luca, 19-11; regola concordata con il consulente UI, LC132). Più un gesto è
+frequente, meno si muove:
+
+| Gesto | Movimento | Esempi |
+|-------|-----------|--------|
+| Un tasto | Nessuno: il cambiamento è lì nello stesso frame | Una lettera in ⌘K, le frecce in un elenco |
+| Un'azione ripetuta | Al massimo 150–200 ms, senza molla e senza cascata | ⌘K (180 in apertura, 120 in chiusura), `Expand` (200/150), le notifiche (200/150), il menu del telefono (200/150), il pulsante occupato o disattivato (subito, in entrata e in uscita) |
+| Un cambio di posto | 180 ms | `PageFade`, `ViewSlide` (12 px di lato solo tra elenco e dettaglio), il cambio di sezione, «Apri accanto» nella pratica |
+
+Un cambiamento, un movimento: ciò che arriva dopo un'attesa nata con un cambio di pagina o di vista (`Arrive`) entra
+solo in dissolvenza, perché il cambio si è già mosso. I momenti rari (le conferme, i premi di Gymnasium, il primo
+disegno di una pagina) tengono i loro tempi. Con «Riduci movimento» restano le sole dissolvenze, mai più lente del
+movimento: ⌘K e le notifiche con i loro tempi (180/120 e 200/150), `Expand` con quelli di prima, `ViewSlide` con i
+180 ms lineari di `PageFade`. Ogni tempo è un token di `src/lib/motion.ts`: il guard
+`src/styleRules.guard.test.ts` rifiuta le durate scritte a mano.
 
 ---
 

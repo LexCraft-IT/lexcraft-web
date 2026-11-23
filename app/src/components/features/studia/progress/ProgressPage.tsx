@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react';
+import { Button } from '../../../ui/Button';
 import { useIsDesktop } from '../../../../hooks/useIsDesktop';
 import { cn } from '../../../../lib/utils';
+import { CARD_GRID_COLUMNS } from '../../../layout/frame';
 import type { Materia, Progressi } from '../../../../types/studia';
 import { MATERIA_LABEL } from '../studiaLabels';
 import { CardStatesBar, CardStatesBarSkeleton } from './CardStatesBar';
@@ -12,11 +14,12 @@ import { LevelBar } from './LevelBar';
 import { rememberedMateria, rememberMateria } from './rememberedSubject';
 import { StreakBadge } from './StreakBadge';
 import { SubjectChips } from './SubjectChips';
-import { SubjectProgress } from './SubjectProgress';
-import { BLOCK_HEADING, MUTED_TEXT, SECONDARY_BUTTON, TILE, subjectHue } from './tokens';
+import { SUBJECT_CARD_HEIGHT, SubjectProgress } from './SubjectProgress';
+import { BLOCK_HEADING, MUTED_TEXT, TILE, subjectHue } from './tokens';
 import { useProgress } from './useProgress';
+import { Arrive } from '../../../ui/Arrive';
+import { Skeleton } from '../../../ui/Skeleton';
 
-const PULSE = 'rounded-lg bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800';
 const UNREAD = 'I numeri tornano appena riesco a leggerli.';
 
 interface BlockProps {
@@ -30,7 +33,7 @@ interface BlockProps {
   children: ReactNode;
 }
 
-/** A block of the page: a tile with its heading in Newsreader (one type language, Gymnasium spec §5.1). */
+/** A block of the page: a tile with its heading in EB Garamond (one type language, Gymnasium spec §5.1). */
 function Block({ id, title, busy, stale, note, children }: BlockProps) {
   return (
     // `content-start`: beside a taller block (G6) the room left goes under the content, never between its rows.
@@ -65,24 +68,27 @@ function Summary({ data }: { data: Progressi }) {
   );
 }
 
+/** The summary's own rows (LC112): the streak and the goal, then the level (`LevelBar`'s 86 px), at their heights. */
 function SummarySkeleton() {
   return (
-    <div aria-hidden className="flex flex-wrap items-center gap-x-10 gap-y-5">
-      <div className={cn(PULSE, 'h-10 w-40')} />
-      <div className={cn(PULSE, 'h-10 w-24')} />
-      <div className={cn(PULSE, 'h-[4.5rem] w-full lg:max-w-md')} />
+    <div aria-hidden className="grid gap-6">
+      <div className="flex flex-wrap items-center gap-x-10 gap-y-5">
+        <Skeleton className="h-8 w-52" />
+        <Skeleton className="h-8 w-12" />
+      </div>
+      <Skeleton className="h-[5.375rem] w-full lg:max-w-md" />
     </div>
   );
 }
 
 /**
- * «Progressi», `/studia/progressi` (Gymnasium spec §5.3, G3): everything the home no longer shows, in the sections'
+ * «Progressi», `/learn/progressi` (Gymnasium spec §5.3, G3): everything the home no longer shows, in the sections'
  * full-width frame (G6) — the summary (the streak, today's goal, the level), the subject chips, «Il tuo andamento»
  * across the page (G7: the reviews as a line over 7 days, 30 days or six months, which replaced the calendar), «Le
- * schede per stato» and «I prossimi 14 giorni» side by side from `lg`, and «Per
- * materia» in two columns from `lg`; one column below. The same read as «Oggi» (`useProgress` over `GET
- * /lingo/srs/progressi`): the whole day's for the summary and the subjects, and, while a subject is chosen, that
- * subject's for the trend, the states and the coming days — the summary stays the whole day's (the streak and the
+ * schede per stato» and «I prossimi 14 giorni» side by side from `lg`, one column below (in full screen too: nothing
+ * here reads it, U1), and «Per materia» a grid of cards of at least 20rem (U1). The same read as «Oggi» (`useProgress`
+ * over `GET /lingo/srs/progressi`): the whole day's for the summary and the subjects, and, while a subject is chosen,
+ * that subject's for the trend, the states and the coming days — the summary stays the whole day's (the streak and the
  * goal are), and the subjects list all five. The subject is the one «Oggi» remembers. While the first read travels
  * every block holds its final size; a failed read says so with «Riprova» and keeps what was on screen; a new read of
  * the same subject leaves the last answer on screen, dimmed. The level is the summary's (G1c), the whole day's.
@@ -129,16 +135,19 @@ export function ProgressPage() {
         // No alert: the page says it where the numbers would be, and the button reads again.
         <div className={cn(TILE, 'flex flex-wrap items-center justify-between gap-3 p-4 md:p-5')}>
           <p className="text-sm text-slate-800 dark:text-slate-100">Non riesco a leggere i tuoi progressi.</p>
-          <button type="button" onClick={reload} className={SECONDARY_BUTTON}>
+          <Button type="button" variant="secondary" onClick={reload}>
             Riprova
-          </button>
+          </Button>
         </div>
       )}
 
       {!nothing && (
         <>
           <section aria-label="Riepilogo" aria-busy={dayBusy} className={cn(TILE, 'p-4 md:p-6 transition-opacity', dayBusy && day.data !== null && 'opacity-60')}>
-            {day.data ? <Summary data={day.data} /> : <SummarySkeleton />}
+            {/* The day's numbers come in once read (LC98). */}
+            <Arrive loading={day.data === null} placeholder={<SummarySkeleton />}>
+              {day.data && <Summary data={day.data} />}
+            </Arrive>
           </section>
 
           <div className="grid gap-2">
@@ -150,8 +159,9 @@ export function ProgressPage() {
             {scoped(
               (data) =>
                 // A newcomer only: someone back after more than the server's 26 weeks has a record, and a flat line.
+                // In the chart's place, at its placeholder's height: the page does not shrink as the answer comes (LC112).
                 data.calendario.length === 0 && day.data?.serie.record === 0 ? (
-                  <p className={cn('max-w-prose text-sm', MUTED_TEXT)}>Il primo giorno comincia oggi: qui si disegnano i ripassi di ogni giorno.</p>
+                  <ReviewTrendSkeleton note="Il primo giorno comincia oggi: qui si disegnano i ripassi di ogni giorno." />
                 ) : (
                   <ReviewTrend
                     calendario={data.calendario}
@@ -184,9 +194,9 @@ export function ProgressPage() {
             {day.data ? (
               <SubjectProgress materie={day.data.materie} selected={materia} onSelect={choose} />
             ) : (
-              <div aria-hidden className="grid gap-2 lg:grid-cols-2">
+              <div aria-hidden className={cn('grid gap-2', CARD_GRID_COLUMNS)}>
                 {[0, 1, 2, 3, 4].map((n) => (
-                  <div key={n} className={cn(PULSE, 'h-28 rounded-xl')} />
+                  <Skeleton key={n} className={cn('rounded-[8px]', SUBJECT_CARD_HEIGHT)} />
                 ))}
               </div>
             )}

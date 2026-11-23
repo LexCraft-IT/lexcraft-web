@@ -12,25 +12,28 @@
  * The card takes the height of the form shown (A1c, Luca, 22 Oct 2026: «il tab di accedi centrato, e poi fallo
  * espandere verso il basso se si clicca registrati»): both forms stay mounted, so each keeps what was typed in it,
  * but the one not shown leaves the flow (out of reach, `inert`, hidden by `visibility` once faded), and the box
- * that holds them takes the shown one's measured height in 220 ms. The card is centred, with the colophon, by the
+ * that holds them takes the shown one's measured height in `--dur-panel` (240 ms). The card is centred, with the colophon, by the
  * height it has on «Accedi» (`--login-card-h`): on «Registrati» its top and its tabs hold still and it grows
  * downwards, the page scrolling when the window is too low. «Crediti» is the last row of a grid as tall as the
  * window; and the page scrolls in its own box with `scrollbar-gutter: stable`, so a window too low for it does not
- * shift sideways when a bar appears. The motion, once per change of tab: the mark under the tabs slides
- * (`transform`, 200 ms), the card's height follows (220 ms), the form leaving fades (120 ms) while the one coming
- * in fades from 8 px on the side of its tab (180 ms). Under reduced motion the change is immediate. Once, as the page opens, the colophon is written in
- * ink (A3): the book traces itself, the wordmark comes out from under the pen's soft edge, the line rises under it.
+ * shift sideways when a bar appears. The motion, once per change of tab: the tabs' mark slides
+ * (`SegmentedTabs`, the app's spring), the card's height follows (`--dur-panel`), the form leaving fades (`--dur-press`) while the one coming
+ * in fades from 8 px on the side of its tab (180 ms). Under reduced motion the change is immediate. Once, as the page opens, the LexCraft logo plays its
+ * intro (LC16, `LexCraftLogo`): the word opens, the column comes down to its place and selects CRAFT.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type AnimationEvent, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { BookMark } from '../ui/BookMark';
+import { LexCraftLogo } from '../ui/LexCraftLogo';
+import { logoSweepDue, markLogoSweep } from '../ui/logoSweep';
 import { FOCUS_RING } from '../../constants/interactions';
+import { SegmentedTabs } from '../ui/SegmentedTabs';
+import { CARD_RADIUS } from '../ui/controlStyles';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../hooks/useAuth';
 import { authPageTab, isLoginPage } from '../../utils/returnTo';
 import { canTransitionPage, startPageTransition } from '../../lib/pageTransition';
 import { focusField } from './authForm';
-import { INK_ENDS, isIOSWebKit } from './inkMark';
 import { LoginForm } from './LoginForm';
 import { RegisterForm } from './RegisterForm';
 
@@ -40,9 +43,6 @@ const TABS: { id: AuthTab; label: string; path: string }[] = [
   { id: 'login', label: 'Accedi', path: '/login' },
   { id: 'register', label: 'Registrati', path: '/register' },
 ];
-
-// The wordmark's two copies (A3) stack in one cell of a grid, each with room for the mask past the glyphs' edges.
-const INK_CELL = 'col-start-1 row-start-1 px-[0.05em] py-[0.1em]';
 
 // Entering the app (spec §6.3.1): once per session the book traces itself, then the app comes in.
 const ENTRY_MS = 720;
@@ -60,10 +60,24 @@ function enter(go: () => void) {
 }
 
 
+const LIBRARY_URL = `url(${import.meta.env.BASE_URL}illustrations/login-sfondo.webp)`;
+/** The library's plate as a mask: its shape only, the colour the theme's ink; the wide plate cropped to the window. */
+const LIBRARY: CSSProperties = {
+  maskImage: LIBRARY_URL, WebkitMaskImage: LIBRARY_URL,
+  maskSize: 'cover', WebkitMaskSize: 'cover',
+  maskPosition: 'center bottom', WebkitMaskPosition: 'center bottom',
+  maskRepeat: 'no-repeat', WebkitMaskRepeat: 'no-repeat',
+};
+
 export function AuthPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [tab, setTab] = useState<AuthTab>(() => authPageTab(location.pathname) ?? 'login');
+  // The logo's intro, once a browser session (LC18): read as the page opens, recorded after.
+  const [intro] = useState(() => logoSweepDue('intro'));
+  useEffect(() => {
+    if (intro) markLogoSweep('intro');
+  }, [intro]);
   // Read by the page, which passes it to the sign-in form.
   const auth = useAuth();
   // A request in flight (a sign-in, a sign-up): the tabs hold still, or its answer would land on the
@@ -74,40 +88,14 @@ export function AuthPage() {
   // the form starts again empty (it stays mounted, so a new key mounts it afresh).
   const [signedUp, setSignedUp] = useState(false);
   const [registerKey, setRegisterKey] = useState(0);
-  // The wordmark written in ink (A3, `index.css`): the word is one text throughout, its kerning kept; while the pen
-  // writes it a faint blurred copy runs ahead of its mask. Once written — or when the writing is cancelled, reduced
-  // motion turned on halfway — the copy and the mask go. Under reduced motion nothing is written, and the colophon
-  // only fades in, `inkShown` turning its opacity on after a frame drawn at 0.
-  const [inked, setInked] = useState(prefersReducedMotion);
-  const [plainInk] = useState(isIOSWebKit);
-  const endInk = (event: Pick<AnimationEvent, 'animationName'>) => {
-    if (INK_ENDS.includes(event.animationName)) setInked(true);
-  };
-  // React has no `animationcancel`: listened to on the element, so reduced motion turned on halfway (the rules go,
-  // the animation is cancelled, no `animationend` comes) still ends the writing.
-  const inkRef = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    const element = inkRef.current;
-    if (!element || inked) return undefined;
-    const cancel = (event: globalThis.AnimationEvent) => {
-      if (INK_ENDS.includes(event.animationName)) setInked(true);
-    };
-    element.addEventListener('animationcancel', cancel);
-    return () => element.removeEventListener('animationcancel', cancel);
-  }, [inked]);
-  const [inkShown, setInkShown] = useState(false);
-  useEffect(() => {
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => setInkShown(true));
-    });
-    return () => cancelAnimationFrame(frame);
-  }, []);
   // And «Torna ad Accedi» finds a fresh sign-in form: a new key empties it, and the failure the page's
   // `useAuth` still holds (until the next sign-in) is not shown on it. A new failure is the form's own
   // message, so hiding the same words again loses nothing.
   const [loginKey, setLoginKey] = useState(0);
   const [spentError, setSpentError] = useState<string | null>(null);
-  const loginAuth = { login: auth.login, loading: auth.loading, error: auth.error === spentError ? null : auth.error };
+  // Disabled only by its own request (`busy`), never by the session check `useAuth` runs on mounting: that one drew
+  // «Accedi» at half opacity for a frame, then faded it in (LC131).
+  const loginAuth = { login: auth.login, loading: busy, error: auth.error === spentError ? null : auth.error };
   const onRegistered = () => {
     setSignedUp(true);
     setLoginKey((k) => k + 1);
@@ -174,8 +162,8 @@ export function AuthPage() {
     });
     return () => cancelAnimationFrame(frame);
   }, [tab]);
-  const tabRefs = useRef<Record<AuthTab, HTMLButtonElement | null>>({ login: null, register: null });
   const focusFirstField = useRef(false);
+  const choiceByKeys = useRef(false);
   const pendingFocus = useRef<HTMLInputElement | null>(null);
 
   const firstField = (id: AuthTab) => frameRef.current?.querySelector<HTMLInputElement>(`#auth-panel-${id} input`) ?? null;
@@ -221,20 +209,6 @@ export function AuthPage() {
     focusField(firstField(tab), pendingFocus);
   }, [tab]);
 
-  const onTabKeyDown = (e: React.KeyboardEvent) => {
-    const index = TABS.findIndex((t) => t.id === tab);
-    let next: AuthTab | null = null;
-    if (e.key === 'ArrowRight') next = TABS[(index + 1) % TABS.length].id;
-    else if (e.key === 'ArrowLeft') next = TABS[(index - 1 + TABS.length) % TABS.length].id;
-    else if (e.key === 'Home') next = TABS[0].id;
-    else if (e.key === 'End') next = TABS[TABS.length - 1].id;
-    if (!next) return;
-    e.preventDefault();
-    if (busy) return;
-    switchTo(next, 'tab');
-    tabRefs.current[next]?.focus();
-  };
-
   const onSignedIn = (to: string) => {
     setEntering(true);
     // Back to this very page would leave the entrance on screen: the page stays mounted.
@@ -243,98 +217,68 @@ export function AuthPage() {
 
   if (entering) {
     return (
-      <div role="status" aria-label="Accesso a VisuaLex" className="fixed inset-0 grid place-items-center bg-slate-50 text-primary-600 dark:bg-slate-950 dark:text-primary-400">
-        <BookMark size={56} draw />
+      <div role="status" aria-label="Accesso a LexCraft" className="fixed inset-0 grid place-items-center bg-slate-50 text-primary-600 dark:bg-slate-950 dark:text-primary-400">
+        <BookMark size={56} breathe />
       </div>
     );
   }
 
   return (
-    // The page is its own scroller, so the gutter it keeps for a bar is its own: a window too low for
-    // the card scrolls without the page moving sideways.
+    // The page is its own scroller, so the gutter it keeps for a bar is its own: from md, a window too low for
+    // the card scrolls without the page moving sideways. Below md none: on the phone it took 7 px off the right
+    // margin (23 against 16, M1).
     <div
-      className="h-app overflow-y-auto bg-slate-50 [scrollbar-gutter:stable] dark:bg-slate-950"
+      className="h-app overflow-y-auto bg-slate-50 md:[scrollbar-gutter:stable] dark:bg-slate-950"
       // The card's height on «Accedi», by which the page centres it (A1c); until measured, about what it is.
       style={centreHeight ? ({ '--login-card-h': `${centreHeight}px` } as CSSProperties) : undefined}
     >
-      <div className="grid min-h-full grid-rows-[1fr_auto] px-4 md:px-10">
+      {/* LC36 (Luca, 16 Nov: «uno sfondo semi animato per la login page»): his engraving of a law library behind the
+          page, in the theme's ink, light but present, drifting very slowly (still under reduced motion); its middle is empty, where
+          the wordmark and the card sit, and the card stays opaque over it. */}
+      <div aria-hidden data-testid="login-library" className="vlx-login-library pointer-events-none fixed inset-0 bg-slate-800 opacity-[0.3] dark:bg-slate-100 dark:opacity-[0.18]" style={LIBRARY} />
+      <div className="relative grid min-h-full grid-rows-[1fr_auto] px-4 md:px-10">
         {/* On a computer the card's top sits where the card on «Accedi» is centred above «Crediti» (its height and
             the foot's 4 rem): «Registrati», and a form that grows (an error, the password's strength), grow
             downwards, the tabs never move, and the colophon, centred against the card on «Accedi», holds still. */}
-        <div className="pb-6 pt-8 md:pt-[max(1.5rem,calc((100dvh-4rem-var(--login-card-h,32rem))/2))]">
-          <div className="mx-auto grid w-full max-w-4xl gap-8 md:grid-cols-[minmax(0,1fr)_420px] md:items-start md:gap-16">
-            {/* The title grows only from `lg`: between 768 and 1023 px the column beside the card is about
-                200-430 px, and «VisuaLex» at 68 px is 272 px wide. */}
-            <header
-              className={cn(
-                // On a computer as tall as the card on «Accedi», its content centred: the two on one middle line.
-                'flex flex-col items-center gap-4 text-center md:min-h-[var(--login-card-h,32rem)] md:items-start md:justify-center md:gap-5 md:text-left',
-                // Under reduced motion the global rule turns this into a 150 ms fade, the whole of the motion.
-                !inkShown && 'motion-reduce:opacity-0',
-              )}
-            >
-              <BookMark size={44} className="vlx-ink-book text-primary-600 dark:text-primary-400" />
-              {/* One text, «VisuaLex», for the eye and for a reader; while the pen writes, a faint blurred copy of it,
-                  hidden from a reader, runs ahead of the ink's mask (WebKit kerns no pair across two elements, so the
-                  word is never split into letters). The cells' padding, taken back by the grid's margins, gives the
-                  masks room for the glyphs' edges. */}
-              <h1 className="font-serif text-5xl font-medium leading-none tracking-tight text-slate-900 dark:text-slate-50 lg:text-[4.25rem]">
-                <span ref={inkRef} className="-mx-[0.05em] -my-[0.1em] inline-grid" onAnimationEnd={endInk}>
-                  <span className={cn(INK_CELL, !inked && (plainInk ? 'vlx-ink-plain' : 'vlx-ink-word'))}>VisuaLex</span>
-                  {!inked && !plainInk && (
-                    <span aria-hidden="true" className={cn(INK_CELL, 'vlx-ink-bleed select-none')}>
-                      VisuaLex
-                    </span>
-                  )}
-                </span>
+        {/* LC31 (Luca, 15 Nov: «mi pare decentrata … L'Hexcraft dovrebbe essere molto più grande … mettici lo slogan»):
+            one centred column — the wordmark large, the slogan close under it, the card under both —, the whole
+            centred in the window above «Crediti» (the card's measured height plus the header's ~11 rem). The
+            wordmark plays the cursor's sweep over CRAFT once a browser session (not the column dropping from above,
+            which moved the word off its centre); still after «Esci» and under reduced motion. */}
+        <div className="pb-6 pt-10 md:pt-[max(2rem,calc((100dvh-4rem-11rem-var(--login-card-h,32rem))/2))]">
+          <div className="mx-auto flex w-full max-w-[420px] flex-col items-stretch gap-8">
+            <header className="flex flex-col items-center gap-3 text-center">
+              <h1>
+                <LexCraftLogo motion="sweep" played={!intro} className="block h-auto w-[300px] sm:w-[420px]" />
               </h1>
-              <p className="vlx-ink-line max-w-[34ch] font-serif text-xl leading-relaxed text-slate-600 dark:text-slate-300">
-                Le norme italiane ed europee, le sentenze che le leggono, e il tuo lavoro sopra: note, evidenziazioni, dossier.
+              <p className="font-serif text-xl italic leading-snug text-slate-600 sm:text-[22px] dark:text-slate-300">
+                La legge è ancora uguale per tutti
               </p>
             </header>
 
-            <main ref={cardRef} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 dark:border-slate-800 dark:bg-slate-900">
+            <main ref={cardRef} className={cn('min-w-0 border border-slate-200 bg-card p-6 shadow-sm sm:p-8 dark:border-slate-800 dark:bg-slate-900', CARD_RADIUS)}>
+              {/* LC116: the app's one row of tabs (`SegmentedTabs`, small), over the two panels below (`panelId` names
+                  their box; each panel is still named by its tab). A click sends the cursor to the form, the keys keep
+                  the focus on the tabs: which of the two chose is caught here, before the row hears it (a click, Enter
+                  and Space included, always comes after its keys). */}
               <div
-                role="tablist"
-                aria-label="Accedi o registrati"
-                onKeyDown={onTabKeyDown}
-                className="relative mb-6 flex border-b border-slate-200 dark:border-slate-800"
+                className="mb-6"
+                onKeyDownCapture={() => { choiceByKeys.current = true; }}
+                onClickCapture={() => { choiceByKeys.current = false; }}
               >
-                {TABS.map((t) => {
-                  const selected = t.id === tab;
-                  return (
-                    <button
-                      key={t.id}
-                      ref={(el) => {
-                        tabRefs.current[t.id] = el;
-                      }}
-                      type="button"
-                      role="tab"
-                      id={`auth-tab-${t.id}`}
-                      aria-selected={selected}
-                      aria-controls={`auth-panel-${t.id}`}
-                      tabIndex={selected ? 0 : -1}
-                      aria-disabled={busy || undefined}
-                      onClick={() => switchTo(t.id, 'field')}
-                      className={`min-h-[44px] flex-1 rounded-t-md px-2 pb-3 pt-1 font-serif text-2xl font-medium transition-colors aria-disabled:cursor-not-allowed ${
-                        selected
-                          ? 'text-slate-900 dark:text-slate-50'
-                          : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                      } ${FOCUS_RING}`}
-                    >
-                      {t.label}
-                    </button>
-                  );
-                })}
-                <span
-                  aria-hidden="true"
-                  data-testid="auth-tab-mark"
-                  className="pointer-events-none absolute -bottom-px left-0 h-0.5 w-1/2 rounded-full bg-primary-600 transition-transform duration-200 ease-out motion-reduce:transition-none dark:bg-primary-400"
-                  style={{ transform: tab === 'register' ? 'translateX(100%)' : 'translateX(0)' }}
+                <SegmentedTabs
+                  size="sm"
+                  label="Accedi o registrati"
+                  panelId="auth"
+                  tabs={TABS}
+                  value={tab}
+                  onChange={(next) => switchTo(next, choiceByKeys.current ? 'tab' : 'field')}
+                  disabled={busy}
+                  tabClassName="flex-1"
                 />
               </div>
 
-              {/* The box of the forms takes the shown one's height (A1c), in 220 ms from a change of tab on (none on
+              {/* The box of the forms takes the shown one's height (A1c), in `--dur-panel` from a change of tab on (none on
                   the first paint, none under reduced motion). The form hidden leaves the flow, from the box's top:
                   it keeps what was typed in it, fades out (its `visibility` follows at the end of the fade) and is
                   out of reach meanwhile (`inert`). The panels' 8 px padding keeps the fields' focus rings, and the 8
@@ -342,9 +286,10 @@ export function AuthPage() {
                   across a change of tab is it written, and it always clips. */}
               <div
                 ref={frameRef}
+                id="auth"
                 // Always clipped, and by `clip`, which makes no scroller: the form out of the flow, taller, would
                 // otherwise hang under the card and give a low window a scroll into empty space.
-                className={cn('-m-2 relative overflow-clip', boxHeight !== null && 'transition-[height] duration-[220ms] ease-out')}
+                className={cn('-m-2 relative overflow-clip', boxHeight !== null && 'transition-[height] duration-(--dur-panel) ease-out')}
                 style={boxHeight !== null ? { height: boxHeight } : undefined}
                 onTransitionEnd={(event) => {
                   if (event.target === event.currentTarget && event.propertyName === 'height') letBoxGo();
@@ -369,7 +314,7 @@ export function AuthPage() {
                           ? animated
                             ? `animate-in fade-in ${enterFrom}`
                             : ''
-                          : 'pointer-events-none absolute inset-x-0 top-0 invisible opacity-0 transition-[opacity,visibility] duration-[120ms] ease-out motion-reduce:transition-none'
+                          : 'pointer-events-none absolute inset-x-0 top-0 invisible opacity-0 transition-[opacity,visibility] duration-(--dur-press) ease-out motion-reduce:transition-none'
                       }`}
                     >
                       {t.id === 'login' ? (
@@ -398,10 +343,10 @@ export function AuthPage() {
 
         {/* The sources' attributions, readable before signing in: the grid's last row, at the foot of
             the window whatever the tab. */}
-        <footer className="mx-auto w-full max-w-4xl pb-4 text-sm text-slate-600 dark:text-slate-400">
+        <footer className="mx-auto w-full max-w-4xl pb-4 text-center text-sm text-slate-600 dark:text-slate-400">
           <Link
             to="/crediti"
-            className={`-ml-2 inline-flex min-h-[44px] items-center rounded-md px-2 hover:text-slate-900 hover:underline dark:hover:text-slate-100 ${FOCUS_RING}`}
+            className={`inline-flex min-h-[44px] items-center rounded-md px-2 hover:text-slate-900 hover:underline dark:hover:text-slate-100 ${FOCUS_RING}`}
           >
             Crediti
           </Link>

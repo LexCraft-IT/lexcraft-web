@@ -105,7 +105,7 @@ describe('MerltHubPage', () => {
   it('shows a "non disponibile" message when the feature is disabled', () => {
     useMerltFeaturesMock.mockReturnValue({ ...baseFeatures, merltEnabled: false });
     renderHub();
-    expect(screen.getByText(/non è disponibile/i)).toBeInTheDocument();
+    expect(screen.getByText(/non sono accesi su questo server/i)).toBeInTheDocument();
   });
 
   it('renders the consent card with the current level and ladder', () => {
@@ -124,7 +124,7 @@ describe('MerltHubPage', () => {
   it('shows the graph card when the graph flag is enabled', () => {
     renderHub();
     expect(screen.getByTestId('hub-card-graph')).toBeInTheDocument();
-    expect(screen.getByTestId('hub-card-graph').querySelector('a[href="/grafo"]')).not.toBeNull();
+    expect(screen.getByTestId('hub-card-graph').querySelector('a[href="/labs/grafo"]')).not.toBeNull();
   });
 
   it('shows the graph card with consent none when the graph flag is on (reading is free)', () => {
@@ -148,7 +148,7 @@ describe('MerltHubPage', () => {
 
   it('says Academia\'s line over its name (L-37)', () => {
     renderHub();
-    expect(screen.getByRole('heading', { level: 1, name: 'Assistente' })).toHaveAccessibleDescription('Academia · il laboratorio del diritto');
+    expect(screen.getByRole('heading', { level: 1, name: 'Assistente' })).toHaveAccessibleDescription('Labs');
   });
 
   it('does not show the stale "(presto)" copy in the header', () => {
@@ -342,7 +342,7 @@ describe('MerltHubPage — consent first (S7b)', () => {
       expect(action).not.toBeDisabled();
     }
     // Reading the graph is free: its action is a link, and no card nests a button in a link.
-    expect(within(cards[2]).getByRole('link', { name: 'Esplora il grafo' })).toHaveAttribute('href', '/grafo');
+    expect(within(cards[2]).getByRole('link', { name: 'Esplora il grafo' })).toHaveAttribute('href', '/labs/grafo');
     for (const card of cards) expect(card.querySelector('a button, button a')).toBeNull();
   });
 

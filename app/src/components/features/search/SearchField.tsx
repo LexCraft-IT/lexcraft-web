@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ClipboardEvent } from 'react';
 import { Search } from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import { FIELD_TEXT } from '../../../constants/interactions';
 import { useAppStore } from '../../../store/useAppStore';
-import { PALETTE_SHORTCUT, SEARCH_FIELD_FORM_ID, subscribeSearchField } from '../../../utils/searchFieldControl';
-import { useIsDesktop } from '../../../hooks/useIsDesktop';
+import { ISLAND_FOCUS, ISLAND_HINT, ISLAND_LENS, ISLAND_PLACEHOLDER, ISLAND_SHAPE, ISLAND_SURFACE, ISLAND_TARGET, ISLAND_TEXT, ISLAND_WORDS, PALETTE_SHORTCUT, SEARCH_FIELD_FORM_ID, subscribeSearchField } from '../../../utils/searchFieldControl';
 
 /**
  * The search page's field, always on screen above the practices (spec `2026-10-13-fixed-search-design.md`), and the
@@ -14,15 +12,14 @@ import { useIsDesktop } from '../../../hooks/useIsDesktop';
  * filters and the steps are all the menu's (`CommandPalette`). The menu closing without a choice gives its words back
  * here; a choice empties it.
  */
-export function SearchField() {
+/** `compact`: the top bar's size from lg (LC21), 32 px and a short hint, where it sits at the right of the path. */
+export function SearchField({ compact = false }: { compact?: boolean } = {}) {
   const [value, setValue] = useState('');
   const valueRef = useRef(value);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const isOpen = useAppStore((s) => s.commandPaletteOpen);
   const openCommandPaletteWith = useAppStore((s) => s.openCommandPaletteWith);
   const openCommandPalette = useAppStore((s) => s.openCommandPalette);
-  // On a phone the examples do not fit: the placeholder says what the field takes, and stops there.
-  const isDesktop = useIsDesktop();
 
   useEffect(() => {
     valueRef.current = value;
@@ -74,15 +71,15 @@ export function SearchField() {
     }
   };
 
-  const placeholder = isDesktop ? 'Norma, sentenza o tema: art. 2043 c.c., Cass. civ. 10787/2024' : 'Norma, sentenza o tema';
   return (
-    <div className="relative w-full max-w-3xl">
-      <form id={SEARCH_FIELD_FORM_ID} role="search" aria-label="Ricerca" onSubmit={(event) => event.preventDefault()} className="flex items-center">
+    <div className={cn('relative', compact ? 'w-full min-w-0 max-w-[22rem]' : 'w-full max-w-3xl')}>
+      <form id={SEARCH_FIELD_FORM_ID} role="search" aria-label="Ricerca" data-compact={compact ? '' : undefined} onSubmit={(event) => event.preventDefault()} className="flex items-center">
+        {/* bare-button: it stands for the search field, the pill the menu of ⌘K opens from (LC81). */}
         <button
           ref={buttonRef}
           type="button"
           id="tour-search-field"
-          aria-label={value ? `Cerca una norma, una sentenza o un tema: ${value}` : 'Cerca una norma, una sentenza o un tema'}
+          aria-label={value ? `Apri il menu di ricerca: ${value}` : 'Apri il menu di ricerca'}
           aria-haspopup="dialog"
           aria-expanded={isOpen}
           onClick={(event) => {
@@ -95,17 +92,18 @@ export function SearchField() {
           // It stands for a field: «?», ⌘Z and the other shortcuts of a page leave it alone.
           data-text-field=""
           className={cn(
-            // The field's type size (`FIELD_TEXT`, 16 px at least on a phone, «piccolo» included), as the box it opens.
-            'relative flex h-11 w-full min-w-0 items-center rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-left shadow-sm',
-            FIELD_TEXT,
-            'dark:border-slate-700 dark:bg-slate-900',
-            'cursor-text hover:border-slate-300 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:hover:border-slate-600',
+            // LC81: the panel's field's shape and type (`ISLAND_SHAPE`, `ISLAND_TEXT`): 40 px and 16 px on a phone, 32 px
+            // and 13 px in the top bar (`compact`, from lg). Below lg 44 px to the finger (LC69).
+            'w-full text-left', ISLAND_SHAPE, ISLAND_TEXT, ISLAND_SURFACE, !compact && ISLAND_TARGET,
+            'cursor-text', ISLAND_FOCUS,
           )}
         >
-          <Search size={18} aria-hidden className="pointer-events-none absolute left-3 text-slate-400" />
-          <span className={cn('min-w-0 flex-1 truncate', value ? 'text-slate-900 dark:text-white' : 'text-slate-400')}>{value || placeholder}</span>
-          {/* ⌘K (Ctrl K) opens it from anywhere on the page; said where a keyboard is likely. */}
-          <kbd aria-hidden className="ml-2 hidden shrink-0 rounded border border-slate-200 px-1 text-[11px] font-semibold text-slate-500 md:inline dark:border-slate-700 dark:text-slate-400">
+          <Search aria-hidden className={ISLAND_LENS} />
+          {/* The examples are the panel's, on the line under its field: the pill and the field say the same words (LC81). */}
+          <span className={cn('min-w-0 flex-1 truncate', value ? ISLAND_WORDS : ISLAND_HINT)}>{value || ISLAND_PLACEHOLDER}</span>
+          {/* ⌘K (Ctrl K) opens it from anywhere on the page; said where a keyboard is likely: never on a phone, nor on a
+              touch screen wider than md (M1), which has no such shortcut. */}
+          <kbd aria-hidden className="ml-2 hidden shrink-0 rounded border border-slate-200 px-1 text-[11px] font-semibold text-slate-500 md:inline [@media(pointer:coarse)]:hidden dark:border-slate-700 dark:text-slate-400">
             {PALETTE_SHORTCUT}
           </kbd>
         </button>

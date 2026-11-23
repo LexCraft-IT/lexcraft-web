@@ -68,7 +68,7 @@ export const STUDY_SETTINGS_PANEL = 'studia-impostazioni';
  * «I tuoi progressi», one band (Gymnasium spec §5.1). Up to `xl` it spans the page and lays its pieces out in a row from
  * `md`; as «Oggi»'s right column from `xl` (`aside`, G6) it stacks them as on a phone (the week at the column's width):
  * the streak and the gear; the current week as seven boxes; the level (`LevelBar`, G1c: the user's alone); the cards by
- * state in one line with their bar; «Tutti i progressi →», a text link to `/studia/progressi`, where the trend, the
+ * state in one line with their bar; «Tutti i progressi →», a text link to `/learn/progressi`, where the trend, the
  * coming days and the subjects live (G3: the data in one place). No ring of the goal (G8): the goal's mission says it.
  * The gear opens the study settings in the card, under the heading (G6). While the first read travels it holds its
  * final size; a failed read leaves the heading and the gear (the day block says it failed, with «Riprova»).
@@ -108,10 +108,11 @@ export function StatsBand({ data, loading, settingsOpen, onToggleSettings, onClo
               missions' stead, so the goal is still said. */}
           {data.livello && <LevelBar livello={data.livello} />}
           {!data.missioni?.length && <GoalRing compact giorno={data.oggi.giorno} ripassi={data.oggi.ripassi} obiettivo={data.oggi.obiettivo} raggiunto={data.oggi.raggiunto} />}
-          <StatesLine stati={data.stati} />
+          {/* The cards by state are the progress page's: beside the road (LC23) the rail keeps the streak, the level, the goal. */}
+          {!aside && <StatesLine stati={data.stati} />}
           <Link
-            to="/studia/progressi"
-            className={cn('-mx-1 inline-flex min-h-[44px] items-center gap-1.5 justify-self-start rounded-lg px-1 text-sm font-semibold underline-offset-4 hover:underline', INK_TEXT, FOCUS_RING)}
+            to="/learn/progressi"
+            className={cn('-mx-1 inline-flex min-h-[44px] items-center gap-1.5 justify-self-start rounded-md px-1 text-sm font-semibold underline-offset-4 hover:underline', INK_TEXT, FOCUS_RING)}
           >
             Tutti i progressi
             <ArrowRight size={15} aria-hidden />
@@ -121,12 +122,12 @@ export function StatsBand({ data, loading, settingsOpen, onToggleSettings, onClo
         // The final size, so nothing jumps when the read answers.
         <div aria-hidden className="grid gap-5">
           <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
-            <div className="h-10 w-40 rounded-lg bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />
-            <div className={cn('h-14 w-full rounded-lg bg-slate-100 motion-safe:animate-pulse md:ml-auto md:w-72 dark:bg-slate-800', aside && ASIDE_WEEK)} />
+            <div className="h-10 w-40 rounded-md bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />
+            <div className={cn('h-14 w-full rounded-md bg-slate-100 motion-safe:animate-pulse md:ml-auto md:w-72 dark:bg-slate-800', aside && ASIDE_WEEK)} />
           </div>
-          <div className="h-[4.5rem] rounded-lg bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />
-          <div className="h-10 rounded-lg bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />
-          <div className="h-11 w-36 rounded-lg bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />
+          <div className="h-[4.5rem] rounded-md bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />
+          {!aside && <div className="h-10 rounded-md bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />}
+          <div className="h-11 w-36 rounded-md bg-slate-100 motion-safe:animate-pulse dark:bg-slate-800" />
         </div>
       ) : (
         <p className={cn('text-sm', MUTED_TEXT)}>I numeri tornano appena riesco a leggerli.</p>

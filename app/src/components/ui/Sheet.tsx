@@ -17,6 +17,11 @@ export interface SheetProps {
   closeOnBackdrop?: boolean;
   /** Classes for the sheet (a capped width centred on a computer). */
   className?: string;
+  /**
+   * Where the focus goes as it closes, set by the caller before it closes it (a block's sign, found again after the
+   * text was redrawn; null for nowhere): what had the focus as it opened otherwise.
+   */
+  returnFocusRef?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }
 
@@ -26,7 +31,7 @@ export interface SheetProps {
  * browser while it covers the workspace. A press outside dismisses it only with `closeOnBackdrop`:
  * otherwise closing is the X (or Esc, when allowed) and what the content offers.
  */
-export function Sheet({ title, onClose, initialFocusRef, closeOnEscape = false, closeOnBackdrop = false, className, children }: SheetProps) {
+export function Sheet({ title, onClose, initialFocusRef, closeOnEscape = false, closeOnBackdrop = false, className, returnFocusRef, children }: SheetProps) {
   const { refs, context } = useFloating({ open: true });
   const role = useRole(context, { role: 'dialog' });
   const { getFloatingProps } = useInteractions([role]);
@@ -69,7 +74,7 @@ export function Sheet({ title, onClose, initialFocusRef, closeOnEscape = false, 
         aria-hidden
         onClick={closeOnBackdrop ? onClose : undefined}
       />
-      <FloatingFocusManager context={context} modal initialFocus={initialFocusRef ?? 0} returnFocus={opener ? { current: opener } : true}>
+      <FloatingFocusManager context={context} modal initialFocus={initialFocusRef ?? 0} returnFocus={returnFocusRef ?? (opener ? { current: opener } : true)}>
         <motion.div
           // eslint-disable-next-line react-hooks/refs -- floating-ui exposes a stable setter, not a ref.current read
           ref={refs.setFloating}
@@ -93,7 +98,7 @@ export function Sheet({ title, onClose, initialFocusRef, closeOnEscape = false, 
               onClick={onClose}
               aria-label="Chiudi"
               // ink-500 on white (4.7:1), ink-400 on ink-900: over 3:1, since it is often the one way out.
-              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             >
               <X size={20} aria-hidden="true" />
             </button>

@@ -48,10 +48,10 @@ export function AcceptTextDialog({ text, onAccept, onCancel, busy = false }: Acc
       initialFocusRef={checkboxRef}
       footer={
         <>
-          <Button variant="ghost" size="sm" className="min-h-[44px] md:min-h-0" onClick={onCancel}>
+          <Button variant="ghost" size="sm" className="min-h-[44px] md:min-h-[44px]" onClick={onCancel}>
             Annulla
           </Button>
-          <Button size="sm" className="min-h-[44px] md:min-h-0" disabled={!ticked || busy} onClick={() => onAccept(text.id)}>
+          <Button size="sm" className="min-h-[44px] md:min-h-[44px]" disabled={!ticked || busy} onClick={() => onAccept(text.id)}>
             {text.azione}
           </Button>
         </>
@@ -65,13 +65,14 @@ export function AcceptTextDialog({ text, onAccept, onCancel, busy = false }: Acc
         {replaced ? 'Il testo è cambiato nel frattempo: rileggilo e conferma.' : ''}
       </div>
       <div className="mt-5 flex items-start gap-3">
+        {/* bare-input: a checkbox, which has no common component; its words are its label. */}
         <input
           ref={checkboxRef}
           id={checkboxId}
           type="checkbox"
           checked={ticked}
           onChange={(e) => setTickedFor(e.target.checked ? text.id : null)}
-          className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-primary-600 focus-visible:outline-none "
         />
         <label htmlFor={checkboxId} className="text-sm font-medium text-slate-800 dark:text-slate-100">
           {text.conferma}

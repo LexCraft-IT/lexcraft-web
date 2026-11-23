@@ -88,8 +88,8 @@ describe('decisions in the PDF', () => {
 describe('pdfCountsLine', () => {
   it('counts only the decisions chosen for the PDF, as the PDF prints only those', () => {
     const second: DossierItem = { ...decision, id: 's2' };
-    expect(pdfCountsLine([a1, note, decision, second], new Set())).toBe('1 atto · 1 articolo · 1 nota');
-    expect(pdfCountsLine([a1, note, decision, second], new Set(['s2']))).toBe('1 atto · 1 articolo · 1 nota · 1 sentenza');
+    expect(pdfCountsLine([a1, note, decision, second], new Set())).toBe('1 fonte · 1 articolo · 1 nota');
+    expect(pdfCountsLine([a1, note, decision, second], new Set(['s2']))).toBe('1 fonte · 1 articolo · 1 nota · 1 sentenza');
   });
 });
 
@@ -272,6 +272,17 @@ describe('buildPdfBlocks — notes', () => {
     const blocks = buildPdfBlocks([a3, about, free], new Map([['a3', { text: 'tre' }]]), new Map());
     expect(blocks[0]).toEqual({ kind: 'notes', notes: ['Libera.'] });
     const act = blocks[1] as Extract<PdfBlock, { kind: 'act' }>;
-    expect(act.articles[0].notes).toEqual(['Sul dovere. (scritta da Claude Code (applicazione collegata))']);
+    expect(act.articles[0].notes).toEqual(['Sul dovere. (scritta da Claude Code, applicazione collegata)']);
+  });
+
+  it("prints an application's Markdown without its marks, lines and list items kept; the user's note as written (D4)", () => {
+    const text = '## Scadenze\n\n**Garante**: 72 *ore*\n\n---\n\n- uno\n- due\n\n3. tre\n4. quattro\n\n> citata';
+    const app: DossierItem = { id: 'na', type: 'note', addedAt: '', data: text, createdBy: { clientName: 'Claude Code' } };
+    const own: DossierItem = { id: 'nf', type: 'note', addedAt: '', data: '## Mia\n**resta**' };
+    const [notes] = buildPdfBlocks([app, own], new Map(), new Map()) as Extract<PdfBlock, { kind: 'notes' }>[];
+    expect(notes.notes).toEqual([
+      'Scadenze\nGarante: 72 ore\n• uno\n• due\n3. tre\n4. quattro\ncitata (scritta da Claude Code, applicazione collegata)',
+      '## Mia\n**resta**',
+    ]);
   });
 });

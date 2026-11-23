@@ -9,15 +9,11 @@ vi.mock('../Sidebar', () => ({
   Sidebar: ({ layout, closeMobile }: { layout?: string; closeMobile: () => void }) =>
     layout === 'drawer' ? <aside><button type="button" onClick={closeMobile}>Voce del menu</button></aside> : null,
 }));
-vi.mock('../../ui/SettingsModal', () => ({ SettingsModal: () => null }));
-vi.mock('../../ui/FeedbackButton', () => ({ FeedbackButton: () => null }));
-vi.mock('../../ui/FeedbackModal', () => ({ FeedbackModal: () => null }));
 vi.mock('../../ui/ChangelogNotification', () => ({ ChangelogNotification: () => null }));
 vi.mock('../../ui/Toast', () => ({ NotificationHost: () => null }));
 vi.mock('../../ui/SyncErrorToast', () => ({ SyncErrorToast: () => null }));
 // The planner's host reads the tasks from the server: not under test here.
 vi.mock('../../features/planner/PlannerHost', () => ({ PlannerHost: () => null }));
-vi.mock('../../ui/KeyboardShortcutsModal', () => ({ KeyboardShortcutsModal: () => null }));
 vi.mock('../../features/search/GlobalSearch', () => ({ GlobalSearch: () => null }));
 vi.mock('../../../hooks/useServiceHealth', () => ({ useServiceHealth: () => ({ snapshot: { overall: 'online', services: [], checkedAt: '' }, refresh: vi.fn() }) }));
 vi.mock('../../features/compare/CompareView', () => ({ CompareView: () => null }));
@@ -70,6 +66,12 @@ describe('Layout — the phone\'s bar and the keyboard', () => {
     act(() => (document.activeElement as HTMLElement).blur());
     scrollTo(2100);
     expect(bar).toHaveClass('max-md:-translate-y-full');
+  });
+
+  it('puts the focus inside the drawer as it opens, not on the menu button under its head (LC98)', () => {
+    const { bar } = page();
+    fireEvent.click(within(bar).getByRole('button', { name: 'Apri il menu' }));
+    expect(screen.getByRole('button', { name: 'Voce del menu' })).toHaveFocus();
   });
 
   it('gives the focus to the menu button when the drawer closes from inside it', () => {
@@ -192,13 +194,15 @@ describe('Layout — the phone bar\'s name, as iOS\'s large titles (G8)', () => 
             <Route path="/forum" element={<h1>Dossier pubblici</h1>} />
             <Route path="/history" element={<h1>Cronologia</h1>} />
             <Route path="/documents" element={<p>Nessun titolo</p>} />
+            <Route path="/rassegne" element={<h1>Rassegne</h1>} />
           </Route>
         </Routes>
       </MemoryRouter>,
     );
     return screen.getByTestId('phone-top-bar');
   }
-  const name = (bar: HTMLElement) => bar.querySelector('p')!;
+  // The page's name after the section (LC34); none yet: an empty element.
+  const name = (bar: HTMLElement) => bar.querySelector<HTMLElement>('[data-bar-name]') ?? document.createElement('span');
 
   it('shows no name while the page\'s title is in sight, and the page\'s once it has scrolled out, fading it in', () => {
     const bar = at('/forum');
@@ -206,10 +210,11 @@ describe('Layout — the phone bar\'s name, as iOS\'s large titles (G8)', () => 
     // The page's own title, watched in the content scroller, under the bar.
     expect(observer.target).toHaveTextContent('Dossier pubblici');
     expect(observer.target?.tagName).toBe('H1');
-    // Only the menu and the magnifier: no «Forum» over «Forum · il luogo…», no name under the large title.
+    // Only the menu, the magnifier and «Dicci cosa ti serve» (LC141): no «Forum» over «Forum · il luogo…», no name under the large title.
     expect(name(bar)).toHaveTextContent(/^$/);
-    expect(name(bar)).toHaveAttribute('aria-hidden', 'true');
-    expect(within(bar).getAllByRole('button')).toHaveLength(2);
+    // The section beside the menu, always (LC34).
+    expect(bar.querySelector('[data-bar-section]')).toHaveTextContent('Forum');
+    expect(within(bar).getAllByRole('button')).toHaveLength(3);
 
     observer.say(false);
     expect(name(bar)).toHaveTextContent(/^Dossier pubblici$/);
@@ -227,6 +232,12 @@ describe('Layout — the phone bar\'s name, as iOS\'s large titles (G8)', () => 
     expect(name(bar)).toHaveTextContent(/^$/);
     FakeIntersectionObserver.last!.say(false);
     expect(name(bar)).toHaveTextContent(/^Cronologia$/);
+  });
+
+  it('names the page «Rassegne» as its title does, once scrolled', () => {
+    const bar = at('/rassegne');
+    FakeIntersectionObserver.last!.say(false);
+    expect(name(bar)).toHaveTextContent(/^Rassegne$/);
   });
 
   it('names at once a page with no title of its own', () => {

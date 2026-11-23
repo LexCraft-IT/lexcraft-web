@@ -1,9 +1,11 @@
 import { useEffect, useId, useRef, useState, type FocusEvent, type FormEvent, type RefObject } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '../../ui/Button';
-import { FormSelect } from '../../ui/FormSelect';
+import { Select } from '../../ui/Select';
 import { Input } from '../../ui/Input';
-import { SegmentedControl } from '../../ui/SegmentedControl';
+import { Textarea } from '../../ui/Textarea';
+import { FIELD_LABEL as LABEL } from '../../ui/controlStyles';
+import { SegmentedTabs } from '../../ui/SegmentedTabs';
 import { studiaService } from '../../../services/studiaService';
 import { useIsDesktop } from '../../../hooks/useIsDesktop';
 import { cn } from '../../../lib/utils';
@@ -36,8 +38,6 @@ const LIMITS = { istituto: 200, domanda: 2_000, risposta: 4_000, spiegazione: 8_
 const MAX_ANCHORS = 10;
 const MAX_REFERENCE = 200;
 
-const LABEL = 'block text-xs font-semibold tracking-wide text-slate-500 dark:text-slate-400 ml-1 mb-1';
-const TARGET = 'min-h-[44px] md:min-h-0';
 
 interface AnchorChip {
   key: string;
@@ -116,39 +116,18 @@ interface TextareaFieldProps {
 
 function TextareaField({ id, label, value, onChange, limit, rows, error, inputRef }: TextareaFieldProps) {
   const left = countdown(value.trim().length, limit);
-  const messageId = `${id}-message`;
   return (
-    <div className="space-y-1.5 w-full">
-      <label htmlFor={id} className={LABEL}>{label}</label>
-      <textarea
-        id={id}
-        ref={inputRef}
-        rows={rows}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error || left ? messageId : undefined}
-        className={cn(
-          'w-full px-4 py-2.5 border rounded-lg resize-y text-sm leading-relaxed outline-none',
-          'text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500',
-          'bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700',
-          'transition-colors duration-200',
-          'focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/50 focus:border-primary-500',
-          error && 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/10',
-        )}
-      />
-      {(error || left) && (
-        <p
-          id={messageId}
-          className={cn(
-            'text-xs ml-1',
-            error || value.trim().length > limit ? 'text-red-500 dark:text-red-400 font-medium' : 'text-slate-500 dark:text-slate-400',
-          )}
-        >
-          {error ?? left}
-        </p>
-      )}
-    </div>
+    <Textarea
+      id={id}
+      ref={inputRef}
+      label={label}
+      rows={rows}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      error={error}
+      helperText={left ?? undefined}
+      warning={value.trim().length > limit}
+    />
   );
 }
 
@@ -345,7 +324,7 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
         <div className="grid gap-5 md:grid-cols-2">
           <div className="space-y-1.5 w-full">
             <label htmlFor={fieldId('materia')} className={LABEL}>Materia</label>
-            <FormSelect
+            <Select
               id={fieldId('materia')}
               ref={focusField === 'materia' ? focusFirst : undefined}
               value={materia}
@@ -355,13 +334,13 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
               }}
               error={errors.materia}
               aria-invalid={errors.materia ? true : undefined}
-              className="min-h-[44px] md:min-h-0"
+             
             >
               <option value="" disabled>Seleziona…</option>
               {(Object.keys(MATERIA_LABEL) as Materia[]).map((value) => (
                 <option key={value} value={value}>{MATERIA_LABEL[value]}</option>
               ))}
-            </FormSelect>
+            </Select>
           </div>
           <Input
             id={fieldId('istituto')}
@@ -373,7 +352,7 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
               setErrors((x) => ({ ...x, istituto: undefined }));
             }}
             error={errors.istituto}
-            className="min-h-[44px] md:min-h-0"
+           
             helperText={countdown(istituto.trim().length, LIMITS.istituto) ?? undefined}
             placeholder="es. Risoluzione per inadempimento"
             autoComplete="off"
@@ -383,25 +362,26 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
         <div className="space-y-1.5 w-full">
           <span id={fieldId('tipo')} className={LABEL}>Tipo di scheda</span>
           {desktop ? (
-            <div role="group" aria-labelledby={fieldId('tipo')}>
-              <SegmentedControl
-                layoutId="studia-card-kind"
-                options={(Object.keys(TIPO_LABEL) as TipoScheda[]).map((value) => ({ value, label: TIPO_LABEL[value] }))}
-                value={tipo}
-                onChange={(value) => setTipo(value as TipoScheda)}
-              />
-            </div>
+            <SegmentedTabs
+              label="Tipo di scheda"
+              tabs={(Object.keys(TIPO_LABEL) as TipoScheda[]).map((id) => ({ id, label: TIPO_LABEL[id] }))}
+              value={tipo}
+              onChange={setTipo}
+              // As tall as the fields beside it (LC112): 36 px on a computer, 44 below md.
+              size="sm"
+              tabClassName="flex-1 px-3"
+            />
           ) : (
-            <FormSelect
+            <Select
               aria-labelledby={fieldId('tipo')}
               value={tipo}
               onChange={(e) => setTipo(e.target.value as TipoScheda)}
-              className="min-h-[44px] md:min-h-0"
+             
             >
               {(Object.keys(TIPO_LABEL) as TipoScheda[]).map((value) => (
                 <option key={value} value={value}>{TIPO_LABEL[value]}</option>
               ))}
-            </FormSelect>
+            </Select>
           )}
         </div>
 
@@ -460,6 +440,7 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
                   >
                     <span>{anchor.riferimento}</span>
                     {!anchor.fixed && (
+                      // bare-button: the cross inside an anchor's chip, round as the chip.
                       <button
                         type="button"
                         onClick={() => removeAnchor(anchor.key)}
@@ -467,7 +448,7 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
                         className={cn(
                           'inline-flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200',
                           'min-h-[44px] min-w-[44px] md:min-h-7 md:min-w-7',
-                          'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                          'focus:outline-none ',
                         )}
                       >
                         <X size={14} aria-hidden="true" />
@@ -486,7 +467,7 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
               <Input
                 autoFocus={fieldTakesFocus}
                 aria-label="Riferimento dell’ancora"
-                className="min-h-[44px] md:min-h-0"
+               
                 value={pending}
                 onChange={(e) => {
                   setPending(e.target.value);
@@ -497,7 +478,8 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
                     e.preventDefault();
                     addPending();
                   } else if (e.key === 'Escape') {
-                    // Closes the field, not the dialog around it.
+                    // Closes the field, not the dialog or the page's space around it (`Expand` leaves a handled Esc).
+                    e.preventDefault();
                     e.nativeEvent.stopPropagation();
                     closeAdding();
                   }
@@ -509,14 +491,13 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
                 autoComplete="off"
               />
               {/* One «Annulla» only, the dialog's: the field closes with Esc, or with «Aggiungi» left empty. */}
-              <Button type="button" variant="secondary" className={cn(TARGET, 'shrink-0 self-start')} onClick={addPending}>Aggiungi</Button>
+              <Button type="button" variant="secondary" className="shrink-0 self-start" onClick={addPending}>Aggiungi</Button>
             </div>
           ) : (
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className={TARGET}
               disabled={atAnchorLimit}
               onClick={() => {
                 setFieldTakesFocus(true);
@@ -531,15 +512,15 @@ export function CardForm({ mode, onSaved, onCancel, initialFocusRef }: CardFormP
         </div>
 
         {formError && (
-          <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-300">
+          <p role="alert" className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/10 dark:text-red-300">
             {formError}
           </p>
         )}
       </div>
 
       <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:py-4 dark:border-slate-800">
-        <Button type="button" variant="ghost" className={TARGET} onClick={onCancel}>Annulla</Button>
-        <Button type="submit" className={TARGET} disabled={busy}>{busy ? 'Salvo…' : 'Salva'}</Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>Annulla</Button>
+        <Button type="submit" disabled={busy}>{busy ? 'Salvo…' : 'Salva'}</Button>
       </div>
     </form>
   );

@@ -8,11 +8,13 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
+import { LexCraftLogo } from '../components/ui/LexCraftLogo';
 import { CREDITS, CREDIT_GROUPS, type Credit } from '../data/credits';
 import { FOCUS_RING } from '../constants/interactions';
 import { cn } from '../lib/utils';
 import { PageFrame } from '../components/layout/PageFrame';
+import { PAGE_FRAME } from '../components/layout/frame';
 import { groupAt, groupOf } from './creditsIndex';
 
 const LINK = cn(
@@ -39,7 +41,7 @@ export function CreditEntry({ credit }: { credit: Credit }) {
       aria-labelledby={titleId}
       tabIndex={-1}
       // A card, as tall as its row's other one; its links at its foot.
-      className={cn('flex h-full scroll-mt-6 flex-col rounded-xl border border-slate-200 bg-white p-5 md:p-6 dark:border-slate-800 dark:bg-slate-900', FOCUS_RING)}
+      className={cn('flex h-full scroll-mt-6 flex-col rounded-xl border border-slate-200 bg-white p-5 md:p-6 dark:border-slate-800 dark:bg-slate-900')}
     >
       <h3 id={titleId} className="font-serif text-xl font-medium text-slate-900 [overflow-wrap:anywhere] dark:text-slate-50">
         {credit.name}
@@ -121,9 +123,9 @@ function useGroupInView(): [string, (id: string) => void] {
   return [current, hold];
 }
 
-// The bar the place being read gets: under it on a phone, down its edge from 1024 px.
+// LC37: the place being read is a stone tile, as the sidebar's active row; no bar beside it (the anti-slop review).
 const INDEX_LINK = cn(
-  'flex min-h-[44px] items-center whitespace-nowrap rounded-md border-transparent px-3 text-sm transition-colors max-lg:rounded-b-none max-lg:border-b-2 lg:whitespace-normal lg:border-l-2',
+  'flex min-h-[44px] items-center whitespace-nowrap rounded-md px-3 text-sm transition-colors lg:whitespace-normal',
   FOCUS_RING,
 );
 
@@ -147,10 +149,9 @@ function PageIndex({ current }: { current: string }) {
                 aria-current={here ? 'location' : undefined}
                 className={cn(
                   INDEX_LINK,
-                  // Marked by more than a tint: the weight and the bar (the attribution's), under it on a phone, down its edge
-                  // from 1024 px.
+                  // Marked by more than a tint: the tile and the weight.
                   here
-                    ? 'border-primary-600 bg-primary-50 font-semibold text-primary-800 dark:border-primary-400 dark:bg-primary-950/50 dark:text-primary-200'
+                    ? 'bg-ink-300/70 font-semibold text-slate-900 dark:bg-ink-700/60 dark:text-slate-50'
                     : 'font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
                 )}
               >
@@ -190,22 +191,22 @@ export function CreditsPage() {
   }, [hash, key, hold]);
 
   return (
-    // The sections' frame (W2), outside the layout: its column (`max-w-7xl`, the layout's padding), the title at its left
-    // edge in `PageFrame`'s size, the whole width used (U1d).
+    // The sections' frame (W2, U1), outside the layout: its column (`PAGE_FRAME` at 1600 px, the layout's margins), the
+    // title at its left edge in `PageFrame`'s size, the whole width used (U1d).
     <div className="min-h-dvh bg-slate-50 dark:bg-slate-950">
-      <div className="mx-auto w-full max-w-7xl p-4 pb-16 md:p-8 md:pb-16">
+      <div className={cn(PAGE_FRAME, 'max-w-frame pt-4 pb-16 md:pt-8')}>
         <header>
           <Link to="/" className={cn('-ml-2 inline-flex min-h-[44px] items-center gap-2 rounded-md px-2 text-slate-700 dark:text-slate-300', FOCUS_RING)}>
-            <BookOpen aria-hidden size={20} strokeWidth={1.5} className="text-primary-600 dark:text-primary-400" />
-            <span className="font-serif text-lg font-medium">VisuaLex</span>
+            {/* LC37 (Luca: «lì c'è vecchio logo»): the wordmark, still, as the sidebar's; not the old book and a name. */}
+            <LexCraftLogo className="block h-auto w-[140px]" />
           </Link>
         </header>
 
         <main className="mt-8">
           <PageFrame title="Crediti">
             {/* The opening across the frame; the long paragraph at a reading measure. */}
-            <p className="max-w-[70ch] font-serif text-lg leading-relaxed text-slate-700 dark:text-slate-300">
-              VisuaLex usa i dati pubblici delle fonti elencate qui sotto e in questa pagina ne indica la provenienza:
+            <p className="max-w-measure font-serif text-lg leading-relaxed text-slate-700 dark:text-slate-300">
+              LexCraft usa i dati pubblici delle fonti elencate qui sotto e in questa pagina ne indica la provenienza:
               per ciascuna, cosa usiamo, a quali condizioni e come la citiamo. In fondo, i caratteri tipografici
               dell’interfaccia.
             </p>
@@ -222,8 +223,8 @@ export function CreditsPage() {
                       id={group.id}
                       aria-labelledby={headingId}
                       tabIndex={-1}
-                      // Reached from the index, it takes the focus: its ring says where the keyboard is.
-                      className={cn('scroll-mt-6 rounded-xl', FOCUS_RING, index > 0 && 'mt-12')}
+                      // Reached from the index, it takes the focus (no ring: not a control, LC143).
+                      className={cn('scroll-mt-6 rounded-xl', index > 0 && 'mt-12')}
                     >
                       <h2 id={headingId} className="font-serif text-2xl font-medium text-slate-900 dark:text-slate-50">
                         {group.title}

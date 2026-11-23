@@ -39,11 +39,12 @@ const host = (path = '/') => render(<MemoryRouter initialEntries={[path]}><Plann
 
 describe('«c», the quick add from anywhere', () => {
   it('opens the new task, and on a dossier\'s page the dossier is chosen', async () => {
-    host('/dossier?dossier=d1');
+    host('/pratiche?dossier=d1');
     fireEvent.keyDown(window, { key: 'c' });
     const dialog = await screen.findByRole('dialog', { name: 'Nuovo compito' });
-    expect(within(dialog).getByLabelText('Dossier')).toHaveValue('d1');
-    expect(within(dialog).getByLabelText('Titolo')).toHaveFocus();
+    expect(within(dialog).getByLabelText('Pratica')).toHaveValue('d1');
+    // The dialog gives its first focus in a timeout (`useDialogFocus`): under load it lands after the dialog is found.
+    await waitFor(() => expect(within(dialog).getByLabelText('Titolo')).toHaveFocus());
   });
 
   it('works from a task\'s checkbox, where the arrows leave the focus', async () => {
@@ -68,7 +69,7 @@ describe('«c», the quick add from anywhere', () => {
 
   it('proposes today on «Oggi», and says when the new task is not in the view', async () => {
     service.create.mockResolvedValue(task('n', { plannedDate: '2026-10-30' }));
-    host('/opus/oggi');
+    host('/work/scadenziario');
     await waitFor(() => expect(plannerStore.getState().today).toBe(TODAY));
     fireEvent.keyDown(window, { key: 'c' });
     const dialog = await screen.findByRole('dialog');
@@ -81,7 +82,7 @@ describe('«c», the quick add from anywhere', () => {
 
   it('creates the task with what was chosen, and its origin from the dossier\'s kind', async () => {
     service.create.mockResolvedValue(task('n', { dossierId: 'd2' }));
-    host('/dossier?dossier=d2');
+    host('/pratiche?dossier=d2');
     fireEvent.keyDown(window, { key: 'c' });
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('Titolo'), { target: { value: 'Ripassare la prescrizione' } });
@@ -114,10 +115,10 @@ describe('«c», the quick add from anywhere', () => {
   it('reads the count for the bar, and again after a write', async () => {
     service.list.mockResolvedValue({ today: TODAY, tasks: [task('a'), task('b')], truncated: false });
     host();
-    await waitFor(() => expect(plannerStore.getState().todayCount).toBe(2));
+    await waitFor(() => expect(plannerStore.getState().todayCount).toEqual({ work: 2, learn: 0 }));
     service.list.mockResolvedValue({ today: TODAY, tasks: [task('a')], truncated: false });
     act(() => plannerStore.getState().changed());
-    await waitFor(() => expect(plannerStore.getState().todayCount).toBe(1));
+    await waitFor(() => expect(plannerStore.getState().todayCount).toEqual({ work: 1, learn: 0 }));
     expect(service.list).toHaveBeenCalledWith('today');
   });
 });
@@ -130,8 +131,8 @@ describe("the dossier's tasks", () => {
     const panel = screen.getByRole('region', { name: /Compiti/ });
     expect(await within(panel).findByRole('checkbox', { name: /Compito a/ })).toBeInTheDocument();
     expect(within(panel).queryByRole('link', { name: /Ricorso Rossi/ })).toBeNull();
-    expect(within(panel).getByText('Senza data · nel dossier «Ricorso Rossi»')).toBeInTheDocument();
     fireEvent.change(within(panel).getByLabelText('Nuovo compito'), { target: { value: 'Notificare' } });
+    expect(within(panel).getByText('Senza data · nella pratica «Ricorso Rossi»')).toBeInTheDocument();
     fireEvent.submit(within(panel).getByLabelText('Nuovo compito'));
     await waitFor(() => expect(service.create.mock.calls[0][0]).toMatchObject({ title: 'Notificare', dossierId: 'd1' }));
   });

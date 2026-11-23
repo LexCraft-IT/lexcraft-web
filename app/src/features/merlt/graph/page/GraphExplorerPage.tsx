@@ -8,6 +8,8 @@ import { GRAPH_PAGE } from '../../../sections/pageNames';
 import type { SearchParams } from '../../../../types';
 import { useAppStore } from '../../../../store/useAppStore';
 import { isMerltGraphEnabled } from '../featureFlag';
+import { isMerltEnabled } from '../../featureFlag';
+import { LabsOff } from '../../LabsOff';
 import { useMerltFeatures } from '../../useMerltFeatures';
 import { useQaThread } from '../../qa/useQaThread';
 import { sendRelationFeedback } from '../../qa/qaApi';
@@ -165,7 +167,7 @@ function parseLayout(raw: string | null): GraphLayoutName {
 }
 
 /**
- * Full-canvas knowledge-graph explorer at /grafo. Slice 2a-2 builds this up
+ * Full-canvas knowledge-graph explorer at /labs/grafo. Slice 2a-2 builds this up
  * story by story; 2a.8 ships the skeleton: query-param driven fetch, canvas,
  * empty/loading/error states, and a right column reserved for the node drawer
  * (2a.10). The search box (2a.9), depth/layout controls (2a.11) and breadcrumb
@@ -838,7 +840,7 @@ export function GraphExplorerPage(): React.ReactElement {
       return;
     }
     if (nodes.length >= MAX_GRAPH_NODES) {
-      setToast({ message: 'Grafo pieno — nascondi qualcosa o ricentra.', type: 'info' });
+      setToast({ message: 'Grafo pieno: nascondi qualcosa o ricentra.', type: 'info' });
       return;
     }
     const epoch = expandEpochRef.current;
@@ -851,7 +853,7 @@ export function GraphExplorerPage(): React.ReactElement {
         const freshNodes = delta.nodes.filter((n) => !known.nodes.has(n.id));
         const freshEdges = delta.edges.filter((e) => !known.edges.has(rawEdgeKey(e)));
         if (known.nodes.size + freshNodes.length > MAX_GRAPH_NODES) {
-          setToast({ message: 'Grafo pieno — nascondi qualcosa o ricentra.', type: 'info' });
+          setToast({ message: 'Grafo pieno: nascondi qualcosa o ricentra.', type: 'info' });
           return;
         }
         setExpandedNodeIds((prev) => new Set(prev).add(id));
@@ -865,7 +867,7 @@ export function GraphExplorerPage(): React.ReactElement {
         console.error('GraphExplorerPage: node expansion failed:', err);
         if (expandEpochRef.current !== epoch) return;
         setPendingExpandId(null);
-        setToast({ message: 'Espansione non riuscita — riprova.', type: 'info' });
+        setToast({ message: 'Espansione non riuscita. Riprova.', type: 'info' });
       });
   };
 
@@ -917,7 +919,7 @@ export function GraphExplorerPage(): React.ReactElement {
   const handleAddToContext = useCallback(
     (node: GraphNode): void => {
       if (contextBasket.length >= MAX_CONTEXT_ITEMS && !contextBasket.some((it) => it.id === node.id)) {
-        setToast({ message: `Contesto pieno (max ${MAX_CONTEXT_ITEMS}) — rimuovi qualcosa.`, type: 'info' });
+        setToast({ message: `Contesto pieno (max ${MAX_CONTEXT_ITEMS}): rimuovi qualcosa.`, type: 'info' });
         return;
       }
       setContextBasket((prev) =>
@@ -1068,6 +1070,8 @@ export function GraphExplorerPage(): React.ReactElement {
     }
   };
 
+  // MERL-T off: every Labs address says the hub's words (#462); the graph alone off keeps its own line.
+  if (!isMerltEnabled()) return <LabsOff />;
   if (!enabled) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
@@ -1081,15 +1085,15 @@ export function GraphExplorerPage(): React.ReactElement {
     // In the sections' frame (W2, S7b): the page's name as the title, in the reader's serif and with no icon, its tools
     // beside it, then the search wide under it. The window less the layout's padding: below lg it starts the page under
     // the phone's bar (4.5rem and the iPhone's top edge on top, then 1rem at the bottom, or from md the page's foot,
-    // `--page-foot`: 2rem, more under the feedback button); from lg, 2rem on top and the foot at the bottom.
+    // 2rem); from lg, 2rem on top and 2rem at the bottom.
     <PageFrame
       title={GRAPH_PAGE}
-      // L-37: «Academia · il laboratorio del diritto» over the page's name.
+      // L-37: the section's name, «Labs», over the page's name.
       kicker="academia"
       // On a phone the canvas needs the height: no line there, and the slice's tools beside the title as icons.
       line={<span className="hidden md:inline">Le relazioni tra norme, principi e concetti.</span>}
       actionBeside
-      className="h-[calc(100dvh-5.5rem-env(safe-area-inset-top))] gap-4 md:h-[calc(100dvh-4.5rem-var(--page-foot,2rem)-env(safe-area-inset-top))] lg:h-[calc(100dvh-2rem-var(--page-foot,2rem))]"
+      className="h-[calc(100dvh-5.5rem-env(safe-area-inset-top))] gap-4 md:h-[calc(100dvh-6.5rem-env(safe-area-inset-top))] lg:h-[calc(100dvh-4rem)]"
       action={
         <>
           <button
@@ -1216,7 +1220,7 @@ export function GraphExplorerPage(): React.ReactElement {
                 // MERL-T is unreachable or too slow — never an unbounded spinner.
                 <IngestionErrorState
                   tone="red"
-                  message="Grafo non raggiungibile — riprova più tardi."
+                  message="Grafo non raggiungibile. Riprova più tardi."
                   onRetry={retryIngestion}
                 />
               ) : job.status === 'failed' || job.status === 'completed' ? (
@@ -1226,7 +1230,7 @@ export function GraphExplorerPage(): React.ReactElement {
                   <button
                     type="button"
                     onClick={graph.refetch}
-                    className="rounded bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                    className={RETRY_BUTTON}
                   >
                     Riprova
                   </button>
@@ -1252,7 +1256,7 @@ export function GraphExplorerPage(): React.ReactElement {
                     aria-pressed={hideJurisprudence}
                     title="Nascondi le sentenze per alleggerire il grafo"
                     className={cn(
-                      'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                      'flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium shadow-sm transition-colors focus-visible:outline-none ',
                       hideJurisprudence
                         ? 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-900 dark:bg-primary-950/40 dark:text-primary-300'
                         : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800',
@@ -1321,7 +1325,7 @@ export function GraphExplorerPage(): React.ReactElement {
                     onClick={() => setSourceFadeDismissed(true)}
                     aria-label="Rimuovi evidenza fonti"
                     title="Rimuovi l'evidenza delle fonti consultate"
-                    className="absolute bottom-3 left-3 z-20 flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-700 shadow-sm transition-colors hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-primary-900 dark:bg-primary-950/40 dark:text-primary-300 dark:hover:bg-primary-950/60"
+                    className="absolute bottom-3 left-3 z-20 flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-700 shadow-sm transition-colors hover:bg-primary-100 focus-visible:outline-none dark:border-primary-900 dark:bg-primary-950/40 dark:text-primary-300 dark:hover:bg-primary-950/60"
                   >
                     <X size={12} /> Evidenza fonti
                   </button>
@@ -1333,7 +1337,7 @@ export function GraphExplorerPage(): React.ReactElement {
                   type="button"
                   onClick={() => canvasRef.current?.fit()}
                   title="Adatta il grafo alla vista"
-                  className="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  className="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   <Maximize2 size={14} /> Adatta alla vista
                 </button>
@@ -1355,7 +1359,7 @@ export function GraphExplorerPage(): React.ReactElement {
               tabIndex={0}
               onMouseDown={handleSplitterMouseDown}
               onKeyDown={handleSplitterKeyDown}
-              className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-primary-300/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 md:block"
+              className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-primary-300/40 focus-visible:outline-none md:block"
             />
           )}
 
@@ -1442,6 +1446,9 @@ export function GraphExplorerPage(): React.ReactElement {
     </PageFrame>
   );
 }
+
+/** A small filled action: «Riprova», the error's retry. */
+const RETRY_BUTTON = 'rounded bg-primary-600 dark:bg-toga-400 dark:hover:bg-toga-300 dark:text-ink-950 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700 focus-visible:outline-none ';
 
 /** The page's tools beside its title (S7b): 44 px, their words with their icon. */
 const SLICE_BUTTON = `inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${FOCUS_RING}`;
@@ -1538,7 +1545,7 @@ function EmptyState({
                 type="button"
                 onClick={() => onSelectSource(s.node_id ?? s.urn)}
                 title={`Apri ${sourceLabel(s)} nel grafo`}
-                className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:bg-primary-950/40 dark:hover:text-primary-300"
+                className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 focus-visible:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:bg-primary-950/40 dark:hover:text-primary-300"
               >
                 {sourceLabel(s)}
               </button>
@@ -1625,7 +1632,7 @@ function IngestionErrorState({
       <button
         type="button"
         onClick={onRetry}
-        className="rounded bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        className={RETRY_BUTTON}
       >
         Riprova
       </button>
@@ -1650,7 +1657,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }): React.ReactElement {
       <button
         type="button"
         onClick={onRetry}
-        className="rounded bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        className={RETRY_BUTTON}
       >
         Riprova
       </button>

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appStore } from '../../../../store/useAppStore';
 import { isEditableTarget } from '../../../ui/notifications/undoShortcut';
 import { SearchField } from '../SearchField';
-import { PALETTE_SHORTCUT, focusSearchField, openSearchMenu, resetSearchFieldControl, returnWordsToSearchField } from '../../../../utils/searchFieldControl';
+import { ISLAND_FOCUS, ISLAND_SURFACE, ISLAND_TARGET, PALETTE_SHORTCUT, focusSearchField, openSearchMenu, resetSearchFieldControl, returnWordsToSearchField } from '../../../../utils/searchFieldControl';
 
 const original = appStore.getState();
 const openCommandPaletteWith = vi.fn();
@@ -20,7 +20,7 @@ function renderField() {
   );
 }
 
-const field = () => screen.getByRole('button', { name: /^Cerca una norma, una sentenza o un tema/ });
+const field = () => screen.getByRole('button', { name: /^Apri il menu di ricerca/ });
 
 beforeEach(() => {
   appStore.setState({ openCommandPaletteWith, openCommandPalette, commandPaletteOpen: false });
@@ -39,6 +39,18 @@ describe('SearchField — the door to the search menu (R2)', () => {
     expect(field()).not.toHaveClass('text-base');
   });
 
+  it('is a thin pill with one edge: 40 px drawn, 44 to the finger, no ring at rest nor on focus (LC69)', () => {
+    renderField();
+    expect(field()).toHaveClass('h-10', 'rounded-full', ...ISLAND_SURFACE.split(' '), ...ISLAND_TARGET.split(' '), ...ISLAND_FOCUS.split(' '));
+    expect(field().className).not.toMatch(/(^|\s)(focus:)?ring-2|shadow-sm/);
+  });
+
+  it('shows the focus, however it came, as the edge alone one step darker: no ring, no halo (LC146)', () => {
+    renderField();
+    expect(field()).toHaveClass('focus:border-(--focus-line)', 'focus-within:border-(--focus-line)');
+    expect(field().className).not.toMatch(/ring-/);
+  });
+
   it('is one field, with no «Opzioni»: it says it opens a dialog, and that ⌘K (Ctrl K) does too', () => {
     renderField();
     expect(field()).toHaveAttribute('aria-haspopup', 'dialog');
@@ -46,6 +58,12 @@ describe('SearchField — the door to the search menu (R2)', () => {
     expect(screen.queryByRole('button', { name: /Opzioni/ })).toBeNull();
     expect(field()).toHaveTextContent(PALETTE_SHORTCUT);
     expect(document.getElementById('tour-search-field')).toBe(field());
+  });
+
+  it('says the shortcut only where a keyboard is likely: not below md, not on a touch screen (M1)', () => {
+    renderField();
+    const hint = [...field().querySelectorAll('kbd')].find((k) => k.textContent === PALETTE_SHORTCUT)!;
+    expect(hint).toHaveClass('hidden', 'md:inline', '[@media(pointer:coarse)]:hidden');
   });
 
   it('grows into the menu on a click, with its words', async () => {

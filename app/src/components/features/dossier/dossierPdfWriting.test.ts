@@ -7,7 +7,7 @@ vi.mock('jspdf', async (importOriginal) => {
   class Recorded extends real.jsPDF {
     constructor(...args: ConstructorParameters<typeof real.jsPDF>) {
       super(...args);
-      for (const name of ['text', 'rect', 'line', 'addPage'] as const) {
+      for (const name of ['text', 'rect', 'line', 'addPage', 'setFillColor'] as const) {
         const draw = (this[name] as (...a: unknown[]) => unknown).bind(this);
         (this as unknown as Record<string, unknown>)[name] = (...a: unknown[]) => {
           calls.push([name, ...a]);
@@ -44,7 +44,8 @@ describe('writeDossierPdf', () => {
     // long texts are cut to keep the snapshot readable; their wrapping is pinned by the line positions
     const drawn = calls.map(([name, ...a]) => (name === 'text' ? `${name} ${a[1]},${a[2]} ${String(a[0]).slice(0, 40)}` : [name, ...a].join(' ')));
     expect(drawn.join('\n')).toMatchInlineSnapshot(`
-      "rect 0 0 595 12 F
+      "setFillColor 43 42 40
+      rect 0 0 595 12 F
       text 44,54 Pratica Rossi
       text 44,82 Fascicolo normativo · 2 norme · Esportat
       text 44,100 Responsabilità civile
@@ -53,7 +54,7 @@ describe('writeDossierPdf', () => {
       text 44,155 Note
       text 44,173 Verificare la vigenza.
       text 44,202 Codice civile
-      text 44,226 art. 2043 — Risarcimento per fatto illec
+      text 44,226 art. 2043 · Risarcimento per fatto illec
       text 44,241 Nota: Nota di prova
       text 44,253 Qualunque fatto doloso o colposo.
       text 44,275 art. 2044 · testo al 1 gennaio 2020
@@ -95,7 +96,7 @@ describe('writeDossierPdf', () => {
       text 44,723 parola parola parola parola parola parol
       text 44,735 parola parola parola parola parola parol
       text 44,747 parola parola parola parola parola parol
-      text 44,810 Pratica Rossi · VisuaLex
+      text 44,810 Pratica Rossi · LexCraft
       text 555,810 Pagina 1
       addPage
       text 44,54 parola parola parola parola parola parol
@@ -129,7 +130,7 @@ describe('writeDossierPdf', () => {
       text 44,390 parola parola parola parola parola parol
       text 44,402 parola parola parola parola parola parol
       text 44,414 parola parola parola parola parola parol
-      text 44,810 Pratica Rossi · VisuaLex
+      text 44,810 Pratica Rossi · LexCraft
       text 555,810 Pagina 2"
     `);
   });

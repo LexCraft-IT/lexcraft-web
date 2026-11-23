@@ -2,8 +2,17 @@ import type { ReactNode, Ref } from 'react';
 import { cn } from '../../../lib/utils';
 import { Z_INDEX } from '../../../constants/zIndex';
 import { NotesHighlightsButtons } from '../search/NotesHighlightsButtons';
+import { HighlighterButton } from '../search/HighlighterButton';
+import { NoteToolButton } from '../search/NoteToolButton';
 import { DiscussionButton } from '../search/DiscussionButton';
 import { FindInTextButton } from '../search/FindInTextButton';
+import { toolbarToggleClass } from '../search/toolbarToggle';
+
+/**
+ * The decision's tools at one size (LC117): `IconButton`'s small square, 32 px from md and 44 on a phone, as the notes,
+ * highlights, glosses and find buttons beside them. Icons only, nine in a row: the 32 of a tight row, not the article's 36.
+ */
+const TOOL = toolbarToggleClass(false);
 
 export interface DecisionReadingToolbarProps {
   notesCount: number;
@@ -38,7 +47,7 @@ export function DecisionReadingToolbar({
   isFindOpen = false, onToggleFind, findButtonRef, keyPassages,
 }: DecisionReadingToolbarProps) {
   return (
-    <div data-pinned-head className={cn('glass-toolbar sticky top-0 mb-4 flex flex-wrap items-center justify-end gap-1 rounded-t-xl border border-b-2 border-slate-200/50 bg-white/80 p-2 backdrop-blur-md dark:border-slate-800/50 dark:bg-slate-900/80', Z_INDEX.sticky)}>
+    <div data-pinned-head className={cn('glass-toolbar sticky top-0 mb-4 flex flex-wrap items-center justify-end gap-1 rounded-t-[8px] border border-b-2 border-slate-200/50 bg-white/80 p-2 backdrop-blur-md dark:border-slate-800/50 dark:bg-slate-900/80', Z_INDEX.sticky)}>
       {keyPassages}
       <NotesHighlightsButtons
         notesCount={notesCount}
@@ -50,6 +59,10 @@ export function DecisionReadingToolbar({
         onToggleNotes={onToggleNotes}
         onToggleHighlights={onToggleHighlights}
       />
+      {/* The highlighter (H1, A4), as in the article's bar. */}
+      {/* No padding in height: its icon and the ink's bar under it fill the 32 px. */}
+      <HighlighterButton triggerClassName={cn(TOOL, 'py-0')} />
+      <NoteToolButton gloss triggerClassName={TOOL} />
       <DiscussionButton isOpen={isDiscussionOpen} onToggle={onToggleDiscussion} name="Glosse sulla decisione" />
       {onToggleFind && <FindInTextButton ref={findButtonRef} isOpen={isFindOpen} onToggle={onToggleFind} />}
     </div>

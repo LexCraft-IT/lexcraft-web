@@ -1,6 +1,6 @@
 import { annotationTargetLabel } from './annotationLabels';
 import { useState, useMemo, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '../../../lib/utils';
 import {
   FolderOpen,
   Zap,
@@ -17,6 +17,7 @@ import type { Environment } from '../../../types';
 import type { EnvironmentSelection, DetailedEnvironmentStats } from '../../../utils/environmentUtils';
 import { getDetailedEnvironmentStats } from '../../../utils/environmentUtils';
 import { getHighlightSwatch } from '../../../utils/highlightColors';
+import { Expand } from '../../ui/Expand';
 
 type TabType = 'dossiers' | 'quickNorms' | 'aliases' | 'annotations' | 'highlights';
 
@@ -27,9 +28,13 @@ interface TabConfig {
   countKey: keyof DetailedEnvironmentStats;
 }
 
+/** A row's checkbox and chevron (LC114): 44 px to touch on a phone, 32 from md, the icon centred; the margin gives back
+ *  the row's own padding, so a row grows only by what it lacks. */
+const TOUCH_BOX = '-my-1.5 grid min-h-11 min-w-11 shrink-0 place-items-center md:min-h-8 md:min-w-8';
+
 const TABS: TabConfig[] = [
-  { id: 'dossiers', label: 'Dossiers', icon: <FolderOpen size={14} />, countKey: 'dossiers' },
-  { id: 'quickNorms', label: 'QuickNorms', icon: <Zap size={14} />, countKey: 'quickNorms' },
+  { id: 'dossiers', label: 'Dossier', icon: <FolderOpen size={14} />, countKey: 'dossiers' },
+  { id: 'quickNorms', label: 'Norme rapide', icon: <Zap size={14} />, countKey: 'quickNorms' },
   { id: 'aliases', label: 'Alias', icon: <Tag size={14} />, countKey: 'customAliases' },
   { id: 'annotations', label: 'Note', icon: <MessageSquare size={14} />, countKey: 'annotations' },
   { id: 'highlights', label: 'Evidenziazioni', icon: <Highlighter size={14} />, countKey: 'highlights' },
@@ -150,13 +155,20 @@ export function EnvironmentContentViewer({
       ? (TABS.find(tab => getTabCount(tab) > 0)?.id ?? activeTab)
       : activeTab;
 
-  const renderCheckbox = (type: TabType, id: string) => {
+  // `name`: what the row is (a dossier's name, a note's text), for the checkbox's own (LC114: it had none).
+  // The drawing stays small; the box to touch is 44 px on a phone and 32 from md (`TOUCH_BOX`).
+  const renderCheckbox = (type: TabType, id: string, name: string) => {
     if (!selectable) return null;
     const checked = isSelected(type, id);
     return (
+      // bare-button: a checkbox, its square drawn, inside a row that opens on its own click.
       <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={`Seleziona «${name.length > 60 ? `${name.slice(0, 60)}…` : name}»`}
         onClick={(e) => { e.stopPropagation(); toggleSelection(type, id); }}
-        className="mr-2 flex-shrink-0 hover:text-primary-600 dark:hover:text-primary-400"
+        className={cn(TOUCH_BOX, 'hover:text-primary-600 dark:hover:text-primary-400')}
       >
         {checked ? (
           <CheckSquare size={16} className="text-primary-600 dark:text-primary-400" />
@@ -177,11 +189,18 @@ export function EnvironmentContentViewer({
         {stats.dossiers.items.map(dossier => (
           <div key={dossier.id}>
             <div
-              className="flex items-center py-1.5 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+              className="flex items-center py-1.5 px-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
               onClick={() => toggleDossierExpand(dossier.id)}
             >
-              {renderCheckbox('dossiers', dossier.id)}
-              <button className="mr-1.5 text-slate-500">
+              {renderCheckbox('dossiers', dossier.id, dossier.name)}
+              {/* bare-button: the row's chevron; the whole row opens the dossier. */}
+              <button
+                type="button"
+                aria-expanded={expandedDossiers.has(dossier.id)}
+                aria-label={`${expandedDossiers.has(dossier.id) ? 'Chiudi' : 'Apri'} «${dossier.name}»`}
+                onClick={(e) => { e.stopPropagation(); toggleDossierExpand(dossier.id); }}
+                className={cn(TOUCH_BOX, 'text-slate-500')}
+              >
                 {expandedDossiers.has(dossier.id) ? (
                   <ChevronDown size={14} />
                 ) : (
@@ -197,29 +216,19 @@ export function EnvironmentContentViewer({
               </span>
             </div>
 
-            <AnimatePresence>
-              {expandedDossiers.has(dossier.id) && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="overflow-hidden"
-                >
-                  <div className="ml-8 pl-3 border-l-2 border-slate-200 dark:border-slate-700 py-1">
-                    {dossier.description && (
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mb-1 italic">
-                        {dossier.description}
-                      </p>
-                    )}
-                    {/* Would need to access actual dossier items from environment */}
-                    <p className="text-xs text-slate-400">
-                      Contiene {dossier.articleCount} norme{dossier.decisionCount > 0 ? ` e ${dossier.decisionCount} ${dossier.decisionCount === 1 ? 'sentenza' : 'sentenze'}` : ''}
-                    </p>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <Expand open={expandedDossiers.has(dossier.id)}>
+              <div className="ml-8 pl-3 border-l-2 border-slate-200 dark:border-slate-700 py-1">
+                {dossier.description && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-1 italic">
+                    {dossier.description}
+                  </p>
+                )}
+                {/* Would need to access actual dossier items from environment */}
+                <p className="text-xs text-slate-400">
+                  Contiene {dossier.articleCount} norme{dossier.decisionCount > 0 ? ` e ${dossier.decisionCount} ${dossier.decisionCount === 1 ? 'sentenza' : 'sentenze'}` : ''}
+                </p>
+              </div>
+            </Expand>
           </div>
         ))}
       </div>
@@ -236,9 +245,9 @@ export function EnvironmentContentViewer({
         {stats.quickNorms.items.map(qn => (
           <div
             key={qn.id}
-            className="flex items-center py-1.5 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="flex items-center py-1.5 px-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
-            {renderCheckbox('quickNorms', qn.id)}
+            {renderCheckbox('quickNorms', qn.id, qn.label)}
             <Zap size={14} className="mr-2 text-amber-500" />
             <span className="flex-1 text-sm text-slate-700 dark:text-slate-300 truncate">
               {qn.label}
@@ -270,9 +279,9 @@ export function EnvironmentContentViewer({
           .map(alias => (
             <div
               key={alias.id}
-              className="flex items-center py-1.5 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="flex items-center py-1.5 px-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
-              {renderCheckbox('aliases', alias.id)}
+              {renderCheckbox('aliases', alias.id, alias.trigger)}
               <code className="text-xs font-mono bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded mr-2">
                 {alias.trigger}
               </code>
@@ -293,9 +302,9 @@ export function EnvironmentContentViewer({
           .map(alias => (
             <div
               key={alias.id}
-              className="flex items-center py-1.5 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="flex items-center py-1.5 px-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
-              {renderCheckbox('aliases', alias.id)}
+              {renderCheckbox('aliases', alias.id, alias.trigger)}
               <code className="text-xs font-mono bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-300 px-1.5 py-0.5 rounded mr-2">
                 {alias.trigger}
               </code>
@@ -336,9 +345,9 @@ export function EnvironmentContentViewer({
           {stats.annotations.items.map(ann => (
             <div
               key={ann.id}
-              className="flex items-start py-1.5 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="flex items-start py-1.5 px-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
-              {renderCheckbox('annotations', ann.id)}
+              {renderCheckbox('annotations', ann.id, ann.text)}
               <MessageSquare size={14} className="mr-2 mt-0.5 text-emerald-500 flex-shrink-0" />
               <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2">
                 {ann.text}
@@ -377,9 +386,9 @@ export function EnvironmentContentViewer({
           {stats.highlights.items.map(hl => (
             <div
               key={hl.id}
-              className="flex items-start py-1.5 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="flex items-start py-1.5 px-2 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
-              {renderCheckbox('highlights', hl.id)}
+              {renderCheckbox('highlights', hl.id, hl.text)}
               <div
                 className="w-3 h-3 rounded mr-2 mt-0.5 flex-shrink-0"
                 style={{ backgroundColor: getHighlightSwatch(hl.color) }}
@@ -406,7 +415,7 @@ export function EnvironmentContentViewer({
   };
 
   return (
-    <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+    <div className="border border-slate-200 dark:border-slate-700 rounded-[8px] overflow-hidden bg-white dark:bg-slate-900">
       {/* Tabs */}
       <div className="flex border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 overflow-x-auto">
         {TABS.map(tab => {
@@ -414,9 +423,12 @@ export function EnvironmentContentViewer({
           const isActive = effectiveActiveTab === tab.id;
 
           return (
+            // bare-button: a tab of the viewer's underlined row, with its count.
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
+              // The label and its count, read apart («Alias 1», not «Alias1»).
+              aria-label={count > 0 ? `${tab.label} ${count}` : tab.label}
               className={`
                 flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap
                 transition-colors border-b-2 -mb-px

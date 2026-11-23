@@ -90,6 +90,7 @@ describe('describeVersion — the text in force', () => {
     expect(shown.chip).toEqual({
       tone: 'current',
       label: 'In vigore dal 28 dicembre 2025',
+      short: 'In vigore dal 28/12/2025',
       title: 'Testo consolidato di Normattiva, a fini informativi: fa fede la Gazzetta Ufficiale. Versione n. 8.',
     });
     expect(shown.banner).toBeNull();
@@ -100,6 +101,10 @@ describe('describeVersion — the text in force', () => {
     expect(describeVersion(validity({ valid_from: '2005-01-01' }), {}).chip?.label).toBe('In vigore dal 1° gennaio 2005');
     expect(describeVersion(validity({ valid_from: '2014-08-08' }), {}).chip?.label).toBe("In vigore dall'8 agosto 2014");
     expect(describeVersion(validity({ valid_from: null }), {}).chip?.label).toBe('In vigore');
+    // A phone's short form (LC70): the day in figures, no leading zeros, the same elision; none without a day.
+    expect(describeVersion(validity({ valid_from: '1942-04-19' }), {}).chip?.short).toBe('In vigore dal 19/4/1942');
+    expect(describeVersion(validity({ valid_from: '2014-08-08' }), {}).chip?.short).toBe("In vigore dall'8/8/2014");
+    expect(describeVersion(validity({ valid_from: null }), {}).chip?.short).toBeUndefined();
   });
 
   it('says nothing about the version when the page names none', () => {
@@ -130,7 +135,7 @@ describe('describeVersion — a past text', () => {
         + 'Non è il testo attuale. Il testo in vigore a una data non dice quale disciplina si applichi al fatto: possono '
         + 'contare disposizioni transitorie, efficacia retroattiva o norme più favorevoli.',
       note: 'Note ed evidenziazioni non sono mostrate su un testo storico.',
-      actions: ['go_current', 'copy_citation'],
+      actions: ['go_current', 'copy_citation', 'copy_link'],
     });
   });
 
@@ -153,15 +158,17 @@ describe('describeVersion — an article that did not exist yet', () => {
 
   it('does not draw the served notice as an article', () => {
     expect(shown.textVisible).toBe(false);
-    expect(shown.chip).toMatchObject({ tone: 'not_yet', label: 'Non ancora esistente' });
+    // The day asked for stays in the row (LC139); with none, the plain words.
+    expect(shown.chip).toMatchObject({ tone: 'not_yet', label: 'Al 1° gennaio 2010 l’articolo non esisteva' });
+    expect(describeVersion(NOT_YET, { versione: 'originale' }).chip).toMatchObject({ label: 'Non ancora esistente' });
   });
 
-  it('says when it came into being and offers the way forward', () => {
+  it('says when it came into being and offers the way back and the way forward', () => {
     expect(shown.banner).toEqual({
       kind: 'not_yet',
       title: 'Articolo non ancora esistente',
       body: 'Questo articolo non esisteva al 1° gennaio 2010. È in vigore dal 13 settembre 2014.',
-      actions: ['open_next_day', 'pick_date'],
+      actions: ['go_current', 'open_next_day', 'pick_date'],
       nextDay: '2014-09-13',
     });
   });
@@ -315,11 +322,11 @@ describe('buildTextAtDateParams', () => {
 
 describe('versionTabSuffix', () => {
   it('names the day that was asked for, in Italian order', () => {
-    expect(versionTabSuffix({ versionDate: '2007-12-29' })).toBe(' — testo al 29/12/2007');
+    expect(versionTabSuffix({ versionDate: '2007-12-29' })).toBe(', testo al 29/12/2007');
   });
 
   it('names the original text', () => {
-    expect(versionTabSuffix({ version: 'originale' })).toBe(' — testo originale');
+    expect(versionTabSuffix({ version: 'originale' })).toBe(', testo originale');
   });
 
   it('is empty for the text in force', () => {
@@ -347,7 +354,7 @@ describe('a day written the way a shared link may carry it ("12 ottobre 2007")',
   });
 
   it('names the tab with the day as it came', () => {
-    expect(versionTabSuffix({ versionDate: '12 ottobre 2007' })).toBe(' — testo al 12 ottobre 2007');
+    expect(versionTabSuffix({ versionDate: '12 ottobre 2007' })).toBe(', testo al 12 ottobre 2007');
   });
 
   it('is still told in the banner of an article that did not exist yet', () => {

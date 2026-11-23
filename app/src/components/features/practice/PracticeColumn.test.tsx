@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../hooks/useIsDesktop', () => ({ useIsDesktop: () => true, isDesktopViewport: () => true }));
@@ -13,8 +13,9 @@ vi.mock('../workspace/ArticleNavigation', () => ({ ArticleNavigation: () => null
 vi.mock('../workspace/LazyStudyMode', () => ({ LazyStudyMode: () => null }));
 
 import { appStore } from '../../../store/useAppStore';
-import { PracticeColumn } from './PracticeColumn';
+import { PracticeColumn, type PracticeLayout } from './PracticeColumn';
 import { articleRowKey, practiceArticleKey } from '../../../utils/practice';
+import { OVERVIEW_GRID } from './besideLayout';
 import { CC_RD, L24, article } from '../../../utils/__fixtures__/savedWorkspaces';
 
 const s = () => appStore.getState();
@@ -22,20 +23,26 @@ const s = () => appStore.getState();
 function setUp() {
   appStore.setState({
     practices: [], activePracticeId: null, practiceRows: {}, pendingReveal: null, readingBackStack: [],
-    structureWindow: { blockId: null, position: { x: 0, y: 0 } },
+    structureWindow: { blockId: null },
   });
   const cc = s().addArticlesToPractice(null, CC_RD, [article(CC_RD, '2043', { allegato: '2' })]);
   const l24 = s().addArticlesToPractice(cc.practiceId, L24, [article(L24, '5'), article(L24, '7')]);
   return { practiceId: cc.practiceId, ccId: cc.actId, l24Id: l24.actId };
 }
 
-const column = (practiceId: string) => <PracticeColumn practiceId={practiceId} onViewPdf={vi.fn()} onCrossReference={vi.fn()} />;
+const column = (practiceId: string, layout: PracticeLayout = 'overview') =>
+  <PracticeColumn practiceId={practiceId} onViewPdf={vi.fn()} onCrossReference={vi.fn()} layout={layout} />;
 const actHeadings = () => screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
 
 let scrolled: Element[];
+let scrollArgs: unknown[];
 beforeEach(() => {
   scrolled = [];
-  vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) { scrolled.push(this); });
+  scrollArgs = [];
+  vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element, arg?: unknown) {
+    scrolled.push(this);
+    scrollArgs.push(arg);
+  });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -52,9 +59,76 @@ describe('PracticeColumn (spec §3)', () => {
     render(column(practiceId));
     act(() => { s().revealPracticeArticle(practiceId, l24Id, '7'); });
     expect(s().pendingReveal).toBeNull();
-    expect(scrolled).toHaveLength(1);
     expect(scrolled[0].getAttribute('data-practice-row')).toBe(rowKey);
+    // At once, and only if it is out of view (LC132): never the browser's smooth scroll at every arrow.
+    expect(scrollArgs[0]).toEqual({ block: 'nearest', behavior: 'auto' });
+    // Then its article, so that the row comes in whole when it fits (LC133).
+    expect(scrolled[1]?.id).toBe(scrolled[0].querySelector('[aria-expanded][aria-controls]')?.getAttribute('aria-controls'));
+    expect(scrollArgs[1]).toEqual({ block: 'nearest', behavior: 'auto' });
     expect(screen.getByTestId('reader')).toBeInTheDocument();
+  });
+
+  it('a row whose article does not fit under its heading comes to the top, at once; one that fits is brought in whole (LC133)', () => {
+    const { practiceId, l24Id } = setUp();
+    render(column(practiceId));
+    // 1440×600: the heading near the bottom edge (558), the article laid out under it at its full height already.
+    let articleBottom = 1400;
+    const box = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    const own = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this.hasAttribute('data-practice-row')) return box(558, 600);
+      const row = this.closest('[data-practice-row]');
+      const text = row?.querySelector('[aria-expanded][aria-controls]')?.getAttribute('aria-controls');
+      if (text && this.id === text) return box(600, articleBottom);
+      return own.call(this);
+    });
+    vi.stubGlobal('innerHeight', 600);
+    act(() => { s().revealPracticeArticle(practiceId, l24Id, '7'); });
+    expect(scrollArgs).toEqual([{ block: 'start', behavior: 'auto' }]);
+    expect(scrolled[0]).toHaveAttribute('data-practice-row');
+
+    scrolled = [];
+    scrollArgs = [];
+    articleBottom = 900;
+    act(() => { s().revealPracticeArticle(practiceId, l24Id, '5'); });
+    expect(scrollArgs).toEqual([{ block: 'nearest', behavior: 'auto' }, { block: 'nearest', behavior: 'auto' }]);
+    vi.unstubAllGlobals();
+  });
+
+  it('decides again when the row\'s real size is known: its space opened, its text arrived late; never once the user scrolls (LC133)', () => {
+    const observed: Array<() => void> = [];
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { observed.push(callback); }
+      observe() {}
+      disconnect() { observed.length = 0; }
+    });
+    const { practiceId, l24Id } = setUp();
+    render(column(practiceId));
+    // At the reveal the row is closed at the bottom edge: its heading alone (500–544) and no text yet.
+    let textBottom = 544;
+    const box = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    const own = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this.hasAttribute('data-practice-row')) return box(500, 544);
+      const text = this.closest('[data-practice-row]')?.querySelector('[aria-expanded][aria-controls]')?.getAttribute('aria-controls');
+      if (text && this.id === text) return box(544, textBottom);
+      return own.call(this);
+    });
+    vi.stubGlobal('innerHeight', 600);
+    act(() => { s().revealPracticeArticle(practiceId, l24Id, '7'); });
+    expect(scrollArgs.every((arg) => (arg as ScrollIntoViewOptions).block === 'nearest')).toBe(true);
+    // The text arrives, 90 ms after the space opened: 544 → 1200, the row taller than the window. It comes to the top.
+    scrollArgs = [];
+    textBottom = 1200;
+    act(() => observed.forEach((callback) => callback()));
+    expect(scrollArgs).toEqual([{ block: 'start', behavior: 'auto' }]);
+    // The user scrolls: the row is theirs, a later change moves nothing.
+    scrollArgs = [];
+    fireEvent.wheel(window);
+    textBottom = 1500;
+    act(() => observed.forEach((callback) => callback()));
+    expect(scrollArgs).toEqual([]);
+    vi.unstubAllGlobals();
   });
 
   it('a reveal already waiting when the column mounts is taken too', () => {
@@ -62,7 +136,9 @@ describe('PracticeColumn (spec §3)', () => {
     s().revealPracticeArticle(practiceId, ccId, '2043');
     render(column(practiceId));
     expect(s().pendingReveal).toBeNull();
-    expect(scrolled).toHaveLength(1);
+    // The row, then its article (LC133).
+    expect(scrolled[0]).toHaveAttribute('data-practice-row');
+    expect(scrolled).toHaveLength(2);
   });
 
   it("leaves another practice's reveal alone", () => {
@@ -116,5 +192,49 @@ describe('PracticeColumn (spec §3)', () => {
     await press('ArrowDown', 'ArrowDown');
     await press('Space', ' ');
     expect(s().practices[0].acts.map((a) => a.id)).toEqual([l24Id, ccId]);
+    // What a screen reader hears says the acts' names in Italian, never the library's English with ids (LC61).
+    const live = document.querySelector('[id^="DndLiveRegion"]');
+    expect(live?.textContent).toMatch(/^Codice civile.* spostato al posto di l\. 8 marzo 2017, n\. 24/);
+    expect(live?.textContent).not.toContain(ccId);
+    // The handle says what it is in Italian (LC61).
+    expect(handle).toHaveAttribute('aria-roledescription', 'riordinabile');
+  });
+});
+
+describe('PracticeColumn: the two views (U2)', () => {
+  const NEW = { corte: 'cassazione' as const, archivio: 'civile' as const, numero: 28994, anno: 2019 };
+
+  it('the overview draws the acts as a grid of panels and «Giurisprudenza» as a strip under it, in Pietra (LC61: no mint wash, no green gavel)', () => {
+    const { practiceId } = setUp();
+    s().openDecision(NEW, { practiceId, open: false });
+    render(column(practiceId));
+    expect(screen.getByTestId('practice-acts').className).toBe(OVERVIEW_GRID);
+    const strip = screen.getByTestId('practice-decisions');
+    expect(strip).toHaveClass('border-slate-200');
+    expect(strip.outerHTML).not.toMatch(/emerald/);
+    // After the grid, not inside it: the strip takes the frame's width.
+    expect(screen.getByTestId('practice-acts')).not.toContainElement(strip);
+    expect(within(strip).getByRole('button', { name: /^Apri accanto Cass/ })).toBeInTheDocument();
+  });
+
+  it('the phone keeps its column: the acts one under the other, no panel, no tint', () => {
+    const { practiceId } = setUp();
+    s().openDecision(NEW, { practiceId, open: false });
+    render(column(practiceId, 'phone'));
+    expect(screen.getByTestId('practice-acts')).toHaveClass('space-y-3');
+    expect(screen.getByTestId('practice-decisions').className).toBe('');
+  });
+
+  it('the index draws entries, «Giurisprudenza» one of them, and leaves the reveal to the reading row', () => {
+    const { practiceId, l24Id } = setUp();
+    s().openDecision(NEW, { practiceId, open: false });
+    render(column(practiceId, 'index'));
+    expect(screen.getByTestId('practice-column')).toHaveAttribute('data-layout', 'index');
+    expect(document.querySelector('[data-practice-row]')).toBeNull();
+    expect(screen.getAllByRole('button', { name: /^Apri accanto: art\. / })).toHaveLength(3);
+    expect(within(screen.getByRole('region', { name: /Giurisprudenza/ })).getByRole('button', { name: /^Apri accanto: Cass/ })).toBeInTheDocument();
+    act(() => { s().revealPracticeArticle(practiceId, l24Id, '7'); });
+    expect(s().pendingReveal).not.toBeNull();
+    expect(scrolled).toHaveLength(0);
   });
 });

@@ -1,15 +1,25 @@
 {
-  "name": "VisuaLex",
-  "short_name": "VisuaLex",
+  "name": "LexCraft",
+  "short_name": "LexCraft",
   "description": "Intelligent Legal Visualization and Research",
-  "theme_color": "#2563eb",
-  "background_color": "#ffffff",
+  "theme_color": "#f1eee8",
+  "background_color": "#f1eee8",
   "display": "standalone",
   "icons": [
     {
       "src": "/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
     }
   ]
 }

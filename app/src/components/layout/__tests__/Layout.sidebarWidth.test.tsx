@@ -1,22 +1,19 @@
-import { render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const seen = vi.hoisted(() => ({ props: [] as Array<{ layout?: string; onToggleWide?: () => void }> }));
+const seen = vi.hoisted(() => ({ props: [] as Array<{ layout?: string; onToggleWide?: () => void; logoSweep?: boolean }> }));
 vi.mock('../Sidebar', () => ({
-  Sidebar: (props: { layout?: string; onToggleWide?: () => void }) => {
+  Sidebar: (props: { layout?: string; onToggleWide?: () => void; logoSweep?: boolean }) => {
     seen.props.push(props);
     return null;
   },
 }));
-vi.mock('../../ui/SettingsModal', () => ({ SettingsModal: () => null }));
-vi.mock('../../ui/FeedbackButton', () => ({ FeedbackButton: () => null }));
 vi.mock('../../ui/ChangelogNotification', () => ({ ChangelogNotification: () => null }));
 vi.mock('../../ui/Toast', () => ({ NotificationHost: () => null }));
 // The planner's host reads the tasks from the server: not under test here.
 vi.mock('../../features/planner/PlannerHost', () => ({ PlannerHost: () => null }));
 vi.mock('../../ui/SyncErrorToast', () => ({ SyncErrorToast: () => null }));
-vi.mock('../../ui/KeyboardShortcutsModal', () => ({ KeyboardShortcutsModal: () => null }));
 vi.mock('../../../hooks/useServiceHealth', () => ({ useServiceHealth: () => ({ snapshot: { overall: 'online', services: [], checkedAt: '' }, refresh: vi.fn() }) }));
 vi.mock('../../features/compare/CompareView', () => ({ CompareView: () => null }));
 vi.mock('../../../plugins/PluginSlot', () => ({ PluginSlot: () => null }));
@@ -37,7 +34,7 @@ function atWidth(xl: boolean) {
     removeEventListener: () => {},
   }) as unknown as MediaQueryList);
   seen.props = [];
-  const { container } = render(<MemoryRouter initialEntries={['/dossier']}><Layout /></MemoryRouter>);
+  const { container } = render(<MemoryRouter initialEntries={['/pratiche']}><Layout /></MemoryRouter>);
   const last = seen.props.slice(-2);
   const root = container.firstElementChild as HTMLElement;
   return {
@@ -48,6 +45,7 @@ function atWidth(xl: boolean) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   appStore.setState((s) => ({ settings: { ...s.settings, focusMode: false }, sidebarVisible: true }));
   sidebarWidthStore.setState({ collapsed: false });
 });
@@ -89,5 +87,29 @@ describe('Layout — the sidebar\'s two copies (Gymnasium spec §4)', () => {
     expect(atWidth(true).sidebarWidth).toBe('0px');
     appStore.setState((s) => ({ sidebarVisible: true, settings: { ...s.settings, focusMode: true } }));
     expect(atWidth(true).sidebarWidth).toBe('0px');
+  });
+});
+
+describe('Layout — the logo\'s sweep (LC16)', () => {
+  it('asks the desktop bar for it once a browser session, not when the shell is drawn again', () => {
+    const first = atWidth(true);
+    expect(first.desktop?.logoSweep).toBe(true);
+    cleanup();
+    // The shell drawn again (back from a page outside it, a reload in the same tab): no sweep.
+    const again = atWidth(true);
+    expect(again.desktop?.logoSweep).toBe(false);
+  });
+
+  // The subagent of LC16: on a phone the sweep played in the closed drawer, where nobody saw it.
+  it('on a phone plays it at the drawer\'s first opening in the session, not before and not again', () => {
+    const phoneNow = () => seen.props.filter((p) => p.layout === 'drawer').at(-1);
+    atWidth(false);
+    expect(phoneNow()?.logoSweep).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Apri il menu' }));
+    expect(phoneNow()?.logoSweep).toBe(true);
+    cleanup();
+    atWidth(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Apri il menu' }));
+    expect(phoneNow()?.logoSweep).toBe(false);
   });
 });

@@ -27,14 +27,14 @@ describe('AskMerltEntry', () => {
   });
 
   describe('qaAskable (consent ≥ basic)', () => {
-    it('navigates to /grafo (Slice 4 absorb) with the QA-PREFILL CONTRACT payload + ?urn=', () => {
+    it('navigates to /labs/grafo (Slice 4 absorb) with the QA-PREFILL CONTRACT payload + ?urn=', () => {
       render(<AskMerltEntry {...BASE} qaAskable />);
       const btn = screen.getByRole('button', { name: /chiedi su questo articolo/i });
       fireEvent.click(btn);
       expect(navigateMock).toHaveBeenCalledTimes(1);
       // ?urn= centers the graph on the article; state carries the prefill contract.
       expect(navigateMock).toHaveBeenCalledWith(
-        `/grafo?urn=${encodeURIComponent(BASE.articleUrn)}`,
+        `/labs/grafo?urn=${encodeURIComponent(BASE.articleUrn)}`,
         {
           state: {
             prefillQuery: "Spiegami l'art. 2043 c.c.",
@@ -45,10 +45,15 @@ describe('AskMerltEntry', () => {
       );
     });
 
-    it('navigates to bare /grafo (no ?urn=) when the article has no urn', () => {
+    it('is 44 px to tap on a phone, 36 from md (M1; LC113, the common link)', () => {
+      render(<AskMerltEntry {...BASE} qaAskable />);
+      expect(screen.getByRole('button', { name: /chiedi su questo articolo/i })).toHaveClass('min-h-11', 'md:min-h-9');
+    });
+
+    it('navigates to bare /labs/grafo (no ?urn=) when the article has no urn', () => {
       render(<AskMerltEntry {...BASE} articleUrn={undefined} qaAskable />);
       fireEvent.click(screen.getByRole('button', { name: /chiedi su questo articolo/i }));
-      expect(navigateMock).toHaveBeenCalledWith('/grafo', {
+      expect(navigateMock).toHaveBeenCalledWith('/labs/grafo', {
         state: {
           prefillQuery: "Spiegami l'art. 2043 c.c.",
           articleUrn: '',

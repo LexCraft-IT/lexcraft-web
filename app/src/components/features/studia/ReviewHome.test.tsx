@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import type { Progressi, TappaIstituto } from '../../../types/studia';
@@ -8,7 +8,14 @@ vi.mock('../../../services/studiaService', () => ({
   studiaService: { progress: vi.fn(), percorso: vi.fn(), preferences: vi.fn(), savePreferences: vi.fn() },
 }));
 
+vi.mock('../../../services/corsiService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../services/corsiService')>()),
+  corsiService: { today: vi.fn(async () => []), list: vi.fn(async () => []) },
+}));
+
 import { studiaService } from '../../../services/studiaService';
+import { corsiService } from '../../../services/corsiService';
+import { coursesSwitchStore } from './corsi/coursesSwitch';
 import { appStore } from '../../../store/useAppStore';
 import { ReviewHome } from './ReviewHome';
 import { serverMissions, xpFields } from './__fixtures__/xp';
@@ -20,11 +27,6 @@ const savePreferences = vi.mocked(studiaService.savePreferences);
 
 const STORAGE_KEY = 'visualex.studia.ripasso.materia';
 
-/** A 2D context that draws nothing, so a burst runs its course in jsdom. */
-function fakeContext(): CanvasRenderingContext2D {
-  const noop = () => {};
-  return { scale: noop, clearRect: noop, save: noop, restore: noop, translate: noop, rotate: noop, fillText: noop, globalAlpha: 1, fillStyle: '', font: '' } as unknown as CanvasRenderingContext2D;
-}
 
 /** A dashboard answer: `dovute` and `nuove` today, the goal's state, a little history. */
 function answer(dovute: number, nuove: number, over: Partial<Progressi['oggi']> = {}, serie = 4): Progressi {
@@ -52,11 +54,11 @@ function Where() {
 
 function renderHome() {
   return render(
-    <MemoryRouter initialEntries={['/studia/ripasso']}>
+    <MemoryRouter initialEntries={['/learn/ripasso']}>
       <Routes>
-        <Route path="/studia/ripasso" element={<ReviewHome />} />
-        <Route path="/studia/ripasso/sessione" element={<Where />} />
-        <Route path="/studia/progressi" element={<Where />} />
+        <Route path="/learn/ripasso" element={<ReviewHome />} />
+        <Route path="/learn/ripasso/sessione" element={<Where />} />
+        <Route path="/learn/progressi" element={<Where />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -77,32 +79,43 @@ beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
 });
 afterEach(() => {
+  coursesSwitchStore.setState({ state: 'unknown' });
   localStorage.removeItem(STORAGE_KEY);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-/** The subject filter of «Le tue materie» (G8), which took the chips' place. */
-const subjects = () => screen.getByRole('group', { name: 'Materia' });
-/** A subject's choice in it: its name first, then what it holds. */
-const subjectChoice = (label: string) => within(subjects()).getByRole('button', { name: new RegExp(`^${label}\\b(?! processuale)`) });
-/** A subject's row in «Le tue materie», by its name. */
-const subjectRow = async (label: string) => {
-  const group = await screen.findByRole('group', { name: 'Materia' });
-  return within(group).getAllByRole('listitem').find((li) => li.querySelector('[data-subject-name]')?.textContent === label)!;
-};
+/** «Il tuo sentiero» (LC23, LC62), the road in the middle of the page. */
+const road = () => screen.getByRole('region', { name: 'Il tuo sentiero' });
 const START = /^(Inizia|Continua) il ripasso$/;
 const follows = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
-/** A window `width` px wide, for `min-width` queries (jsdom matches none). */
-function windowOf(width: number) {
-  vi.stubGlobal('matchMedia', (query: string) => {
-    const min = Number(/min-width:\s*(\d+)px/.exec(query)?.[1] ?? Infinity);
-    return { matches: width >= min, media: query, addEventListener: () => {}, removeEventListener: () => {} };
-  });
+/** A setting changed (the community's civil cards switched on): the one way, with data on screen, to read the day again. */
+async function changeASetting(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Impostazioni dello studio' }));
+  savePreferences.mockResolvedValue({ nuoveAlGiorno: 20, ripassiAlGiorno: 10, materieComunita: ['DIRITTO_CIVILE'] });
+  await user.click(await screen.findByRole('button', { name: /^Schede della comunità · / }));
+  await user.click(screen.getByRole('switch', { name: 'Diritto civile' }));
 }
 
+/** The smoke over the day closed (LC39), while it rises. */
+const smoke = (root: Element) => root.querySelector('[data-testid="smoke-rise"]');
+/** jsdom measures nothing: a box to rise from, so the smoke runs its 2.6 s. */
+const withLayout = () => vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ x: 0, y: 0, left: 0, top: 0, width: 200, height: 150, right: 200, bottom: 150, toJSON: () => ({}) } as DOMRect);
+
 describe('ReviewHome', () => {
+  it('shows the day\'s module of a course under the day block once «Percorsi» is on, and reads no course before (§6.2)', async () => {
+    progress.mockResolvedValue(answer(18, 20));
+    coursesSwitchStore.setState({ state: 'off' });
+    renderHome();
+    expect(await screen.findByText('18 da ripassare, 20 nuove')).toBeInTheDocument();
+    expect(corsiService.today).not.toHaveBeenCalled();
+    vi.mocked(corsiService.today).mockResolvedValue([{ corso: { id: 'c1', titolo: 'Segni distintivi', materia: 'DIRITTO_CIVILE' }, modulo: { id: 'm', ordine: 2, titolo: 'Il marchio' }, schede: { dovute: 0, verifica: 0 } }]);
+    act(() => coursesSwitchStore.setState({ state: 'on' }));
+    const row = await screen.findByRole('link', { name: /Modulo del giorno: Il marchio/ });
+    expect(follows(screen.getByRole('button', { name: START }), row)).toBe(true);
+  });
+
   it('says what is on today, how far the goal is, and offers to start', async () => {
     progress.mockResolvedValue(answer(18, 20));
     renderHome();
@@ -116,7 +129,7 @@ describe('ReviewHome', () => {
     const start = screen.getByRole('button', { name: 'Inizia il ripasso' });
     expect(start).toBeEnabled();
     await userEvent.setup().click(start);
-    expect(screen.getByTestId('where')).toHaveTextContent('/studia/ripasso/sessione');
+    expect(screen.getByTestId('where')).toHaveTextContent('/learn/ripasso/sessione');
     expect(screen.getByTestId('where').textContent).not.toContain('materia');
   });
 
@@ -139,20 +152,21 @@ describe('ReviewHome', () => {
     expect(screen.queryByRole('heading', { name: 'Tutte le missioni' })).toBeNull();
   });
 
-  it('draws the statistics: the cards by state in one line, and «Tutti i progressi» leads to the page of the data', async () => {
+  it('draws the statistics beside the road without the cards by state, and «Tutti i progressi» leads to the page of the data', async () => {
     progress.mockResolvedValue(answer(3, 0));
     renderHome();
     const band = await screen.findByRole('region', { name: 'I tuoi progressi' });
-    const states = within(band).getByRole('list', { name: 'Le schede per stato' });
-    expect(within(states).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['3 nuove', '5 in apprendimento', '2 consolidate']);
-    // The long calendar and the coming days live on /studia/progressi (G3): no sheet repeats them here.
+    // LC23: the cards by state are the progress page's; the rail keeps the streak, the level, the goal.
+    expect(within(band).queryByRole('list', { name: 'Le schede per stato' })).toBeNull();
+    expect(within(band).getByRole('img', { name: 'Serie: 4 giorni di fila, record 9' })).toBeInTheDocument();
+    // The long calendar and the coming days live on /learn/progressi (G3): no sheet repeats them here.
     expect(screen.queryByRole('heading', { name: 'Il tuo andamento' })).toBeNull();
     expect(within(band).queryByRole('button', { name: 'Il tuo mese' })).toBeNull();
     // A text link, not a button across the column (G8).
     const all = within(band).getByRole('link', { name: 'Tutti i progressi' });
     expect(all.className).not.toMatch(/\bw-full\b|xl:w-full/);
     await userEvent.setup().click(all);
-    expect(screen.getByTestId('where')).toHaveTextContent('/studia/progressi');
+    expect(screen.getByTestId('where')).toHaveTextContent('/learn/progressi');
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -168,36 +182,21 @@ describe('ReviewHome', () => {
     expect(await screen.findByText('Finisci le schede di oggi per tenere viva la serie.')).toBeInTheDocument();
   });
 
-  it('narrows the dashboard to the subject chosen, starts the session on it, and remembers it', async () => {
+  it('has no subject filter: it reads the whole day, ignores a subject remembered, writes none, and starts every subject', async () => {
+    localStorage.setItem(STORAGE_KEY, 'DIRITTO_PENALE');
     progress.mockResolvedValue(answer(18, 20));
-    const { unmount } = renderHome();
-    await screen.findByText('18 da ripassare, 20 nuove');
-    expect(within(subjects()).getByRole('button', { name: 'Tutte le materie' })).toHaveAttribute('aria-pressed', 'true');
-
-    progress.mockResolvedValue(answer(2, 5));
-    await userEvent.setup().click(subjectChoice('Diritto penale'));
-    expect(await screen.findByText('2 da ripassare, 5 nuove')).toBeInTheDocument();
-    expect(screen.getByText('lunedì 19 ottobre · Diritto penale')).toBeInTheDocument();
-    expect(subjectChoice('Diritto penale')).toHaveAttribute('aria-pressed', 'true');
-    expect(progress).toHaveBeenLastCalledWith('DIRITTO_PENALE');
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('DIRITTO_PENALE');
-
+    renderHome();
+    expect(await screen.findByText('18 da ripassare, 20 nuove')).toBeInTheDocument();
+    // The date alone, never «· Diritto penale»; and no place held for a second line.
+    const day = screen.getByRole('region', { name: 'Il ripasso di oggi' });
+    expect(within(day).getByText('lunedì 19 ottobre')).toBeInTheDocument();
+    expect(day.querySelector('.w-40')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Materia' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Tutte le materie' })).toBeNull();
+    expect(progress.mock.calls.every((call) => call[0] === undefined)).toBe(true);
     await userEvent.setup().click(screen.getByRole('button', { name: 'Inizia il ripasso' }));
-    expect(screen.getByTestId('where')).toHaveTextContent('/studia/ripasso/sessione?materia=DIRITTO_PENALE');
-    unmount();
-
-    renderHome();
-    await screen.findByText('lunedì 19 ottobre · Diritto penale');
-    expect(await screen.findByText('2 da ripassare, 5 nuove')).toBeInTheDocument();
-    expect(progress).toHaveBeenLastCalledWith('DIRITTO_PENALE');
-  });
-
-  it('ignores a remembered value that is not a subject', async () => {
-    localStorage.setItem(STORAGE_KEY, 'DIRITTO_ALIENO');
-    progress.mockResolvedValue(answer(1, 1));
-    renderHome();
-    await screen.findByText('1 da ripassare, 1 nuova');
-    expect(progress).toHaveBeenCalledWith(undefined);
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/learn\/ripasso\/sessione$/);
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('DIRITTO_PENALE');
   });
 
   it('says the day is done, with tomorrow\'s cards, and offers no start when nothing is due and nothing is new', async () => {
@@ -230,23 +229,6 @@ describe('ReviewHome', () => {
     expect(screen.getByText('Ancora 10 ripassi per il primo giorno della serie.')).toBeInTheDocument();
   });
 
-  it('says a subject has nothing left, and never asks to finish the day from one subject’s counts', async () => {
-    progress.mockResolvedValue(answer(5, 5));
-    renderHome();
-    await screen.findByText('5 da ripassare, 5 nuove');
-    progress.mockResolvedValue(answer(0, 0, { ripassi: 2 }));
-    await userEvent.setup().click(subjectChoice('Diritto penale'));
-    expect(await screen.findByText('Niente da ripassare in questa materia, per oggi.')).toBeInTheDocument();
-    // The goal is the whole day's, from the day's read (6 of 10), whatever the subject's counts say.
-    expect(screen.getByText('Ancora 4 ripassi per tenere viva la serie.')).toBeInTheDocument();
-    expect(screen.queryByText(/^Finisci le schede di oggi/)).toBeNull();
-    // The way on: back to every subject.
-    progress.mockResolvedValue(answer(5, 5));
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Ripassa tutte le materie' }));
-    expect(await screen.findByText('5 da ripassare, 5 nuove')).toBeInTheDocument();
-    expect(within(subjects()).getByRole('button', { name: 'Tutte le materie' })).toHaveAttribute('aria-pressed', 'true');
-  });
-
   it('holds the panels’ places while the first read travels, and stops pulsing when it fails', async () => {
     let fail: (reason: unknown) => void = () => {};
     progress.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
@@ -277,25 +259,6 @@ describe('ReviewHome', () => {
       for (const row of rows) expect(row).toHaveClass('md:h-9');
     });
 
-    it('holds two lines for the date on a phone with a subject remembered, and keeps it held while that subject\'s read answers first', async () => {
-      localStorage.setItem(STORAGE_KEY, 'DIRITTO_PROCESSUALE_PENALE');
-      progress.mockImplementation((materia?: string) => (materia ? Promise.resolve(answer(4, 2)) : new Promise(() => {})));
-      renderHome();
-      // The subject's read has answered, the day's has not: the block draws the subject's day, the date's place held.
-      expect(await screen.findByText('4 da ripassare, 2 nuove')).toBeInTheDocument();
-      const day = screen.getByRole('region', { name: 'Il ripasso di oggi' });
-      expect(day.querySelector('.w-40')).toHaveClass('h-5', 'max-md:h-10');
-    });
-
-    it('draws the date once with a subject chosen: no place held for it under the day\'s line while the subject\'s read travels', async () => {
-      localStorage.setItem(STORAGE_KEY, 'DIRITTO_PENALE');
-      progress.mockImplementation((materia?: string) => (materia ? new Promise(() => {}) : Promise.resolve(answer(18, 20))));
-      renderHome();
-      const day = await screen.findByRole('region', { name: 'Il ripasso di oggi' });
-      expect(await within(day).findByText(/^lunedì 19 ottobre/)).toBeInTheDocument();
-      expect(day.querySelector('.w-40')).toBeNull();
-    });
-
     it('keeps two lines for the cost on a phone while the subjects\' read travels, and leaves the large line its own height', async () => {
       percorso.mockReturnValue(new Promise(() => {}));
       progress.mockResolvedValue(answer(18, 20));
@@ -312,30 +275,31 @@ describe('ReviewHome', () => {
       expect(await screen.findByText(/^circa \d+ minuti/)).not.toHaveClass('max-md:min-h-10');
     });
 
-    it('wraps the subjects\' strip held in a plain box, so React never keeps the strip, a scroller, when they come', () => {
-      progress.mockReturnValue(new Promise(() => {}));
+    it('holds the road\'s place with one pulsing tile while its read travels, whatever the day\'s read does', async () => {
+      percorso.mockReturnValue(new Promise(() => {}));
+      progress.mockResolvedValue(answer(3, 0));
       renderHome();
-      const mine = screen.getByRole('region', { name: 'Le tue materie' });
-      const box = mine.querySelector('h2 + div')!;
-      expect(box).toHaveAttribute('aria-hidden', 'true');
-      expect(box.className).toBe('');
-      expect(box.firstElementChild!.className).toMatch(/overflow-x-auto/);
+      await screen.findByText('3 da ripassare');
+      expect(road()).toHaveAttribute('aria-busy', 'true');
+      const held = road().querySelector('h2 + div')!;
+      expect(held).toHaveAttribute('aria-hidden', 'true');
+      expect(held).toHaveClass('h-64', 'motion-safe:animate-pulse', 'bg-card');
     });
   });
 
-  it('says what the subjects are missing when the progress cannot be read, and draws them once read again', async () => {
+  it('draws the road from its own read when the progress cannot be read, and says the failure once', async () => {
     progress.mockRejectedValueOnce(new Error('down'));
+    percorso.mockResolvedValue([{ materia: 'DIRITTO_CIVILE', istituto: 'Mora del debitore', nuove: 0, apprendimento: 2, consolidate: 0, dovute: 2 }]);
     renderHome();
     const alert = await screen.findByRole('alert');
-    const list = screen.getByRole('region', { name: 'Le tue materie' });
-    expect(list).toHaveTextContent('Non riesco a leggere le tue materie: tornano appena riesco a leggerle.');
-    expect(within(list).queryByRole('list')).toBeNull();
-    // Said once, by the day block: the subjects' line is no second alert.
+    expect(await within(road()).findByRole('button', { name: (n: string) => n.startsWith('Ripassa Mora del debitore: 2 da ripassare') && n.endsWith(', sei qui') })).toBeInTheDocument();
+    // Said once, by the day block: the road is no second alert.
     expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(road()).not.toHaveTextContent('Non riesco');
     progress.mockResolvedValue(answer(1, 0));
     await userEvent.setup().click(within(alert).getByRole('button', { name: 'Riprova' }));
-    expect(await screen.findByRole('group', { name: 'Materia' })).toBeInTheDocument();
-    expect(screen.queryByText(/Non riesco a leggere le tue materie/)).toBeNull();
+    expect(await screen.findByText('1 da ripassare')).toBeInTheDocument();
+    expect(percorso).toHaveBeenCalledTimes(2);
   });
 
   it('tells someone with no card yet where to begin, the community\'s cards as the block\'s button', async () => {
@@ -350,7 +314,7 @@ describe('ReviewHome', () => {
     // Said once, in the day block: no missions card under it, and so nothing «qui sopra» for the full list to point to.
     expect(screen.queryByRole('region', { name: 'Le missioni di oggi' })).toBeNull();
     expect(await screen.findByRole('region', { name: 'Tutte le missioni' })).toBeInTheDocument();
-    expect(screen.queryByText('Le tre di oggi sono qui sopra.')).toBeNull();
+    expect(screen.queryByText('Le tre di oggi sono in «Le missioni di oggi».')).toBeNull();
     // A button, not a link (G8): it opens the settings at the community's subjects.
     const day = screen.getByRole('region', { name: 'Il ripasso di oggi' });
     await userEvent.setup().click(within(day).getByRole('button', { name: 'Accendi le schede della comunità' }));
@@ -385,26 +349,6 @@ describe('ReviewHome', () => {
     expect(progress).toHaveBeenCalledTimes(2);
   });
 
-  it('never lets a slow answer for a subject chosen before overwrite the one that came after', async () => {
-    const pending: Array<(value: Progressi) => void> = [];
-    progress.mockResolvedValueOnce(answer(1, 1));
-    renderHome();
-    await screen.findByText('1 da ripassare, 1 nuova');
-    progress.mockImplementation(() => new Promise((resolve) => { pending.push(resolve); }));
-    const user = userEvent.setup();
-    await user.click(subjectChoice('Diritto penale'));
-    await user.click(subjectChoice('Diritto civile'));
-    expect(pending).toHaveLength(2);
-    // The newer request answers first, the older one after.
-    pending[1](answer(7, 7));
-    expect(await screen.findByText('7 da ripassare, 7 nuove')).toBeInTheDocument();
-    expect(screen.getByText('lunedì 19 ottobre · Diritto civile')).toBeInTheDocument();
-    pending[0](answer(9, 9));
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(screen.getByText('7 da ripassare, 7 nuove')).toBeInTheDocument();
-    expect(screen.queryByText('9 da ripassare, 9 nuove')).not.toBeInTheDocument();
-  });
-
   describe('the celebration (Studia progress spec §6.4)', () => {
     const CELEBRATED_KEY = 'visualex.studia.festeggiato';
     beforeEach(() => {
@@ -421,16 +365,17 @@ describe('ReviewHome', () => {
     const dayBlock = () => screen.getByRole('region', { name: 'Il ripasso di oggi' });
 
     it('plays once when the goal was met today, writes the goal\'s mark in the day block, and remembers the day', async () => {
+      // A burst that runs its 1.5 s: with no canvas it ends at once, and the writing with it, before it can be read.
+      withLayout();
       progress.mockResolvedValue(met());
       renderHome();
-      const mark = await screen.findByTestId('goal-mark');
+      const mark = await screen.findByTestId('goal-plate');
       // In the day block (G9), never in the missions' rows; its date and day as words beside it.
       expect(dayBlock()).toContainElement(mark);
       expect(mark.closest('li')).toBeNull();
-      expect(within(dayBlock()).getByRole('img', { name: 'Obiettivo raggiunto' })).toBe(mark);
-      expect(mark.nextElementSibling).toHaveTextContent('19 ottobre 2026 · giorno 5');
+      expect(within(mark).getByRole('img', { name: 'Obiettivo raggiunto' })).toBeInTheDocument();
       // Written now, once.
-      expect(mark).toHaveClass('vlx-goal-mark-draw');
+      expect(mark).toHaveClass('vlx-plate-in');
       expect(screen.queryByTestId('goal-stamp')).toBeNull();
       await waitFor(() => expect(localStorage.getItem(CELEBRATED_KEY)).toBe('2026-10-19'));
     });
@@ -439,8 +384,8 @@ describe('ReviewHome', () => {
       localStorage.setItem(CELEBRATED_KEY, '2026-10-19');
       progress.mockResolvedValue(met());
       const { container } = renderHome();
-      expect(await screen.findByTestId('goal-mark')).not.toHaveClass('vlx-goal-mark-draw');
-      expect(container.querySelector('canvas')).toBeNull();
+      expect(await screen.findByTestId('goal-plate')).not.toHaveClass('vlx-plate-in');
+      expect(smoke(container)).toBeNull();
     });
 
     // As the server sends it: the queue finished with no review counts the day, and leaves the goal's mission empty.
@@ -451,8 +396,8 @@ describe('ReviewHome', () => {
       });
       const { container } = renderHome();
       await screen.findByRole('region', { name: 'Le missioni di oggi' });
-      expect(screen.queryByTestId('goal-mark')).toBeNull();
-      expect(container.querySelector('canvas')).toBeNull();
+      expect(screen.queryByTestId('goal-plate')).toBeNull();
+      expect(smoke(container)).toBeNull();
       expect(localStorage.getItem(CELEBRATED_KEY)).toBeNull();
     });
 
@@ -464,53 +409,61 @@ describe('ReviewHome', () => {
       });
       const { container } = renderHome();
       await screen.findByRole('region', { name: 'Le missioni di oggi' });
-      expect(screen.queryByTestId('goal-mark')).toBeNull();
+      expect(screen.queryByTestId('goal-plate')).toBeNull();
       expect(screen.queryByText(/Obiettivo raggiunto/)).toBeNull();
       expect(screen.getByText('Ancora 5 ripassi per tenere viva la serie.')).toBeInTheDocument();
-      expect(container.querySelector('canvas')).toBeNull();
+      expect(smoke(container)).toBeNull();
       expect(localStorage.getItem(CELEBRATED_KEY)).toBeNull();
     });
 
     it('writes the mark once: when the burst is over the writing goes, and a new read does not bring it back', async () => {
-      vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(fakeContext());
+      withLayout();
       progress.mockResolvedValue(met());
       const { container } = renderHome();
-      expect(await screen.findByTestId('goal-mark')).toHaveClass('vlx-goal-mark-draw');
-      await waitFor(() => expect(container.querySelector('canvas')).toBeNull(), { timeout: 3000 });
-      expect(screen.getByTestId('goal-mark')).not.toHaveClass('vlx-goal-mark-draw');
-      // A new read (a subject chosen): the mark stays whole.
-      await userEvent.setup().click(subjectChoice('Diritto penale'));
-      await waitFor(() => expect(progress).toHaveBeenCalledWith('DIRITTO_PENALE'));
-      expect(screen.getByTestId('goal-mark')).not.toHaveClass('vlx-goal-mark-draw');
+      expect(await screen.findByTestId('goal-plate')).toHaveClass('vlx-plate-in');
+      await waitFor(() => expect(smoke(container)).toBeNull(), { timeout: 4500 });
+      expect(screen.getByTestId('goal-plate')).not.toHaveClass('vlx-plate-in');
+      // A new read (a setting changed): the mark stays whole.
+      await changeASetting(userEvent.setup());
+      await waitFor(() => expect(progress).toHaveBeenCalledTimes(2));
+      expect(screen.getByTestId('goal-plate')).not.toHaveClass('vlx-plate-in');
+      expect(smoke(container)).toBeNull();
     });
 
     it('marks the day as the burst begins, so leaving halfway does not replay it', async () => {
-      vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(fakeContext());
+      withLayout();
       progress.mockResolvedValue(met());
       const { container, unmount } = renderHome();
-      await screen.findByTestId('goal-mark');
-      expect(container.querySelector('canvas')).not.toBeNull();
+      await screen.findByTestId('goal-plate');
+      expect(smoke(container)).not.toBeNull();
       // The day is written by the burst's mount effect, which React runs just after the canvas is in the page:
       // waited for, not read at once (a loaded machine reads between the two). The burst is still on (1.5 s).
       await waitFor(() => expect(localStorage.getItem(CELEBRATED_KEY)).toBe('2026-10-19'));
-      expect(container.querySelector('canvas')).not.toBeNull();
+      expect(smoke(container)).not.toBeNull();
       unmount();
 
       const again = renderHome();
-      expect(await screen.findByTestId('goal-mark')).toBeInTheDocument();
-      expect(again.container.querySelector('canvas')).toBeNull();
+      expect(await screen.findByTestId('goal-plate')).toBeInTheDocument();
+      expect(smoke(again.container)).toBeNull();
     });
 
-    it('keeps the burst through a new read (a subject chosen halfway), and takes the canvas away after 1.5 s', async () => {
-      vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(fakeContext());
+    it('keeps the burst through a new read (a setting changed halfway), and takes the canvas away after 1.5 s', async () => {
+      withLayout();
       progress.mockResolvedValue(met());
       const { container } = renderHome();
-      await screen.findByTestId('goal-mark');
-      const canvas = container.querySelector('canvas');
+      await screen.findByTestId('goal-plate');
+      const canvas = smoke(container);
       expect(canvas).not.toBeNull();
-      await userEvent.setup().click(subjectChoice('Diritto penale'));
-      expect(container.querySelector('canvas')).toBe(canvas);
-      await waitFor(() => expect(container.querySelector('canvas')).toBeNull(), { timeout: 3000 });
+      // In a box of its own at the top of the section, out of the flow.
+      const box = canvas!.parentElement!;
+      expect(box).toHaveAttribute('aria-hidden', 'true');
+      expect(box).toHaveClass('pointer-events-none', 'absolute', 'inset-x-0', 'top-0');
+      expect(box.parentElement).toBe(container.querySelector('section'));
+      expect(box.parentElement).toHaveClass('relative');
+      await changeASetting(userEvent.setup({ delay: null }));
+      await waitFor(() => expect(progress).toHaveBeenCalledTimes(2));
+      expect(smoke(container)).toBe(canvas);
+      await waitFor(() => expect(smoke(container)).toBeNull(), { timeout: 4500 });
     });
 
     it('moves nothing under reduced motion: no canvas, the mark whole, the day still marked', async () => {
@@ -522,9 +475,8 @@ describe('ReviewHome', () => {
       try {
         progress.mockResolvedValue(met());
         const { container } = renderHome();
-        await screen.findByTestId('goal-mark');
-        await waitFor(() => expect(container.querySelector('canvas')).toBeNull());
-        expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();
+        await screen.findByTestId('goal-plate');
+        await waitFor(() => expect(smoke(container)).toBeNull());
         expect(localStorage.getItem(CELEBRATED_KEY)).toBe('2026-10-19');
       } finally {
         window.matchMedia = original;
@@ -535,7 +487,7 @@ describe('ReviewHome', () => {
       progress.mockResolvedValue(answer(3, 0));
       renderHome();
       await screen.findByText('3 da ripassare');
-      expect(screen.queryByTestId('goal-mark')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('goal-plate')).not.toBeInTheDocument();
     });
 
     // G9, the case on Luca's screen: day 3 of the streak, nothing due, nothing new. The server counts the day with the
@@ -552,9 +504,9 @@ describe('ReviewHome', () => {
       expect(within(missions).getByText('Hai finito le schede del giorno: il giorno conta. Serie: 3 giorni.')).not.toHaveClass('sr-only');
       expect(within(missions).getByText('Oggi non c\'è nulla da ripassare')).toBeInTheDocument();
       expect(within(missions).queryByText(/0 di 0/)).toBeNull();
-      expect(screen.queryByTestId('goal-mark')).toBeNull();
+      expect(screen.queryByTestId('goal-plate')).toBeNull();
       expect(screen.queryByText(/Obiettivo raggiunto/)).toBeNull();
-      expect(container.querySelector('canvas')).toBeNull();
+      expect(smoke(container)).toBeNull();
       expect(localStorage.getItem(CELEBRATED_KEY)).toBeNull();
     });
 
@@ -567,19 +519,10 @@ describe('ReviewHome', () => {
       const missions = await screen.findByRole('region', { name: 'Le missioni di oggi' });
       expect(within(missions).getByText('Il giorno conta per la serie; per i punti della missione servono 10 ripassi.')).not.toHaveClass('sr-only');
       // No mark, no burst, nothing celebrated: the goal's mission is still open.
-      expect(screen.queryByTestId('goal-mark')).toBeNull();
+      expect(screen.queryByTestId('goal-plate')).toBeNull();
       expect(screen.queryByText(/Obiettivo raggiunto/)).toBeNull();
-      expect(container.querySelector('canvas')).toBeNull();
+      expect(smoke(container)).toBeNull();
       expect(localStorage.getItem(CELEBRATED_KEY)).toBeNull();
-    });
-
-    it('keeps the mark while a subject\'s read travels, the day\'s goal being the whole day\'s', async () => {
-      localStorage.setItem(CELEBRATED_KEY, '2026-10-19');
-      localStorage.setItem(STORAGE_KEY, 'DIRITTO_PENALE');
-      progress.mockImplementation((materia?: string) => (materia ? new Promise(() => {}) : Promise.resolve(met())));
-      renderHome();
-      expect(await screen.findByTestId('goal-mark')).toBeInTheDocument();
-      expect(dayBlock()).toContainElement(screen.getByTestId('goal-mark'));
     });
   });
 
@@ -590,88 +533,52 @@ describe('ReviewHome', () => {
   });
 
   describe('«Oggi» (Gymnasium spec §5.1)', () => {
-    it('puts the day first, keeps the reading order — missions, statistics, subjects, list — and from `xl` sets the statistics and the subjects in a sticky column (G6, G8)', async () => {
+    it('puts the day first, then the road, the day\'s numbers and the full list, and from `lg` sets the numbers in a sticky right column', async () => {
       progress.mockResolvedValue(answer(18, 8));
-      renderHome();
+      const { container } = renderHome();
       const day = await screen.findByRole('region', { name: 'Il ripasso di oggi' });
       const missions = await screen.findByRole('region', { name: 'Le missioni di oggi' });
       const stats = screen.getByRole('region', { name: 'I tuoi progressi' });
       const list = screen.getByRole('region', { name: 'Tutte le missioni' });
-      const mine = screen.getByRole('region', { name: 'Le tue materie' });
-      expect(follows(day, missions) && follows(missions, stats) && follows(stats, mine) && follows(mine, list)).toBe(true);
-      // The grid places them; the document keeps the order on every width.
-      expect(stats.parentElement).toHaveClass('xl:col-start-2', 'xl:row-span-full', 'xl:sticky', 'xl:self-start');
-      expect(stats.parentElement).toContainElement(mine);
-      for (const left of [day.parentElement!, missions.parentElement!, list.parentElement!]) expect(left).toHaveClass('xl:col-start-1');
-      expect(stats.parentElement?.parentElement?.className).toMatch(/xl:grid-cols-\[minmax\(0,7fr\)_minmax\(0,5fr\)\]/);
+      // On a phone the road comes right after the day block (LC62b): the document keeps that order on every width.
+      expect(follows(day, road()) && follows(road(), stats) && follows(stats, missions) && follows(missions, list)).toBe(true);
+      const section = container.querySelector('section')!;
+      expect(section).toHaveClass('grid', 'grid-cols-1', 'lg:grid-cols-[minmax(0,1fr)_20rem]');
+      // Left, row 1: the day block.
+      expect(day.parentElement).toHaveClass('lg:col-start-1', 'lg:row-start-1');
+      // Right, both rows: the band, then today's missions, sticky.
+      const rail = stats.parentElement!;
+      expect(rail).toHaveClass('lg:col-start-2', 'lg:row-span-3', 'lg:row-start-1', 'lg:self-start', 'lg:sticky', 'lg:top-8');
+      expect(rail).toContainElement(missions);
+      expect(follows(stats, missions)).toBe(true);
+      // Left, row 2: the road; row 3: the full list.
+      const below = road().parentElement!;
+      expect(below).toHaveClass('lg:col-start-1', 'lg:row-start-2');
+      const foot = list.parentElement!;
+      expect(foot).toHaveClass('lg:col-start-1', 'lg:row-start-3');
+      expect([...section.children].slice(0, 4)).toEqual([day.parentElement, below, rail, foot]);
     });
 
-    it('sets «Le tue materie» under the day block from `xl` when there is no mission, first for the keyboard too, the statistics alone on the right (G8c)', async () => {
-      windowOf(1366);
-      const bare: Progressi = { ...answer(18, 8) };
-      delete bare.missioni;
-      progress.mockResolvedValue(bare);
-      const { container } = renderHome();
-      const day = await screen.findByRole('region', { name: 'Il ripasso di oggi' });
-      const stats = screen.getByRole('region', { name: 'I tuoi progressi' });
-      const mine = screen.getByRole('region', { name: 'Le tue materie' });
-      expect(stats.parentElement).not.toContainElement(mine);
-      expect(mine.parentElement).toHaveClass('xl:col-start-1');
-      expect(stats.parentElement).toHaveClass('xl:col-start-2', 'xl:row-span-full');
-      expect(follows(day, mine) && follows(mine, stats)).toBe(true);
-      // Two rows on the left: no empty third leaving its gaps under the subjects.
-      expect(container.querySelector('section')).toHaveClass('xl:grid-rows-[auto_auto_1fr]');
-    });
-
-    it('moves nothing below `xl`: one column, the day, the statistics, the subjects (G8c)', async () => {
-      windowOf(1024);
-      const bare: Progressi = { ...answer(18, 8) };
-      delete bare.missioni;
-      progress.mockResolvedValue(bare);
-      renderHome();
-      const stats = await screen.findByRole('region', { name: 'I tuoi progressi' });
-      expect(stats.parentElement).toContainElement(screen.getByRole('region', { name: 'Le tue materie' }));
-    });
-
-    it('keeps «Le tue materie» in the right column while the first read travels, as the list of missions is still to come (G8c)', async () => {
-      windowOf(1366);
-      progress.mockReturnValue(new Promise(() => {}));
-      renderHome();
-      const stats = await screen.findByRole('region', { name: 'I tuoi progressi' });
-      expect(stats.parentElement).toContainElement(screen.getByRole('region', { name: 'Le tue materie' }));
-    });
-
-    it('keeps «Le tue materie» on the left after a failed read while «Riprova» reads again (G8c)', async () => {
-      windowOf(1366);
-      progress.mockRejectedValueOnce(new Error('down'));
-      renderHome();
-      const alert = await screen.findByRole('alert');
-      const stats = screen.getByRole('region', { name: 'I tuoi progressi' });
-      await waitFor(() => expect(stats.parentElement).not.toContainElement(screen.getByRole('region', { name: 'Le tue materie' })));
-      progress.mockReturnValue(new Promise(() => {}));
-      await userEvent.setup().click(within(alert).getByRole('button', { name: 'Riprova' }));
-      expect(progress).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole('region', { name: 'I tuoi progressi' }).parentElement).not.toContainElement(screen.getByRole('region', { name: 'Le tue materie' }));
-    });
-
-    it('says the subjects once, in one list: no chips and no road beside them (G8)', async () => {
+    it('says the subjects once, in the road: no subject filter, no «Le tue materie»', async () => {
       progress.mockResolvedValue(answer(18, 8));
+      percorso.mockResolvedValue([{ materia: 'DIRITTO_CIVILE', istituto: 'Mora del debitore', nuove: 0, apprendimento: 2, consolidate: 0, dovute: 2 }]);
       renderHome();
-      expect(await screen.findAllByRole('region', { name: 'Le tue materie' })).toHaveLength(1);
+      expect(await screen.findAllByRole('region', { name: 'Il tuo sentiero' })).toHaveLength(1);
+      expect(screen.queryByRole('region', { name: 'Le tue materie' })).toBeNull();
       expect(screen.queryByRole('region', { name: 'Cosa ripassi' })).toBeNull();
-      expect(screen.queryByRole('heading', { name: 'Il percorso' })).toBeNull();
-      expect(screen.getAllByRole('group', { name: 'Materia' })).toHaveLength(1);
+      expect(screen.queryByRole('group', { name: 'Materia' })).toBeNull();
+      expect(await within(road()).findAllByRole('heading', { level: 3 })).toHaveLength(1);
     });
 
-    it('stays one column in Focus mode, whose narrower frame would squeeze the band (G6)', async () => {
+    it('keeps its two columns in full screen, which widens the frame instead of narrowing it (U1)', async () => {
       const before = appStore.getState().settings;
       appStore.setState({ settings: { ...before, focusMode: true } });
       try {
         progress.mockResolvedValue(answer(18, 8));
         renderHome();
         const stats = await screen.findByRole('region', { name: 'I tuoi progressi' });
-        expect(stats.parentElement?.className).not.toMatch(/xl:/);
-        expect(stats.parentElement?.parentElement?.className).not.toMatch(/xl:grid-cols/);
+        expect(stats.parentElement).toHaveClass('lg:col-start-2', 'lg:row-span-3', 'lg:sticky', 'lg:self-start');
+        expect(stats.parentElement?.parentElement).toHaveClass('lg:grid-cols-[minmax(0,1fr)_20rem]');
       } finally {
         appStore.setState({ settings: before });
       }
@@ -705,11 +612,11 @@ describe('ReviewHome', () => {
       progress.mockResolvedValue({ ...answer(4, 2, { ripassi: 12, raggiunto: true }, 5), missioni: serverMissions({ obiettivo: { stato: 'fatta', progresso: { fatte: 10, di: 10 } } }) });
       renderHome();
       expect(await screen.findByRole('button', { name: 'Continua il ripasso' })).toBeEnabled();
-      expect(within(screen.getByRole('region', { name: 'Il ripasso di oggi' })).getByTestId('goal-mark')).toBeInTheDocument();
+      expect(within(screen.getByRole('region', { name: 'Il ripasso di oggi' })).getByTestId('goal-plate')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Inizia il ripasso' })).toBeNull();
       expect(screen.getByText('circa 2 minuti')).toBeInTheDocument();
       await userEvent.setup().click(screen.getByRole('button', { name: 'Continua il ripasso' }));
-      expect(screen.getByTestId('where')).toHaveTextContent('/studia/ripasso/sessione');
+      expect(screen.getByTestId('where')).toHaveTextContent('/learn/ripasso/sessione');
       localStorage.removeItem('visualex.studia.festeggiato');
     });
 
@@ -738,7 +645,7 @@ describe('ReviewHome', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('Non riesco a leggere i tuoi progressi.');
       expect(screen.getByText('Puoi ripassare lo stesso: il ripasso legge le sue schede.')).toBeInTheDocument();
       await userEvent.setup().click(screen.getByRole('button', { name: 'Inizia il ripasso' }));
-      expect(screen.getByTestId('where')).toHaveTextContent('/studia/ripasso/sessione');
+      expect(screen.getByTestId('where')).toHaveTextContent('/learn/ripasso/sessione');
     });
 
     it('opens the study settings inside «I tuoi progressi», with no window, and closes them from the gear or with Esc (G6)', async () => {
@@ -779,8 +686,8 @@ describe('ReviewHome', () => {
         renderHome();
         const stats = await screen.findByRole('region', { name: 'I tuoi progressi' });
         // As tall as the window: with 32 px above and below it does not fit, so it is not sticky.
-        await waitFor(() => expect(stats.parentElement).not.toHaveClass('xl:sticky'));
-        expect(stats.parentElement).toHaveClass('xl:col-start-2');
+        await waitFor(() => expect(stats.parentElement).not.toHaveClass('lg:sticky'));
+        expect(stats.parentElement).toHaveClass('lg:col-start-2');
       } finally {
         globalThis.ResizeObserver = Observer;
         if (height) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', height);
@@ -793,9 +700,9 @@ describe('ReviewHome', () => {
       renderHome();
       const user = userEvent.setup();
       const stats = await screen.findByRole('region', { name: 'I tuoi progressi' });
-      expect(stats.parentElement).toHaveClass('xl:sticky');
+      expect(stats.parentElement).toHaveClass('lg:sticky');
       await user.click(screen.getByRole('button', { name: 'Impostazioni dello studio' }));
-      expect(stats.parentElement).not.toHaveClass('xl:sticky');
+      expect(stats.parentElement).not.toHaveClass('lg:sticky');
     });
 
     it('says the day alone over the large line — the title says «Oggi» —, and no «Oggi:» before the counts (G8)', async () => {
@@ -820,46 +727,10 @@ describe('ReviewHome', () => {
       expect(screen.getByRole('list', { name: 'Missioni di oggi' }).querySelector('[data-missione="obiettivo"]')).toHaveTextContent('0 di 10');
     });
 
-    it('lists one row a subject, by the cards still open, and «Ripassa» starts a session on it', async () => {
-      const data = answer(3, 3);
-      data.materie = [
-        { materia: 'DIRITTO_CIVILE', nuove: 0, apprendimento: 2, consolidate: 400, ripassi30: 210 },
-        { materia: 'DIRITTO_PENALE', nuove: 9, apprendimento: 1, consolidate: 0, ripassi30: 1 },
-        { materia: 'DIRITTO_AMMINISTRATIVO', nuove: 0, apprendimento: 0, consolidate: 0, ripassi30: 0 },
-        { materia: 'DIRITTO_PROCESSUALE_CIVILE', nuove: 2, apprendimento: 0, consolidate: 0, ripassi30: 0 },
-        { materia: 'DIRITTO_PROCESSUALE_PENALE', nuove: 0, apprendimento: 0, consolidate: 3, ripassi30: 0 },
-      ];
-      progress.mockResolvedValue(data);
-      renderHome();
-      const group = await screen.findByRole('group', { name: 'Materia' });
-      const rows = within(group).getAllByRole('listitem');
-      // «Tutte le materie» on top, the active choice.
-      expect(within(rows[0]).getByRole('button', { name: 'Tutte le materie' })).toHaveAttribute('aria-pressed', 'true');
-      const stops = rows.slice(1);
-      expect(stops.map((li) => li.querySelector('[data-subject-name]')?.textContent)).toEqual([
-        'Diritto penale', 'Diritto civile', 'Diritto processuale civile', 'Diritto amministrativo', 'Diritto processuale penale',
-      ]);
-      // The states said in words to a screen reader; the reviews of 30 days are «Progressi»' alone (G8).
-      expect(stops[1]).toHaveTextContent('0 nuove · 2 in apprendimento · 400 consolidate');
-      expect(stops[1]).not.toHaveTextContent('ultimi 30 giorni');
-      // A subject with no card has nothing to start.
-      expect(stops[3]).toHaveTextContent('Nessuna scheda');
-      expect(within(stops[3]).queryByRole('button', { name: /^Ripassa/ })).toBeNull();
-      // Every row as wide as «Tutte le materie» (G8: they were 8 px short at 1920): a row from `md`, the choice taking what
-      // «Ripassa» leaves — all of it with no card —, never a grid whose empty column keeps its gap.
-      for (const stop of stops) {
-        expect(stop).toHaveClass('md:flex');
-        expect(stop.className).not.toMatch(/md:grid-cols/);
-        expect(within(stop).getAllByRole('button')[0]).toHaveClass('md:flex-1');
-      }
-      await userEvent.setup().click(within(stops[0]).getByRole('button', { name: 'Ripassa Diritto penale' }));
-      expect(screen.getByTestId('where')).toHaveTextContent('/studia/ripasso/sessione?materia=DIRITTO_PENALE');
-    });
-
-    it('lays the page in the order fixed: the day, the missions, the statistics, the subjects, the full list', async () => {
+    it('lays the page in the order fixed: the day, the road, the numbers, today\'s missions, the full list', async () => {
       progress.mockResolvedValue(answer(3, 0));
       renderHome();
-      const order = ['Il ripasso di oggi', 'Le missioni di oggi', 'I tuoi progressi', 'Le tue materie', 'Tutte le missioni'];
+      const order = ['Il ripasso di oggi', 'Il tuo sentiero', 'I tuoi progressi', 'Le missioni di oggi', 'Tutte le missioni'];
       const headings = await Promise.all(order.map((name) => screen.findByRole('heading', { name })));
       for (let i = 1; i < headings.length; i++) {
         expect(headings[i - 1].compareDocumentPosition(headings[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -869,12 +740,28 @@ describe('ReviewHome', () => {
     });
   });
 
-  describe('the institutes of the subjects (Gymnasium spec §5.2, G5)', () => {
+  describe('«Il tuo sentiero» (LC23, LC62)', () => {
     const tappa = (materia: TappaIstituto['materia'], istituto: string, dovute: number): TappaIstituto => ({
       materia, istituto, nuove: 1, apprendimento: dovute, consolidate: 0, dovute,
     });
 
-    it('reads the road by institute once, for every subject, and says each subject’s cards due today', async () => {
+    it('reads the road by institute once, for every subject, a unit a subject by the cards due, each with its cards due', async () => {
+      progress.mockResolvedValue(answer(9, 0));
+      percorso.mockResolvedValue([
+        tappa('DIRITTO_PENALE', 'Furto', 2),
+        tappa('DIRITTO_CIVILE', 'Risoluzione per inadempimento', 3),
+        tappa('DIRITTO_CIVILE', 'Mora del debitore', 4),
+      ]);
+      renderHome();
+      const units = await within(await screen.findByRole('region', { name: 'Il tuo sentiero' })).findAllByRole('heading', { level: 3 });
+      expect(units.map((h) => h.textContent)).toEqual(['Diritto civile', 'Diritto penale']);
+      // The counts from the day's read (`answer` gives each subject 2 cards), the institutes and the cards due from the road's.
+      expect(screen.getByRole('region', { name: 'Diritto civile' })).toHaveTextContent('2 schede · 2 istituti · 7 da ripassare');
+      expect(percorso).toHaveBeenCalledTimes(1);
+      expect(percorso).toHaveBeenCalledWith();
+    });
+
+    it('marks «Sei qui» on the first institute with cards due, and a tap starts the session narrowed to an institute', async () => {
       progress.mockResolvedValue(answer(7, 0));
       percorso.mockResolvedValue([
         tappa('DIRITTO_CIVILE', 'Risoluzione per inadempimento', 3),
@@ -882,117 +769,78 @@ describe('ReviewHome', () => {
         tappa('DIRITTO_PENALE', 'Furto', 0),
       ]);
       renderHome();
-      const civile = await subjectRow('Diritto civile');
-      expect(await within(civile).findByText('7 oggi')).toBeInTheDocument();
-      // Said «7 da ripassare oggi» to a screen reader; «7 oggi» to the eye.
-    expect(within(civile).getByText(', 7 da ripassare oggi')).toHaveClass('sr-only');
-      expect(await subjectRow('Diritto penale')).toHaveTextContent('0 oggi');
-      expect(percorso).toHaveBeenCalledTimes(1);
-      expect(percorso).toHaveBeenCalledWith();
-    });
-
-    it('shows the chosen subject\'s institutes, and a tap starts the session narrowed to one', async () => {
-      progress.mockResolvedValue(answer(7, 0));
-      percorso.mockResolvedValue([
-        tappa('DIRITTO_CIVILE', 'Risoluzione per inadempimento', 3),
-        tappa('DIRITTO_CIVILE', 'Mora del debitore', 4),
-        tappa('DIRITTO_PENALE', 'Furto', 2),
-      ]);
-      renderHome();
-      await subjectRow('Diritto civile');
-      expect(screen.queryByRole('list', { name: 'Istituti di Diritto civile' })).toBeNull();
-      const user = userEvent.setup();
-      await user.click(subjectChoice('Diritto civile'));
       const institutes = await screen.findByRole('list', { name: 'Istituti di Diritto civile' });
-      expect(screen.getByRole('region', { name: 'Gli istituti di Diritto civile' })).toContainElement(institutes);
       expect(within(institutes).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
-        'Ripassa Mora del debitore: 4 da ripassare',
-        'Ripassa Risoluzione per inadempimento: 3 da ripassare',
+        'Ripassa Mora del debitore: 4 da ripassare · 1 nuova · 4 in apprendimento, sei qui',
+        'Ripassa Risoluzione per inadempimento: 3 da ripassare · 1 nuova · 3 in apprendimento',
       ]);
-      await user.click(within(institutes).getByRole('button', { name: /Risoluzione per inadempimento/ }));
-      expect(screen.getByTestId('where')).toHaveTextContent('/studia/ripasso/sessione?materia=DIRITTO_CIVILE&istituto=Risoluzione+per+inadempimento');
+      expect(road().querySelectorAll('[aria-current="step"]')).toHaveLength(1);
+      expect(within(institutes).getAllByRole('button')[0]).toHaveAttribute('aria-current', 'step');
+      await userEvent.setup().click(within(institutes).getByRole('button', { name: /Risoluzione per inadempimento/ }));
+      expect(screen.getByTestId('where')).toHaveTextContent('/learn/ripasso/sessione?materia=DIRITTO_CIVILE&istituto=Risoluzione+per+inadempimento');
     });
 
-    it('opens on the institutes of the subject remembered', async () => {
-      localStorage.setItem(STORAGE_KEY, 'DIRITTO_PENALE');
-      progress.mockResolvedValue(answer(2, 0));
-      percorso.mockResolvedValue([tappa('DIRITTO_PENALE', 'Furto', 2), tappa('DIRITTO_CIVILE', 'Mora del debitore', 1)]);
-      renderHome();
-      expect(await screen.findByRole('list', { name: 'Istituti di Diritto penale' })).toBeInTheDocument();
-      expect(screen.queryByRole('list', { name: 'Istituti di Diritto civile' })).toBeNull();
-    });
-
-    it('follows the subject chosen: its institutes only, and none for every subject', async () => {
+    it('narrows the session to a subject from its unit\'s «Ripassa», the day block\'s start staying every subject\'s', async () => {
       progress.mockResolvedValue(answer(3, 0));
       percorso.mockResolvedValue([tappa('DIRITTO_PENALE', 'Furto', 2), tappa('DIRITTO_CIVILE', 'Mora del debitore', 1)]);
       renderHome();
-      await subjectRow('Diritto civile');
-      const user = userEvent.setup();
-      await user.click(subjectChoice('Diritto civile'));
-      expect(await screen.findByRole('list', { name: 'Istituti di Diritto civile' })).toBeInTheDocument();
-      await user.click(subjectChoice('Diritto penale'));
-      expect(await screen.findByRole('list', { name: 'Istituti di Diritto penale' })).toBeInTheDocument();
-      expect(screen.queryByRole('list', { name: 'Istituti di Diritto civile' })).toBeNull();
-      await user.click(within(subjects()).getByRole('button', { name: 'Tutte le materie' }));
-      expect(screen.queryByRole('list', { name: /^Istituti di/ })).toBeNull();
+      const penale = await screen.findByRole('region', { name: 'Diritto penale' });
+      await userEvent.setup().click(within(penale).getByRole('button', { name: 'Ripassa Diritto penale' }));
+      expect(screen.getByTestId('where')).toHaveTextContent('/learn/ripasso/sessione?materia=DIRITTO_PENALE');
     });
 
-    it('holds the cards due in place while the read travels, and the day block does not wait on it', async () => {
+    it('holds the road\'s place while its read travels, and the day block does not wait on it', async () => {
       progress.mockResolvedValue(answer(3, 0));
       percorso.mockReturnValue(new Promise(() => {}));
       renderHome();
       expect(await screen.findByRole('button', { name: 'Inizia il ripasso' })).toBeEnabled();
-      const group = await screen.findByRole('group', { name: 'Materia' });
-      expect(group.querySelectorAll('.motion-safe\\:animate-pulse').length).toBeGreaterThan(0);
-      expect(within(group).queryByText(/\d+ oggi$/)).toBeNull();
+      expect(road()).toHaveAttribute('aria-busy', 'true');
+      expect(road().querySelectorAll('.motion-safe\\:animate-pulse').length).toBeGreaterThan(0);
+      expect(within(road()).queryByRole('button')).toBeNull();
     });
 
-    it('keeps «Inizia il ripasso» and the subjects when the read fails, and reads it again on request', async () => {
+    it('keeps «Inizia il ripasso» when the road\'s read fails, says so in the road with no alert, and reads it again on request', async () => {
       progress.mockResolvedValue(answer(3, 0));
       percorso.mockRejectedValueOnce(new Error('down'));
       renderHome();
-      const civile = await subjectRow('Diritto civile');
+      expect(await within(await screen.findByRole('region', { name: 'Il tuo sentiero' })).findByText('Non riesco a leggere il tuo sentiero.')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Inizia il ripasso' })).toBeEnabled();
-      expect(within(civile).getByRole('button', { name: 'Ripassa Diritto civile' })).toBeEnabled();
-      // No alert of its own: the cards due are left out, and the institutes say it when shown.
       expect(screen.queryByRole('alert')).toBeNull();
-      await waitFor(() => expect(civile.querySelector('.motion-safe\\:animate-pulse')).toBeNull());
-      expect(civile).not.toHaveTextContent(/\d oggi/);
-      const user = userEvent.setup();
-      await user.click(subjectChoice('Diritto civile'));
-      expect(await screen.findByText('Non riesco a leggere gli istituti di questa materia.')).toBeInTheDocument();
       percorso.mockResolvedValue([tappa('DIRITTO_CIVILE', 'Mora del debitore', 1)]);
-      await user.click(screen.getByRole('button', { name: 'Riprova gli istituti di Diritto civile' }));
-      expect(await screen.findByRole('button', { name: 'Ripassa Mora del debitore: 1 da ripassare' })).toBeInTheDocument();
+      await userEvent.setup().click(within(road()).getByRole('button', { name: 'Riprova' }));
+      expect(await screen.findByRole('button', { name: (n: string) => n.startsWith('Ripassa Mora del debitore: 1 da ripassare') && n.endsWith(', sei qui') })).toBeInTheDocument();
       expect(percorso).toHaveBeenCalledTimes(2);
+      // The road's «Riprova» reads the road alone.
+      expect(progress).toHaveBeenCalledTimes(1);
     });
 
-    it('reads the institutes again with the day block\'s «Riprova» and after a setting changed', async () => {
+    it('reads the road again with the day block\'s «Riprova» and after a setting changed', async () => {
       progress.mockRejectedValueOnce(new Error('down'));
       renderHome();
       const alert = await screen.findByRole('alert');
       progress.mockResolvedValue(answer(3, 0));
       const user = userEvent.setup();
       await user.click(within(alert).getByRole('button', { name: 'Riprova' }));
-      await screen.findByRole('group', { name: 'Materia' });
+      await screen.findByText('3 da ripassare');
       expect(percorso).toHaveBeenCalledTimes(2);
-      await user.click(screen.getByRole('button', { name: 'Impostazioni dello studio' }));
-      savePreferences.mockResolvedValue({ nuoveAlGiorno: 20, ripassiAlGiorno: 10, materieComunita: ['DIRITTO_CIVILE'] });
-      await user.click(await screen.findByRole('button', { name: /^Schede della comunità · / }));
-      await user.click(screen.getByRole('switch', { name: 'Diritto civile' }));
+      await changeASetting(user);
       await waitFor(() => expect(percorso).toHaveBeenCalledTimes(3));
     });
 
-    it('offers no session and no institutes for a subject with no card', async () => {
-      const data = answer(0, 0);
-      data.materie[2] = { materia: 'DIRITTO_AMMINISTRATIVO', nuove: 0, apprendimento: 0, consolidate: 0, ripassi30: 0 };
-      progress.mockResolvedValue(data);
+    it('names the subjects with no card once, with no unit and no «Ripassa», and opens the community\'s cards from there', async () => {
+      // Only Diritto civile has cards in the day's counts too: a subject with cards there is never «nessuna scheda».
+      const day = answer(3, 0);
+      progress.mockResolvedValue({ ...day, materie: day.materie.filter((m) => m.materia === 'DIRITTO_CIVILE') });
+      percorso.mockResolvedValue([tappa('DIRITTO_CIVILE', 'Mora del debitore', 1)]);
       renderHome();
-      const amministrativo = await subjectRow('Diritto amministrativo');
-      expect(amministrativo).toHaveTextContent('Nessuna scheda');
-      expect(within(amministrativo).queryByRole('button', { name: /^Ripassa/ })).toBeNull();
-      await userEvent.setup().click(subjectChoice('Diritto amministrativo'));
-      expect(screen.queryByRole('list', { name: /^Istituti di/ })).toBeNull();
+      await screen.findByRole('region', { name: 'Diritto civile' });
+      expect(screen.queryByRole('region', { name: 'Diritto amministrativo' })).toBeNull();
+      expect(within(road()).queryByRole('button', { name: /^Ripassa Diritto amministrativo/ })).toBeNull();
+      expect(road()).toHaveTextContent('Diritto penale, Diritto amministrativo, Diritto processuale civile, Diritto processuale penale: nessuna scheda, per ora.');
+      await userEvent.setup().click(within(road()).getByRole('button', { name: 'Scegli le schede della comunità' }));
+      const panel = screen.getByRole('region', { name: 'Impostazioni dello studio' });
+      expect(await within(panel).findByRole('button', { name: 'Schede della comunità · 0 di 5' })).toHaveAttribute('aria-expanded', 'true');
+      await waitFor(() => expect(panel).toHaveFocus());
     });
   });
 
@@ -1045,8 +893,8 @@ describe('ReviewHome', () => {
       expect(within(rows[0]).queryByRole('button')).toBeNull();
       expect(within(screen.getByRole('region', { name: 'Il ripasso di oggi' })).getByRole('button', { name: 'Continua il ripasso' })).toBeInTheDocument();
       // The goal's mark is the day block's (G9), never the row's: its line is read under it.
-      expect(within(rows[2]).queryByTestId('goal-mark')).toBeNull();
-      expect(within(screen.getByRole('region', { name: 'Il ripasso di oggi' })).getByTestId('goal-mark')).toBeInTheDocument();
+      expect(within(rows[2]).queryByTestId('goal-plate')).toBeNull();
+      expect(within(screen.getByRole('region', { name: 'Il ripasso di oggi' })).getByTestId('goal-plate')).toBeInTheDocument();
       localStorage.removeItem('visualex.studia.festeggiato');
     });
 
@@ -1106,62 +954,22 @@ describe('ReviewHome', () => {
       localStorage.removeItem('visualex.studia.festeggiato');
     });
 
-    it('never shows one subject’s counts under another’s name while the new read travels', async () => {
-      progress.mockResolvedValue(answer(5, 5));
-      renderHome();
-      await screen.findByText('5 da ripassare, 5 nuove');
-      const user = userEvent.setup();
-      progress.mockResolvedValue(answer(2, 3));
-      await user.click(subjectChoice('Diritto penale'));
-      await screen.findByText('2 da ripassare, 3 nuove');
-      await user.click(within(subjects()).getByRole('button', { name: 'Tutte le materie' }));
-      let answerCivile: (value: Progressi) => void = () => {};
-      progress.mockImplementation(() => new Promise((resolve) => { answerCivile = resolve; }));
-      await user.click(subjectChoice('Diritto civile'));
-      // Penale's answer is not drawn under Civile's name: the block waits, «Inizia il ripasso» with it.
-      expect(screen.getByText('lunedì 19 ottobre · Diritto civile')).toBeInTheDocument();
-      expect(screen.queryByText('2 da ripassare, 3 nuove')).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Inizia il ripasso' })).toBeNull();
-      answerCivile(answer(7, 1));
-      expect(await screen.findByText('7 da ripassare, 1 nuova')).toBeInTheDocument();
-    });
-
-    it('says so in the day block when the subject’s read fails, and keeps «Inizia il ripasso»', async () => {
+    it('says so in the day block when a new read fails, and keeps the last answer, «Inizia il ripasso» and the missions', async () => {
       progress.mockResolvedValue(answer(5, 5));
       renderHome();
       await screen.findByText('5 da ripassare, 5 nuove');
       progress.mockRejectedValue(new Error('down'));
-      await userEvent.setup().click(subjectChoice('Diritto penale'));
+      await changeASetting(userEvent.setup());
       const alert = await screen.findByRole('alert');
       expect(screen.getByRole('region', { name: 'Il ripasso di oggi' })).toContainElement(alert);
+      expect(screen.getByText('5 da ripassare, 5 nuove')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Inizia il ripasso' })).toBeEnabled();
-      // The missions under it are the day's, still drawn.
+      // The missions beside it are the day's, still drawn.
       expect(screen.getByRole('list', { name: 'Missioni di oggi' })).toBeInTheDocument();
-    });
-
-    it('keeps the missions the whole day’s when a subject narrows the day block', async () => {
-      progress.mockResolvedValue(midDay());
-      renderHome();
-      const card = await screen.findByRole('region', { name: 'Le missioni di oggi' });
-      progress.mockResolvedValue(answer(2, 5, { ripassi: 9 }));
-      await userEvent.setup().click(subjectChoice('Diritto penale'));
-      expect(await screen.findByText('2 da ripassare, 5 nuove')).toBeInTheDocument();
-      expect(within(card).getAllByRole('listitem')[0]).toHaveTextContent('7 di 17');
     });
   });
 
   describe('the statistics (Gymnasium spec §5.1)', () => {
-    it('leaves the subject chosen for «Progressi» to open on: one choice for the area', async () => {
-      progress.mockResolvedValue(answer(5, 5));
-      renderHome();
-      await screen.findByText('5 da ripassare, 5 nuove');
-      progress.mockResolvedValue(answer(2, 3));
-      await userEvent.setup().click(subjectChoice('Diritto penale'));
-      await screen.findByText('2 da ripassare, 3 nuove');
-      expect(localStorage.getItem(STORAGE_KEY)).toBe('DIRITTO_PENALE');
-      expect(screen.getByRole('link', { name: 'Tutti i progressi' })).toHaveAttribute('href', '/studia/progressi');
-    });
-
     it('draws the current week, Monday to Sunday, with its seven letters', async () => {
       progress.mockResolvedValue(answer(3, 0));
       renderHome();
@@ -1214,7 +1022,7 @@ describe('ReviewHome', () => {
       expect(list.querySelector('[data-missione="materia-ferma"]')).not.toHaveTextContent('Niente oggi');
       expect(list.querySelector('[data-missione="consolida"]')).toHaveTextContent('100 XP');
       // Today's three are above, in «Le missioni di oggi», and only there (G6).
-      expect(within(list).getByText('Le tre di oggi sono qui sopra.')).toBeInTheDocument();
+      expect(within(list).getByText('Le tre di oggi sono in «Le missioni di oggi».')).toBeInTheDocument();
       for (const title of ['Ripassa le schede dovute', 'Raggiungi l’obiettivo di oggi']) expect(within(list).queryByText(title)).toBeNull();
       expect(within(list).queryByText(/^Impara \d+ schede nuove$/)).toBeNull();
       // Nothing to tick: no checkbox, no button.
@@ -1229,10 +1037,10 @@ describe('ReviewHome', () => {
       data.missioni = serverMissions({ convalida: { stato: 'vuota', progresso: { fatte: 1, di: 2 } } }, { validator: true });
       progress.mockResolvedValue(data);
       render(
-        <MemoryRouter initialEntries={['/studia/ripasso']}>
+        <MemoryRouter initialEntries={['/learn/ripasso']}>
           <Routes>
             <Route element={<Outlet context={{ validator: true }} />}>
-              <Route path="/studia/ripasso" element={<ReviewHome />} />
+              <Route path="/learn/ripasso" element={<ReviewHome />} />
             </Route>
           </Routes>
         </MemoryRouter>,
@@ -1269,7 +1077,7 @@ describe('the motions of «Oggi» (S2, G8)', () => {
     expect(order()).toEqual(['dovute', 'nuove', 'obiettivo']);
     const title = today().getByText('Impara 5 schede nuove');
     expect(title).toHaveClass('vlx-mission-inking');
-    await waitFor(() => expect(order()).toEqual(['dovute', 'obiettivo', 'nuove']), { timeout: 3000 });
+    await waitFor(() => expect(order()).toEqual(['dovute', 'obiettivo', 'nuove']), { timeout: 4500 });
     expect(today().getByText('Impara 5 schede nuove')).toHaveClass('vlx-mission-done');
     expect(JSON.parse(localStorage.getItem(SEEN)!).missioni).toEqual(['nuove']);
   });
@@ -1284,45 +1092,26 @@ describe('the motions of «Oggi» (S2, G8)', () => {
     expect(today().getByText('Impara 5 schede nuove')).not.toHaveClass('vlx-mission-inking');
   });
 
-  it('draws the new tally mark for what grew since this browser drew it, and no landing ring: the goal is the mission\'s (G8)', async () => {
+  it('draws the streak as one line, no tally marks (LC39), and no landing goal: the goal is the mission\'s (G8)', async () => {
     localStorage.setItem(SEEN, JSON.stringify({ serie: 3, giorno: '2026-10-19', ripassi: 7, missioni: [] }));
     progress.mockResolvedValue(answer(10, 8, { ripassi: 9 }, 4));
     renderHome();
-    const tally = await screen.findByTestId('streak-tally');
-    expect(tally).toHaveAttribute('data-marks', '4');
+    await screen.findByRole('img', { name: /^Serie: 4 giorni di fila/ });
+    expect(screen.queryByTestId('streak-tally')).toBeNull();
     expect(screen.queryByTestId('goal-count-landing')).toBeNull();
     expect(screen.queryByRole('img', { name: /^Obiettivo di oggi/ })).toBeNull();
   });
 
-  it('brings the day block in with the light cascade once its content is drawn, and not under reduced motion', async () => {
+  it('brings the day block in as it is drawn, with no cascade (LC23)', async () => {
     const animate = vi.fn();
     const original = HTMLElement.prototype.animate;
     HTMLElement.prototype.animate = animate as unknown as typeof HTMLElement.prototype.animate;
     try {
       progress.mockResolvedValue(answer(3, 0));
-      const { unmount } = renderHome();
+      renderHome();
       await screen.findByText('3 da ripassare');
       const day = screen.getByRole('region', { name: 'Il ripasso di oggi' });
-      // Opacity only, one keyframe at the start; the block's children, the first ones a step apart.
-      const calls = animate.mock.calls.filter((_, i) => day.contains(animate.mock.contexts[i] as Node));
-      expect(calls.length).toBeGreaterThan(2);
-      expect(calls[0][0]).toEqual([{ opacity: 0, offset: 0 }]);
-      unmount();
-
-      animate.mockClear();
-      const real = window.matchMedia;
-      window.matchMedia = ((query: string) => ({
-        matches: query.includes('reduce'), media: query, onchange: null, addListener: () => {}, removeListener: () => {},
-        addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
-      })) as unknown as typeof window.matchMedia;
-      try {
-        renderHome();
-        await screen.findByText('3 da ripassare');
-        const block = screen.getByRole('region', { name: 'Il ripasso di oggi' });
-        expect(animate.mock.contexts.some((el) => block.contains(el as Node))).toBe(false);
-      } finally {
-        window.matchMedia = real;
-      }
+      expect(animate.mock.contexts.some((el) => day.contains(el as Node))).toBe(false);
     } finally {
       HTMLElement.prototype.animate = original;
     }

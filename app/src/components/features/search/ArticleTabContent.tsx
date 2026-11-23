@@ -1,9 +1,21 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, useId } from 'react';
+import { createPortal } from 'react-dom';
+import { cn } from '../../../lib/utils';
 import type { ArticleData, SearchParams } from '../../../types';
 import { CaseLawSection } from './CaseLawSection';
 import { ExternalLink } from 'lucide-react';
 import { AskMerltEntry } from './AskMerltEntry';
 import { useAppStore } from '../../../store/useAppStore';
+import { useHostDossier, useReadingSearch } from '../practice/readingHost';
+import { addToThisDossier, articleItemIds } from '../practice/inDossier';
+import { DossierNoteList } from '../dossier/DossierNoteList';
+import { removeItemsWithUndo } from '../dossier/removeItemsWithUndo';
+import { useEntryProposals } from '../../../hooks/useEntryProposals';
+import { useGlossPassage } from '../../../hooks/useGlossPassage';
+import { isGloss } from '../../../utils/aiReview';
+import { GLOSS_WORDS } from '../../../constants/glossWords';
+import { MoveProposalBar } from './MoveProposalBar';
+import { LostGlossesList, LostProposalsList } from './LostProposalsList';
 import { useShallow } from 'zustand/react/shallow';
 import { AddToDossierPopover } from '../dossier/AddToDossierPopover';
 import { ArticleCardsRow, type ArticleCardsHandle } from '../studia/ArticleCardsRow';
@@ -21,19 +33,19 @@ import { wrapDecisionCitationsInHtml } from '../../../utils/decisionCitationMatc
 import { openCompareWithArticle, getCompareState } from '../../../hooks/useCompare';
 import { useAnnotationActions } from '../../../hooks/useAnnotationActions';
 import { useInlineNoteAnchors } from '../../../hooks/useInlineNoteAnchors';
+import { useNoteOpener, useSignTarget } from '../../../hooks/useSignTarget';
 import { useArticleMarkers } from '../../../hooks/useArticleMarkers';
 import { ReadingToolbar } from './ReadingToolbar';
 import { NotesPeekPanel } from './NotesPeekPanel';
 import { HighlightsActionsPicker } from './HighlightsActionsPicker';
-import { InlineNotePopover } from './InlineNotePopover';
-import { InlineNoteComposer } from './InlineNoteComposer';
 import { ArticleBody } from './ArticleBody';
 import { closeFindWindow, openFindWindow } from '../../../utils/findWindowControl';
 import { useFindWindowScopedTo } from '../../../hooks/useFindWindowScopedTo';
 import { quickNormParamsOf } from '../../../utils/quickNormParams';
 import { ArticleDiscussionPanel } from './ArticleDiscussionPanel';
 import { UpdateNotePopover } from './UpdateNotePopover';
-import { BlockAnnotationsPopover } from './BlockAnnotationsPopover';
+import { BlockAnnotationsSheet } from './BlockAnnotationsSheet';
+import { AnnotationMargin, type AnnotationMarginHandle } from './AnnotationMargin';
 import { LooseHighlightsList } from './LooseHighlightsList';
 import { useArticleTextInteractions } from '../../../hooks/useArticleTextInteractions';
 import { getRubricText, getUpdateNoteParagraphs, isNotice, parseArticleStructure } from '../../../utils/articleStructure';
@@ -42,13 +54,11 @@ import { MERLT_EVENT_TYPES, publishMerltEvent } from '../../../features/merlt/me
 import { useMerltFeatures } from '../../../features/merlt/useMerltFeatures';
 import { useDevMode } from '../../../features/devMode/useDevMode';
 import { sendNerFeedback } from '../../../services/merltService';
-import type { NerFeedbackType, NerCorrectReference } from '../../../services/merltService';
-import { buildArticleXrefNerPayload } from './articleXrefNer';
 import { MissedCitationReporter } from '../../../features/merlt/ner/MissedCitationReporter';
 import { buildMissedNerPayload, MISSED_SELECTION_MAX } from '../../../features/merlt/ner/missedCitation';
 import type { NerReference } from '../../../features/merlt/ner/NerReferenceEditor';
-import { describeBlock, groupAnnotationsByBlock, hasAnnotations, highlightsWithoutSign, type LocatedThread } from '../../../utils/articleAnnotations';
-import type { Annotation, Highlight } from '../../../types';
+import { blockStarts, describeBlock, groupAnnotationsByBlock, highlightsWithoutSign, isProposal as isProposalMark, type LocatedThread } from '../../../utils/articleAnnotations';
+import type { Annotation, DossierItem, Highlight } from '../../../types';
 import { buildItemKey, uniqueArticleIdFromNorma } from '../../../utils/normaKeys';
 import { citeNorm, shortNorm } from '../../../utils/sources';
 import { downloadTxt, highlightsTxt, notesTxt, slugify } from '../../../utils/annotationExport';
@@ -56,12 +66,14 @@ import { buildSearchDeepLink } from '../../../utils/deepLinks';
 import { notificationService } from '../../../services/notificationService';
 import { isAuthenticated } from '../../../services/authService';
 import { useDiscussionWiring } from '../../../hooks/useDiscussionWiring';
+import { useGlossMargin } from './useGlossMargin';
 import { useRegisterFindRoot } from '../../../hooks/useRegisterFindRoot';
 import { plainText } from '../../../utils/threadPassages';
 import { PassageThreadsStatus } from './PassageThreadsStatus';
 import { VersionBanner } from './VersionBanner';
 import { TextAtDateDialog } from './TextAtDateDialog';
 import { formatNormCitation, unversionedCitation, withCitation } from '../../../utils/citation';
+import { copyNormLink, linkPinDay, normLink, normLinkToast } from '../../../utils/normattivaLink';
 import { formatDateForDisplay, todayInRome } from '../../../utils/dateUtils';
 import {
     READ_ONLY_REASON,
@@ -80,6 +92,8 @@ import {
 const NO_HIGHLIGHTS: Highlight[] = [];
 const NO_ANNOTATIONS: Annotation[] = [];
 const NO_THREADS: LocatedThread[] = [];
+type NoteItem = Extract<DossierItem, { type: 'note' }>;
+const NO_NOTES: NoteItem[] = [];
 
 interface ArticleTabContentProps {
     data: ArticleData;
@@ -112,9 +126,16 @@ interface ArticleTabContentProps {
      * the Studia row, «Chiedi a MERL-T» or the graph rail. Only the siblings of the text root change.
      */
     variant?: 'row' | 'beside';
+    /**
+     * In a dossier's «Lettura» (LC58): the dossier entry this text is read as. What an application proposed on it is
+     * drawn and acted on here (D7b), as in the dossier's own reader; never in the reader's copies or exports.
+     */
+    dossierItemId?: string;
+    /** The row around the text offers the add itself (LC61): the bar's «Alla pratica» would be a second command. */
+    dossierCommandInRow?: boolean;
 }
 
-export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyMode, readingOrigin, tabId, findHostId, variant = 'row' }: ArticleTabContentProps) {
+export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyMode, readingOrigin, tabId, findHostId, variant = 'row', dossierItemId, dossierCommandInRow }: ArticleTabContentProps) {
     const isBeside = variant === 'beside';
     const { article_text, norma_data, url, versionInfo } = data;
     // Flattened to scalars so the citation listener effect below depends on
@@ -155,21 +176,32 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
         bookmarks: s.bookmarks,
     })));
 
-    const [dossierPopoverOpen, setDossierPopoverOpen] = useState(false);
-    // State (not ref) so the popover re-reads the anchor when the button
-    // actually mounts — same reasoning as notesButtonEl below (gotcha #13).
-    const [dossierBtnEl, setDossierBtnEl] = useState<HTMLButtonElement | null>(null);
-    const [isPeekOpen, setIsPeekOpen] = useState(false);
-    // State (not ref) so the popover re-reads the anchor when the button
-    // actually mounts. Using ref.current in render triggers the
-    // react-hooks/refs lint and can miss the post-mount update.
-    const [notesButtonEl, setNotesButtonEl] = useState<HTMLButtonElement | null>(null);
-    const [showCopyModal, setShowCopyModal] = useState(false);
-    const [showAdvancedExport, setShowAdvancedExport] = useState(false);
-    const [showVersionInput, setShowVersionInput] = useState(false);
+    // The search gestures go to whoever hosts the reading (LC52 c2); without a host, the store's search.
+    const search = useReadingSearch(triggerSearch);
+    // In a dossier's «Lettura» (LC55) the dossier command adds to that dossier, without the popover's choice.
+    const hostDossier = useHostDossier();
+    const practiceNotesId = useId();
+    // The dossier's notes about this article, whichever copy of it they are about (LC58, §14).
+    const practiceNotes = useAppStore(useShallow((s) => {
+        const dossier = hostDossier ? s.dossiers.find((d) => d.id === hostDossier.id) : undefined;
+        if (!dossier) return NO_NOTES;
+        const ids = new Set(articleItemIds(dossier, norma_data));
+        return dossier.items.filter((i): i is NoteItem => i.type === 'note' && !!i.aboutItemId && ids.has(i.aboutItemId));
+    }));
+
+    // Already in the hosting dossier (LC61): the bar offers no «Aggiungi a questa pratica»; «Togli» is in the act's «⋯».
+    const inHostDossier = useAppStore((s) => {
+        const dossier = hostDossier ? s.dossiers.find((d) => d.id === hostDossier.id) : undefined;
+        return articleItemIds(dossier, norma_data).length > 0;
+    });
+
+    // The spaces under the toolbar (LC125, LC139, L-73): one open at a time, another one taking its place.
+    const [space, setSpace] = useState<'dossier' | 'notes' | 'highlights' | 'copy' | 'export' | 'date' | null>(null);
+    const openSpace = (name: NonNullable<typeof space>) => setSpace(name);
+    const toggleSpace = (name: NonNullable<typeof space>) => setSpace((s) => (s === name ? null : name));
+    const closeSpace = (name: NonNullable<typeof space>) => setSpace((s) => (s === name ? null : s));
+    const dossierSpaceId = useId();
     const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
-    const [isHighlightsPeekOpen, setIsHighlightsPeekOpen] = useState(false);
-    const [highlightsButtonEl, setHighlightsButtonEl] = useState<HTMLButtonElement | null>(null);
     // Local visibility toggle: when true, the article body keeps the markup
     // (so highlights aren't lost) but renders `.highlight-mark` transparent
     // via the `.highlights-hidden` class scoped to contentRef. Per-article,
@@ -311,7 +343,9 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
     } = useAnnotationActions({
         key: itemKey,
         articleId: uniqueArticleId,
-        highlights: articleHighlights,
+        plain: plainArticle,
+        // Read as a gesture comes (the structure is parsed further down, for the text).
+        breaks: () => blockStarts(article_text || '', parseArticleStructure(article_text || '')),
         showToast,
         enabled: !readOnly,
         onHighlightAdded: (text, color, startOffset) => publishMerltEvent({
@@ -338,7 +372,6 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
             },
         }),
     });
-    const { inlineNote, closeInlineNote } = useInlineNoteAnchors(contentRef, itemAnnotations);
 
     // Fetch persisted highlights + annotations from the Node backend when the
     // article first mounts (or when the user switches to a different article
@@ -518,6 +551,25 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
         }
     };
 
+    // «Copia link Normattiva»: the address the API returned, with its version marker; a past
+    // text's link reads as its version, as «Copia citazione» says it.
+    const copyLink = async () => {
+        if (!display.canCopyOrSave) {
+            showToast(display.copyBlockedReason ?? '', 'info');
+            return;
+        }
+        const pinDay = linkPinDay(norma_data, display.citeAs ?? data.validity, todayInRome(), versionInfo?.requestedDate);
+        const link = normLink(norma_data, citationNow(), pinDay);
+        if (!link) return;
+        try {
+            await copyNormLink(link);
+            showToast(normLinkToast(link), 'success');
+        } catch {
+            showToast('Errore durante la copia del link', 'error');
+        }
+    };
+    const handleCopyLink = normLink(norma_data, null) ? copyLink : undefined;
+
     // Handler for SelectionPopup copy action. The popup stays on a text that may
     // not be copied (a reading), so the table is asked here, and the click says why.
     const handlePopupCopy = async (text: string) => {
@@ -532,77 +584,6 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
             showToast('Errore durante la copia', 'error');
         }
     };
-
-    // Opens the previewed citation in the practice
-    const handleOpenCitation = useCallback((citation: ParsedCitationData) => {
-        // MERLT-1.9: emit citation_click for the bus tracker. The target URN
-        // is null at click time (resolution happens later via triggerSearch);
-        // the BFF accepts null target and forwards it as such.
-        const citationText = [
-            citation.act_type,
-            citation.act_number ? `n. ${citation.act_number}` : null,
-            citation.article ? `art. ${citation.article}` : null,
-        ].filter(Boolean).join(' ');
-        publishMerltEvent({
-            interaction_type: MERLT_EVENT_TYPES.citationClicked,
-            article_urn: norma_data.urn,
-            metadata: {
-                source_urn: norma_data.urn,
-                target_urn: null,
-                citation_text: citationText,
-                citation,
-            },
-        });
-        // Loop β #2: the 'implicit' NER capture surface — clicking a citation
-        // chip through to its article is a low-weight automatic CONFIRMATION that the
-        // detected reference was real. Full-consent only, fire-and-forget.
-        if (canContribute) {
-            const implicitPayload = buildArticleXrefNerPayload({
-                citation,
-                articleUrn: norma_data.urn,
-                articleText: article_text || '',
-                matchText: citationText,
-                feedbackType: 'confirmation',
-                surface: 'implicit',
-            });
-            void sendNerFeedback(implicitPayload).catch((err) => {
-                console.error('NER implicit feedback failed:', err);
-            });
-        }
-        triggerSearch({
-            act_type: citation.act_type,
-            act_number: citation.act_number || '',
-            date: citation.date || '',
-            article: citation.article,
-            version: 'vigente',
-        });
-    }, [norma_data.urn, article_text, canContribute, triggerSearch]);
-
-    // Loop β #2: forward one NER correction/confirmation for the previewed
-    // citation (surface=article_xref — the highest-volume capture surface).
-    // Context window is ±500 chars of the SOURCE article around the citation
-    // span (the privacy budget); fire-and-forget. Only reachable when the
-    // popup renders the bar, which itself is gated on canContribute.
-    const handleCitationNerFeedback = useCallback(
-        (feedbackType: NerFeedbackType, correctReference?: NerCorrectReference) => {
-            const citation = citationPreviewState.citation;
-            if (!citation) return;
-
-            const payload = buildArticleXrefNerPayload({
-                citation,
-                articleUrn: norma_data.urn,
-                articleText: article_text || '',
-                matchText: citationPreviewState.targetElement?.textContent ?? '',
-                feedbackType,
-                correctReference,
-            });
-
-            void sendNerFeedback(payload).catch((err) => {
-                console.error('NER article_xref feedback failed:', err);
-            });
-        },
-        [citationPreviewState.citation, citationPreviewState.targetElement, article_text, norma_data.urn],
-    );
 
     // Loop β #2, surface=article_xref, feedbackType=missed: "Segnala come
     // citazione" from the selection popup. Only wired for full-consent
@@ -655,26 +636,29 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
     };
 
     const handleTextAtDate = (choice: TextAtDateChoice) => {
-        setShowVersionInput(false);
+        closeSpace('date');
         showToast(
             choice.kind === 'original' ? 'Ricerca del testo originale' : `Ricerca del testo al ${formatDateForDisplay(choice.date)}`,
             'info',
         );
-        triggerSearch(buildTextAtDateParams(norma_data, choice));
+        search(buildTextAtDateParams(norma_data, choice));
     };
 
     const handleBannerAction = async (action: BannerAction) => {
         switch (action) {
             case 'go_current':
-                triggerSearch(quickNormParams);
+                search(quickNormParams);
                 break;
             case 'pick_date':
-                setShowVersionInput(true);
+                openSpace('date');
                 break;
             case 'open_next_day':
                 if (display.banner?.nextDay) {
-                    triggerSearch(buildTextAtDateParams(norma_data, { kind: 'date', date: display.banner.nextDay }));
+                    search(buildTextAtDateParams(norma_data, { kind: 'date', date: display.banner.nextDay }));
                 }
+                break;
+            case 'copy_link':
+                await handleCopyLink?.();
                 break;
             case 'copy_citation': {
                 const citation = citationNow();
@@ -697,7 +681,16 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
     // and happens after.
     const structure = useMemo(() => parseArticleStructure(article_text || ''), [article_text]);
     // A past text carries none of the reader's marks (see `display`).
-    const shownHighlights = readOnly ? NO_HIGHLIGHTS : articleHighlights;
+    // What an application proposed on the dossier entry (D7b): drawn with the reader's marks, never in their copies or
+    // exports (`allPanelHighlights`). Its glosses (D8) are counted on the signs and shown beside the text, never drawn in it.
+    const {
+        highlights: proposalHighlights, glosses, glossAnchors, actions: proposalActions, moving, saveMove, cancelMove,
+    } = useEntryProposals(dossierItemId, itemKey, uniqueArticleId, readOnly);
+    const withProposals = useMemo(
+        () => (proposalHighlights.length ? [...articleHighlights, ...proposalHighlights] : articleHighlights),
+        [articleHighlights, proposalHighlights],
+    );
+    const shownHighlights = readOnly ? NO_HIGHLIGHTS : withProposals;
     const shownAnnotations = readOnly ? NO_ANNOTATIONS : itemAnnotations;
     const shownThreads = readOnly ? NO_THREADS : locatedThreads;
     const markedHtml = useArticleMarkers({
@@ -708,12 +701,24 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
         signs: !readOnly,
         threads: shownThreads,
         focusedThreadId: readOnly ? null : focusedThreadId,
+        glosses: glossAnchors,
     });
     // What each block's sign counts, for the popover it opens (the renderer
     // derives the signs from the same inputs, through the same module).
     const blockGroups = useMemo(
-        () => groupAnnotationsByBlock(article_text || '', structure, shownHighlights, shownAnnotations, shownThreads),
-        [article_text, structure, shownHighlights, shownAnnotations, shownThreads],
+        () => groupAnnotationsByBlock(article_text || '', structure, shownHighlights, shownAnnotations, shownThreads, glossAnchors),
+        [article_text, structure, shownHighlights, shownAnnotations, shownThreads, glossAnchors],
+    );
+    // A gloss whose words are in no block, and a proposal whose words no longer land: listed under the text, with their
+    // actions (D7b), as in the dossier's reader.
+    const lostGlosses = useMemo(() => {
+        if (glosses.length === 0) return glosses;
+        const shown = new Set(blockGroups.flatMap((g) => g.glosses.map((a) => a.id)));
+        return glosses.filter((g) => !shown.has(g.id));
+    }, [glosses, blockGroups]);
+    const lostProposals = useMemo(
+        () => highlightsWithoutSign(proposalHighlights, blockGroups).filter(isProposalMark),
+        [proposalHighlights, blockGroups],
     );
     // Highlights no sign can reach — those of a sub-section no longer shown (Brocardi's, D-078),
     // and those whose text changed — keep a list of their own, so they can still be removed.
@@ -731,11 +736,60 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
 
     // "(119)" references open their AGGIORNAMENTO note; the notes at the bottom
     // fold; an annotation sign opens its block's notes and highlights.
-    const { updatesOpen, openNote, closeNote, openBlock, closeBlock } = useArticleTextInteractions(contentRef, itemKey, {
+    const { updatesOpen, openNote, closeNote, openBlock, blockAll, closeBlock, openBlockAt } = useArticleTextInteractions(contentRef, itemKey, {
         contentKey: processedContent,
         updatesOpenByDefault: display.updateNotesOpen,
     });
     const openGroup = openBlock === null ? undefined : blockGroups[openBlock];
+    // The notes and the discussions beside the text, as a word processor's comments (A4 §6): a sign's press goes to its
+    // block's first card there, else to the block's sheet; a note's wavy words to its card, else to that sheet.
+    const marginRef = useRef<AnnotationMarginHandle>(null);
+    const [marginShown, setMarginShown] = useState(false);
+    const { shownId: shownGlossId, show: showGloss, hide: hideGloss } = useGlossPassage(textRootRef, plainArticle, glossAnchors, processedContent);
+    const showGlossPassage = useCallback(
+        (id: string, show: boolean) => (show ? showGloss(id) : hideGloss(id)),
+        [showGloss, hideGloss],
+    );
+    // The glosses at the margin (LC74): beside the text where the card can widen, in the notes' column where that is
+    // already there, else under the text. One margin per article, opened on its own.
+    const articleRootRef = useRef<HTMLDivElement>(null);
+    // A day the article did not exist on: its notice stands where the text was, and the row that was read may have gone
+    // with the command pressed (a practice's row replaced by the answer). The focus the page was left with goes to the
+    // notice, never to BODY (LC139).
+    const stateRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const active = document.activeElement;
+        if (!display.textVisible && (active === null || active === document.body)) stateRef.current?.focus({ preventScroll: true });
+    }, [display.textVisible, data]);
+    // As the side panel was: an article with an id, not a past text (a notice in place of the text keeps its glosses).
+    const glossesEnabled = Boolean(discussionAnchor.articleId) && !readOnly;
+    const [glossCount, setGlossCount] = useState(0);
+    const [marginContent, setMarginContent] = useState(false);
+    const glossMargin = useGlossMargin({ open: discussion.open && glossesEnabled, rootRef: articleRootRef, columnShown: marginShown, marginContent });
+    const glossBeside = glossMargin.shown && glossMargin.placement === 'beside';
+    const closeGlosses = discussion.panelProps.onClose;
+    // Closed from inside (its «Chiudi», Esc): the focus goes back to the button that opened it, the one on screen.
+    const closeGlossMargin = useCallback(() => {
+        const root = articleRootRef.current;
+        const inside = !!root && !!glossMargin.host?.contains(document.activeElement);
+        closeGlosses();
+        if (!inside || !root) return;
+        const button = [...root.querySelectorAll<HTMLElement>('[data-glosses-button]')].find((b) => b.getClientRects().length > 0);
+        button?.focus({ preventScroll: true });
+    }, [closeGlosses, glossMargin.host]);
+    // A sign pressed with the glosses in the notes' column (LC90): the gloss on its passage is chosen there, its words lit,
+    // and the focus goes to it; a block with no gloss on a passage opens its sheet.
+    const openThread = discussion.openThread;
+    const chooseGlossFromText = (keys: readonly string[]) => {
+        const id = keys.find((key) => key.startsWith('thread:'))?.slice('thread:'.length);
+        if (!id) return false;
+        openThread(id);
+        requestAnimationFrame(() => document.getElementById(`article-thread-${id}`)?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true }));
+        return true;
+    };
+    const sheetOpen = useSignTarget({ openBlock, blockAll, group: openGroup, marginShown, marginRef, closeBlock, openBlockAt });
+    const openNoteBeside = useNoteOpener(marginRef, openBlockAt);
+    useInlineNoteAnchors(contentRef, itemAnnotations, openNoteBeside);
 
     // Citation hover and click: a click jumps within the same act or opens a search, recording the
     // way back from this block first.
@@ -754,7 +808,7 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
             onCrossReferenceNavigate?.(parsed.article, norma_data);
         } else {
             // Open in new search
-            triggerSearch({
+            search({
                 act_type: parsed.act_type,
                 act_number: parsed.act_number || '',
                 date: parsed.date || '',
@@ -762,8 +816,8 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 version: 'vigente',
             });
         }
-    }, [onCrossReferenceNavigate, norma_data, triggerSearch]);
-    const decisionLinks = useDecisionLinks({ besideId: originTabId ?? tabId, origin: citationOrigin });
+    }, [onCrossReferenceNavigate, norma_data, search]);
+    const decisionLinks = useDecisionLinks({ besideId: originTabId ?? tabId });
     useCitationLinks(contentRef, {
         onOpen: onCrossReferenceNavigate ? openCitation : undefined,
         origin: citationOrigin,
@@ -783,7 +837,14 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
     }, [display.textVisible, data.validity?.state, article_text, structure]);
 
     return (
-        <div className="animate-in fade-in duration-200 relative">
+        <div
+            ref={articleRootRef}
+            data-article-root=""
+            data-glosses-beside={glossBeside ? '' : undefined}
+            className={cn('relative', glossBeside && 'flex items-start gap-6')}
+        >
+            {/* The article; beside its margin, at the width it had closed: the text does not move (LC74). */}
+            <div className="min-w-0" style={glossBeside && glossMargin.textWidth !== null ? { width: glossMargin.textWidth, flex: 'none' } : undefined}>
             <ReadingToolbar
                 normaData={norma_data}
                 versionChip={display.chip}
@@ -791,27 +852,32 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 copyLockedReason={display.copyBlockedReason}
                 url={url}
                 articleText={article_text || ''}
-                isNotesPeekOpen={isPeekOpen}
-                notesButtonRef={setNotesButtonEl}
+                isNotesPeekOpen={space === 'notes'}
                 notesCount={readOnly ? 0 : allPanelAnnotations.length}
-                isHighlightsPeekOpen={isHighlightsPeekOpen}
-                highlightsButtonRef={setHighlightsButtonEl}
+                isHighlightsPeekOpen={space === 'highlights'}
                 highlightsCount={readOnly ? 0 : allPanelHighlights.length}
                 isDiscussionOpen={discussion.open}
-                onToggleNotes={() => setIsPeekOpen(v => !v)}
-                onToggleHighlightsPeek={() => setIsHighlightsPeekOpen(v => !v)}
+                discussionCount={glossesEnabled ? glossCount : 0}
+                onToggleNotes={() => toggleSpace('notes')}
+                onToggleHighlightsPeek={() => toggleSpace('highlights')}
                 onToggleDiscussion={discussion.toggle}
                 isPinnedQuick={isPinnedQuick}
                 onToggleQuickNorm={handleToggleQuickNorm}
                 onMobileCopy={handleMobileCopy}
                 onOpenStudyMode={isBeside ? undefined : onOpenStudyMode}
                 compact={isBeside}
-                onOpenCopyModal={() => setShowCopyModal(true)}
-                onOpenDossier={() => setDossierPopoverOpen(true)}
-                dossierButtonRef={setDossierBtnEl}
+                onOpenCopyModal={() => openSpace('copy')}
+                onOpenDossier={hostDossier
+                    ? () => addToThisDossier(hostDossier.id, { norma: norma_data }, showToast)
+                    : () => openSpace('dossier')}
+                dossierLabel={hostDossier ? 'Aggiungi a questa pratica' : undefined}
+                dossierExpanded={hostDossier ? undefined : space === 'dossier'}
+                dossierControls={hostDossier ? undefined : dossierSpaceId}
+                hideDossier={dossierCommandInRow || inHostDossier}
                 onShareLink={handleShareLink}
-                onOpenAdvancedExport={() => setShowAdvancedExport(true)}
-                onOpenVersionInput={() => setShowVersionInput(true)}
+                onCopyLink={handleCopyLink}
+                onOpenAdvancedExport={() => openSpace('export')}
+                onOpenVersionInput={() => openSpace('date')}
                 onCompare={handleCompare}
                 find={display.textVisible ? {
                     isOpen: isFindOpen,
@@ -821,13 +887,48 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 } : undefined}
             />
 
+            {/* «Aggiungi alla pratica» and the toolbar's other spaces open under it, where the reader is reading (LC125, LC139, L-73). */}
+            <AddToDossierPopover
+                id={dossierSpaceId}
+                isOpen={space === 'dossier'}
+                onClose={() => closeSpace('dossier')}
+                norma={norma_data}
+                onAdded={(_dossierId, title) => showToast(`Aggiunto a «${title}»`, 'success')}
+                onDuplicate={(title) => showToast(`Già presente in «${title}»`, 'info')}
+            />
+
+            <CopyModal
+                isOpen={space === 'copy'}
+                onClose={() => closeSpace('copy')}
+                onCopy={handleAdvancedCopy}
+                hasNotes={!readOnly && allPanelAnnotations.length > 0}
+                hasHighlights={!readOnly && allPanelHighlights.length > 0}
+            />
+
+            <AdvancedExportModal
+                inPage
+                isOpen={space === 'export'}
+                onClose={() => closeSpace('export')}
+                articleData={data}
+                annotations={readOnly ? NO_ANNOTATIONS : allPanelAnnotations}
+                highlights={readOnly ? NO_HIGHLIGHTS : allPanelHighlights}
+            />
+
+            <TextAtDateDialog
+                isOpen={space === 'date'}
+                onClose={() => closeSpace('date')}
+                onConfirm={handleTextAtDate}
+                euAct={isEuropeanAct(norma_data.tipo_atto)}
+                today={todayInRome()}
+                initialDate={requestedDate}
+            />
+
             <NotesPeekPanel
-                isOpen={isPeekOpen}
-                anchorEl={notesButtonEl}
+                isOpen={space === 'notes'}
                 annotations={allPanelAnnotations}
                 articleLabel={shortNorm(norma_data)}
                 noteAnchor={noteAnchor}
-                onClose={() => setIsPeekOpen(false)}
+                onClose={() => closeSpace('notes')}
                 onAddNote={handleAddNote}
                 onUpdateNote={updateAnnotation}
                 onRemoveNote={removeAnnotation}
@@ -837,33 +938,13 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
             />
 
             <HighlightsActionsPicker
-                isOpen={isHighlightsPeekOpen}
-                anchorEl={highlightsButtonEl}
+                isOpen={space === 'highlights'}
                 highlightsCount={allPanelHighlights.length}
                 highlightsHidden={highlightsHidden}
-                onClose={() => setIsHighlightsPeekOpen(false)}
+                onClose={() => closeSpace('highlights')}
                 onToggleVisibility={() => setHighlightsHidden(v => !v)}
                 onExportTxt={handleExportHighlightsTxt}
             />
-
-            {inlineNote && (
-                <InlineNotePopover
-                    note={inlineNote.note}
-                    anchorEl={inlineNote.anchorEl}
-                    onClose={closeInlineNote}
-                    onUpdate={updateAnnotation}
-                    onRemove={removeAnnotation}
-                />
-            )}
-
-            {composerRect && noteAnchor && (
-                <InlineNoteComposer
-                    anchorRect={composerRect}
-                    anchorText={noteAnchor.anchorText}
-                    onSave={commitComposer}
-                    onClose={closeComposer}
-                />
-            )}
 
             {devMode && canContribute && missedCitation && (
                 <MissedCitationReporter
@@ -875,29 +956,73 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
             )}
 
             {display.banner && (
-                <VersionBanner
-                    banner={display.banner}
-                    onAction={handleBannerAction}
-                    variant={display.textVisible ? 'banner' : 'state'}
-                />
+                <div ref={stateRef} tabIndex={-1} className="outline-none">
+                    <VersionBanner
+                        // No address of the source, no «Copia link Normattiva».
+                        banner={handleCopyLink ? display.banner : { ...display.banner, actions: display.banner.actions.filter((a) => a !== 'copy_link') }}
+                        onAction={handleBannerAction}
+                        variant={display.textVisible ? 'banner' : 'state'}
+                    />
+                </div>
             )}
 
             {display.textVisible && (
-                <ArticleBody
-                    contentRef={contentRef}
+                <AnnotationMargin
+                    ref={marginRef}
+                    plain={plainArticle}
                     textRootRef={textRootRef}
-                    itemKey={itemKey}
-                    processedContent={processedContent}
-                    onPopupHighlight={handlePopupHighlight}
-                    onPopupAddNote={handlePopupAddNote}
-                    onPopupCopy={handlePopupCopy}
-                    onPopupDiscuss={readOnly ? undefined : discussion.popupDiscuss}
-                    onPopupReportCitation={devMode && canContribute && !readOnly ? handlePopupReportCitation : undefined}
-                    onPopupCreateCard={!isBeside && offersNewCard(norma_data, cardsHistorical)
-                        ? (text) => cardsRowRef.current?.createFromPassage(text)
-                        : undefined}
-                    updatesOpen={updatesOpen}
-                    copyOnly={readOnly}
+                    contentKey={processedContent}
+                    notes={shownAnnotations}
+                    onUpdateNote={updateAnnotation}
+                    onRemoveNote={removeAnnotation}
+                    // A note being written: beside the text where it has room, else in a sheet from the bottom.
+                    draft={composerRect && noteAnchor ? { text: noteAnchor.anchorText, startOffset: noteAnchor.startOffset } : null}
+                    onSaveDraft={commitComposer}
+                    onCancelDraft={closeComposer}
+                    threads={shownThreads}
+                    onOpenThread={discussion.openThread}
+                    textHash={textHash}
+                    onWideChange={setMarginShown}
+                    onContentChange={setMarginContent}
+                    onAsideFocus={chooseGlossFromText}
+                    glosses={glosses}
+                    glossActions={proposalActions}
+                    shownGlossId={shownGlossId}
+                    onShowGlossPassage={showGlossPassage}
+                    aside={glossMargin.shown && glossMargin.placement === 'column' ? <div ref={glossMargin.setColumnSlot} /> : undefined}
+                >
+                    <ArticleBody
+                        contentRef={contentRef}
+                        textRootRef={textRootRef}
+                        itemKey={itemKey}
+                        processedContent={processedContent}
+                        onPopupHighlight={handlePopupHighlight}
+                        // A note being written keeps its words: a new selection refocuses it (the note tool takes every one).
+                        onPopupAddNote={(text, startOffset, rect) => { if (!marginRef.current?.keepDraft()) handlePopupAddNote(text, startOffset, rect); }}
+                        onPopupCopy={handlePopupCopy}
+                        onPopupDiscuss={readOnly ? undefined : discussion.popupDiscuss}
+                        onPopupReportCitation={devMode && canContribute && !readOnly ? handlePopupReportCitation : undefined}
+                        onPopupCreateCard={!isBeside && offersNewCard(norma_data, cardsHistorical)
+                            ? (text) => cardsRowRef.current?.createFromPassage(text)
+                            : undefined}
+                        updatesOpen={updatesOpen}
+                        copyOnly={readOnly}
+                        selectionPopup={!moving}
+                    />
+                </AnnotationMargin>
+            )}
+
+            {moving && (
+                <MoveProposalBar
+                    key={moving.id}
+                    textRootRef={textRootRef}
+                    proposalId={moving.id}
+                    startOffset={moving.startOffset}
+                    text={moving.text}
+                    onSave={saveMove}
+                    onCancel={cancelMove}
+                    label={isGloss(moving) ? GLOSS_WORDS.moveTitle : undefined}
+                    focusAfter={isGloss(moving) ? () => marginRef.current?.focus([`gloss:${moving.id}`]) ?? false : undefined}
                 />
             )}
 
@@ -905,7 +1030,26 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 <PassageThreadsStatus error={discussion.error} loading={discussion.loading} onRetry={discussion.reload} />
             )}
 
+            {/* The glosses under the text, where there is no room beside it; closed, the margin's empty home. */}
+            <div
+                ref={glossMargin.setBelowSlot}
+                className={cn(glossMargin.shown && glossMargin.placement === 'below' && 'mt-4 border-t border-slate-100 pt-4 dark:border-slate-800')}
+            />
+
             <LooseHighlightsList highlights={looseHighlights} articleId={uniqueArticleId} onRemove={removeHighlight} />
+            {proposalActions && <LostProposalsList proposals={lostProposals} actions={proposalActions} />}
+            {proposalActions && <LostGlossesList glosses={lostGlosses} actions={proposalActions} />}
+
+            {/* §14: the article shows the dossier's notes about it, under its text (LC58), as «Fonti» lists them. */}
+            {hostDossier && practiceNotes.length > 0 && (
+                <section aria-labelledby={practiceNotesId} className="mt-4 space-y-1.5">
+                    <h4 id={practiceNotesId} className="text-sm font-semibold text-slate-800 dark:text-slate-200">Note della pratica</h4>
+                    <DossierNoteList
+                        notes={practiceNotes}
+                        onRemoveNote={(note) => removeItemsWithUndo(hostDossier.id, [note.id], 'Elemento rimosso', hostDossier.onTrashChanged)}
+                    />
+                </section>
+            )}
 
             {openNote && structure.notes[openNote.id] && (
                 <UpdateNotePopover
@@ -916,29 +1060,39 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 />
             )}
 
-            {openBlock !== null && hasAnnotations(openGroup) && (
-                <BlockAnnotationsPopover
-                    key={openBlock}
-                    containerRef={contentRef}
-                    blockIndex={openBlock}
-                    blockLabel={describeBlock(article_text || '', structure.blocks[openBlock])}
-                    group={openGroup}
-                    contentKey={processedContent}
-                    textHash={textHash}
-                    onOpenThread={discussion.openThread}
-                    onClose={closeBlock}
-                    onUpdateNote={updateAnnotation}
-                    onRemoveNote={removeAnnotation}
-                    onRemoveHighlight={removeHighlight}
-                />
-            )}
-
-            <ArticleDiscussionPanel
-                anchor={discussionAnchor}
-                label={`Art. ${discussionAnchor.articleLabel ?? discussionAnchor.articleId}`}
-                articleUrn={norma_data.urn}
-                {...discussion.panelProps}
+            <BlockAnnotationsSheet
+                containerRef={contentRef}
+                blockIndex={sheetOpen && openGroup ? openBlock : null}
+                blockLabel={(index) => describeBlock(article_text || '', structure.blocks[index])}
+                groups={blockGroups}
+                textHash={textHash}
+                onOpenThread={discussion.openThread}
+                onClose={closeBlock}
+                onUpdateNote={updateAnnotation}
+                onRemoveNote={removeAnnotation}
+                onRemoveHighlight={removeHighlight}
+                proposalActions={proposalActions}
+                glosses={glosses}
+                shownGlossId={shownGlossId}
+                onShowGlossPassage={showGlossPassage}
             />
+
+            {glossesEnabled && glossMargin.host && createPortal(
+                <ArticleDiscussionPanel
+                    layout="margin"
+                    anchor={discussionAnchor}
+                    label={`Art. ${discussionAnchor.articleLabel ?? discussionAnchor.articleId}`}
+                    articleUrn={norma_data.urn}
+                    {...discussion.panelProps}
+                    isOpen={glossMargin.shown}
+                    onClose={closeGlossMargin}
+                    onCountChange={setGlossCount}
+                    // Beside the text, the glosses on a passage at the height of their words (LC90); under it, a list.
+                    align={glossMargin.placement === 'below' ? undefined : { textRootRef, located: shownThreads, contentKey: processedContent }}
+                    litThreadId={discussion.focusedThreadId}
+                />,
+                glossMargin.host,
+            )}
 
             {/* It asks about the article by its URN: on a past text the answer would describe the current one. */}
             {devMode && !readOnly && !isBeside && (
@@ -990,16 +1144,16 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 articleUrn={norma_data.urn}
                 tabId={originTabId ?? tabId}
                 backEntry={decisionBackEntry}
-                isHistorical={readOnly}
             />
 
             {url && (
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                // 44 px to tap on a phone (M1), the words as they were: the row's padding goes into the link there.
+                <div className="mt-4 md:pt-3 border-t border-slate-100 dark:border-slate-800">
                     <a
                         href={url}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                        className="inline-flex min-h-[44px] items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline md:min-h-0"
                     >
                         <ExternalLink size={12} />
                         Visualizza fonte ufficiale su Normattiva
@@ -1016,40 +1170,6 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 />
             )}
 
-            <AddToDossierPopover
-                isOpen={dossierPopoverOpen}
-                anchorEl={dossierBtnEl}
-                onClose={() => setDossierPopoverOpen(false)}
-                norma={norma_data}
-                onAdded={(_dossierId, title) => showToast(`Aggiunto a «${title}»`, 'success')}
-                onDuplicate={(title) => showToast(`Già presente in «${title}»`, 'info')}
-            />
-
-            <CopyModal
-                isOpen={showCopyModal}
-                onClose={() => setShowCopyModal(false)}
-                onCopy={handleAdvancedCopy}
-                hasNotes={!readOnly && allPanelAnnotations.length > 0}
-                hasHighlights={!readOnly && allPanelHighlights.length > 0}
-            />
-
-            <AdvancedExportModal
-                isOpen={showAdvancedExport}
-                onClose={() => setShowAdvancedExport(false)}
-                articleData={data}
-                annotations={readOnly ? NO_ANNOTATIONS : allPanelAnnotations}
-                highlights={readOnly ? NO_HIGHLIGHTS : allPanelHighlights}
-            />
-
-            <TextAtDateDialog
-                isOpen={showVersionInput}
-                onClose={() => setShowVersionInput(false)}
-                onConfirm={handleTextAtDate}
-                euAct={isEuropeanAct(norma_data.tipo_atto)}
-                today={todayInRome()}
-                initialDate={requestedDate}
-            />
-
             <DecisionPreviewPopup {...decisionLinks.popupProps} />
 
             {/* Citation Preview Popup */}
@@ -1061,16 +1181,18 @@ export function ArticleTabContent({ data, onCrossReferenceNavigate, onOpenStudyM
                 article={citationPreviewState.article}
                 position={citationPreviewState.position}
                 onClose={hidePreview}
-                onOpenCitation={handleOpenCitation}
-                nerFeedbackEnabled={devMode && canContribute}
-                onNerFeedback={handleCitationNerFeedback}
                 onMouseEnter={() => { isHoveringPopupRef.current = true; }}
                 onMouseLeave={() => {
                     isHoveringPopupRef.current = false;
                     hidePreview();
                 }}
             />
+            </div>
 
+            {/* The margin beside the text: its slot is there before it opens, hidden, so the opening finds it. */}
+            {glossMargin.placement === 'beside' && (
+                <div ref={glossMargin.setBesideSlot} hidden={!glossBeside} data-gloss-slot="" className="w-[21.25rem] shrink-0" />
+            )}
         </div>
     );
 }

@@ -21,6 +21,16 @@ describe('ForumMyEnvironmentsView - nothing published yet', () => {
         onPublishClick={noop}
       />,
     );
-    expect(screen.getByRole('button', { name: 'Pubblica un dossier' })).toHaveClass('min-h-[44px]', 'md:min-h-0');
+    expect(screen.getByRole('button', { name: 'Pubblica un dossier' })).toHaveClass('min-h-11', 'md:min-h-9');
+  });
+
+  it('says whether «Pubblica un dossier» is open, as the header\'s does', () => {
+    render(
+      <ForumMyEnvironmentsView
+        environments={[]} loading={false} likingIds={new Set()} onLike={noop} onImport={noop} onReport={noop}
+        onEdit={noop} onDelete={noop} onWithdraw={noop} onRepublish={noop} onPublishClick={noop} publishOpen
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Pubblica un dossier' })).toHaveAttribute('aria-expanded', 'true');
   });
 });

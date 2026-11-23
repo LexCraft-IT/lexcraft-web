@@ -1,9 +1,10 @@
-import type { Ref } from 'react';
-import { Search } from 'lucide-react';
+import type { ReactNode, Ref } from 'react';
+import { ChevronRight, Search } from 'lucide-react';
 import { FOCUS_RING } from '../../constants/interactions';
 import { Z_INDEX } from '../../constants/zIndex';
 import { cn } from '../../lib/utils';
 import { ServiceHealthDot } from '../ui/ServiceHealthMenuEntry';
+import { SEARCH_ISLAND_ID, ISLAND_FOCUS, ISLAND_HINT, ISLAND_LENS, ISLAND_SHAPE, ISLAND_SURFACE, ISLAND_TARGET, ISLAND_TEXT } from '../../utils/searchFieldControl';
 
 /** A 44 px icon button of the bar: no frame of its own, the bar is the frame. */
 const BAR_BUTTON = cn(
@@ -46,6 +47,8 @@ export function MenuToggle({ open, onToggle, notice, buttonRef }: MenuToggleProp
 
 export interface PhoneTopBarProps {
   menu: MenuToggleProps;
+  /** The section's name beside the menu, always (LC34, Luca: not over the page's title). */
+  section: string;
   /** The name in the middle: none while the page's title is in sight (empty), else the page's (`phoneBarTitle`). */
   title: string;
   /** Out of the way while the reader scrolls down (`useHideOnScroll`); only on a phone, below `md`. */
@@ -56,6 +59,8 @@ export interface PhoneTopBarProps {
   onSearch: () => void;
   /** The bar's element, for `useHideOnScroll`: it never hides while the focus is inside it. */
   barRef?: Ref<HTMLElement>;
+  /** «Dicci cosa ti serve» (LC141), after the search. */
+  action?: ReactNode;
 }
 
 /**
@@ -64,13 +69,15 @@ export interface PhoneTopBarProps {
  * scrolled out (G8, as iOS's large titles), the search on the right. It lies over
  * the content area, which starts under it, on the page's paper with a hairline under it. On a phone it slides up out
  * of the way scrolling down and comes back scrolling up — at once under reduced motion; from `md` it stays, and its
- * right side leaves room for `Layout`'s Focus button.
+ * right side leaves room for `Layout`'s «Commenti» and Focus button.
  */
-export function PhoneTopBar({ menu, title, hidden, onReveal, onSearch, barRef }: PhoneTopBarProps) {
+export function PhoneTopBar({ menu, section, title, hidden, onReveal, onSearch, barRef, action }: PhoneTopBarProps) {
   return (
     <header
       ref={barRef}
       data-testid="phone-top-bar"
+      // It lies over the content: the search's band starts under it (`CommandPalette`).
+      data-palette-bar="over"
       onFocus={onReveal}
       className={cn(
         // `vlx-phone-bar`: named during a section change (index.css, T1), so the page's picture passes under it.
@@ -80,13 +87,22 @@ export function PhoneTopBar({ menu, title, hidden, onReveal, onSearch, barRef }:
         hidden && 'max-md:-translate-y-full',
       )}
     >
-      {/* `px-1`: the menu's icon lines up with the page's 16 px margin. */}
-      <div className="flex h-14 items-center gap-1 px-1 md:pr-[3.25rem]">
+      {/* `px-1`: the menu's icon lines up with the page's 16 px margin. From md the room of «Commenti» and «Tutto
+          schermo», as the search field's bar: 10.5 rem, 8 px of air at 768 (LC4). */}
+      <div className="relative flex h-14 items-center gap-1 px-1 md:pr-[10.5rem] [&:has([data-palette-slot]:not(:empty))>[data-bar-title]]:invisible [&:has([data-palette-slot]:not(:empty))>[data-bar-action]]:invisible">
         <MenuToggle {...menu} />
         {/* Keyed by the name: the page's, once the title has scrolled out, fades in, 150 ms; at once under reduced motion
             (G8; inspired by iOS's large titles, written from scratch). Empty, it keeps its place between the buttons. */}
-        <p key={title} aria-hidden={title ? undefined : true} className="min-w-0 flex-1 truncate text-center font-serif text-lg font-medium text-slate-900 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150 dark:text-slate-50">
-          {title}
+        {/* The section beside the menu, always, crisp (LC34, Luca: «non ha senso che Work sia scritto lì e non accanto alle
+            tre lineette»); the page's name after it once the title has scrolled out, as the desk's path («Learn › Oggi»). */}
+        <p data-bar-title="" className="flex min-w-0 flex-1 items-center gap-1.5 truncate pl-1 text-[15px] font-semibold text-slate-900 dark:text-slate-50">
+          <span data-bar-section className="shrink-0">{section}</span>
+          {title && (
+            <span key={title} data-bar-name className="flex min-w-0 items-center gap-1.5 font-normal text-slate-600 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150 dark:text-slate-400">
+              <ChevronRight aria-hidden size={14} className="shrink-0" />
+              <span className="truncate">{title}</span>
+            </span>
+          )}
         </p>
         <button
           type="button"
@@ -96,10 +112,22 @@ export function PhoneTopBar({ menu, title, hidden, onReveal, onSearch, barRef }:
             onSearch();
           }}
           aria-label="Apri il menu di ricerca"
-          className={BAR_BUTTON}
+          // LC40 (Luca: the island on the phone too): a pill, «Cerca», the menu grows out of it (`CommandPalette`).
+          id={SEARCH_ISLAND_ID}
+          data-compact=""
+          className={cn(
+            // LC81: the panel's field's shape, type and lens (40 px and 16 px, as the search page's pill).
+            'mr-3 w-40 shrink-0 transition-colors', ISLAND_SHAPE, ISLAND_TEXT, ISLAND_HINT, ISLAND_SURFACE, ISLAND_TARGET,
+            'active:bg-slate-100 dark:active:bg-slate-800',
+            ISLAND_FOCUS,
+          )}
         >
-          <Search size={20} aria-hidden />
+          <Search aria-hidden className={ISLAND_LENS} />
+          <span aria-hidden>Cerca</span>
         </button>
+        {action}
+        {/* L-75: the search's field grows out of «Cerca» leftwards, over the bar's title, up to the menu button. */}
+        <div data-palette-slot="" className="absolute inset-y-0 left-12 right-4 flex items-center empty:hidden md:right-[calc(10.5rem+0.75rem)]" />
       </div>
     </header>
   );

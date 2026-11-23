@@ -231,12 +231,6 @@ describe('«Da validare», the keyboard and the vote bar', () => {
     }
   });
 
-  it('keeps the feedback button\'s room at the bar\'s right end from md, so «Errata» is not under it (G8c)', async () => {
-    render(<ValidationQueueView />);
-    await screen.findByText('Domanda c1?');
-    expect(screen.getByRole('group', { name: 'Il tuo giudizio' }).parentElement).toHaveClass('md:pr-14');
-  });
-
   it('moves the keyboard to the next card’s heading after a vote', async () => {
     render(<ValidationQueueView />);
     await screen.findByText('Domanda c1?');
@@ -313,15 +307,15 @@ describe('«Da validare», the queue', () => {
   it('tells someone who never was a validator that the section is theirs only', async () => {
     queue.mockRejectedValue(rejection(403));
     render(
-      <MemoryRouter initialEntries={['/studia/valida']}>
+      <MemoryRouter initialEntries={['/learn/valida']}>
         <Routes>
-          <Route path="/studia" element={<Outlet context={{ validator: false }} />}>
+          <Route path="/learn" element={<Outlet context={{ validator: false }} />}>
             <Route path="valida" element={<ValidationQueueView />} />
           </Route>
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText('Questa sezione è riservata ai validatori di VisuaLex Gymnasium')).toBeInTheDocument();
+    expect(await screen.findByText('Questa sezione è riservata ai validatori di Learn')).toBeInTheDocument();
     expect(screen.queryByText('Non sei più tra i validatori')).toBeNull();
     // The account already said so: no request the server would refuse.
     expect(queue).not.toHaveBeenCalled();
@@ -329,9 +323,9 @@ describe('«Da validare», the queue', () => {
 
   it('reads the queue when the account could not be read, and lets the server decide', async () => {
     const area = (
-      <MemoryRouter initialEntries={['/studia/valida']}>
+      <MemoryRouter initialEntries={['/learn/valida']}>
         <Routes>
-          <Route path="/studia" element={<Outlet context={{ validator: null }} />}>
+          <Route path="/learn" element={<Outlet context={{ validator: null }} />}>
             <Route path="valida" element={<ValidationQueueView />} />
           </Route>
         </Routes>
@@ -345,15 +339,15 @@ describe('«Da validare», the queue', () => {
     // Someone who is not one gets the server's refusal, worded as before the account was asked.
     queue.mockRejectedValue(rejection(403));
     render(area);
-    expect(await screen.findByText('Questa sezione è riservata ai validatori di VisuaLex Gymnasium')).toBeInTheDocument();
+    expect(await screen.findByText('Questa sezione è riservata ai validatori di Learn')).toBeInTheDocument();
     expect(queue).toHaveBeenCalledTimes(2);
   });
 
   it('waits for the account before reading the queue, and reads it for a validator', async () => {
     const area = (validator: boolean | undefined) => (
-      <MemoryRouter initialEntries={['/studia/valida']}>
+      <MemoryRouter initialEntries={['/learn/valida']}>
         <Routes>
-          <Route path="/studia" element={<Outlet context={{ validator }} />}>
+          <Route path="/learn" element={<Outlet context={{ validator }} />}>
             <Route path="valida" element={<ValidationQueueView />} />
           </Route>
         </Routes>

@@ -507,7 +507,7 @@ describe('ArticleDiscussionPanel', () => {
       await renderPanel(decisionThread());
       expect(screen.getAllByText(/risarcimento del danno/).length).toBeGreaterThan(0);
       expect(screen.getByText(/visibili solo all’autore e agli amministratori/)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Mostra a tutti' })).toHaveClass('min-h-[44px]');
+      expect(screen.getByRole('button', { name: 'Mostra a tutti' })).toHaveClass('min-h-11');
     });
 
     it('shows everyone the quotation once released', async () => {
@@ -622,6 +622,91 @@ describe('ArticleDiscussionPanel', () => {
       expect(screen.getByText('Il passo discusso non si trova nel testo che stai leggendo.')).toBeInTheDocument();
       expect(screen.getAllByText(/risarcimento del danno/).length).toBeGreaterThan(0);
       expect(screen.queryByText(WITHHELD)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('the community\'s second round (PR #449)', () => {
+    const reply = (over: Partial<ArticleDiscussionThread['comments'][number]>) => ({
+      id: 'c1', threadId: 'thread-1', parentId: null, body: 'Una risposta', isHidden: false,
+      user: { id: 'u2', username: 'luigi' }, createdAt: '2026-09-28T11:00:00Z', updatedAt: '2026-09-28T11:00:00Z',
+      voteCount: 1, userVoted: false, isOwner: false, ...over,
+    });
+
+    async function openThread(thread: ArticleDiscussionThread) {
+      vi.mocked(articleDiscussionService.list).mockResolvedValue({ data: [thread], pagination: { page: 1, limit: 20, total: 1, pages: 1 } });
+      render(<ArticleDiscussionPanel anchor={dummyAnchor} isOpen={true} onClose={vi.fn()} />);
+      fireEvent.click(await screen.findByText('Titolo discussione'));
+    }
+
+    it('asks the subject, optional, and sends it only when chosen', async () => {
+      vi.mocked(articleDiscussionService.create).mockResolvedValue({ ...dummyThread, id: 'thread-new' });
+      render(<ArticleDiscussionPanel anchor={dummyAnchor} isOpen={true} onClose={vi.fn()} />);
+      await screen.findByText('Titolo discussione');
+      fireEvent.click(screen.getByRole('button', { name: /nuova glossa/i }));
+      const subject = screen.getByRole('combobox', { name: 'Materia (facoltativa)' });
+      expect(subject).toHaveValue('');
+      expect(within(subject).getByRole('option', { name: 'Diritto processuale penale' })).toHaveValue('DIRITTO_PROCESSUALE_PENALE');
+      fireEvent.change(subject, { target: { value: 'DIRITTO_CIVILE' } });
+      fireEvent.change(screen.getByPlaceholderText('Titolo della glossa'), { target: { value: 'Titolo' } });
+      fireEvent.change(screen.getByPlaceholderText(/condividi una domanda/i), { target: { value: 'Corpo del testo' } });
+      fireEvent.click(screen.getByRole('button', { name: /pubblica/i }));
+      await waitFor(() => expect(articleDiscussionService.create).toHaveBeenCalledWith(
+        dummyAnchor, 'Titolo', 'Corpo del testo', expect.objectContaining({ materia: 'DIRITTO_CIVILE' }),
+      ));
+    });
+
+    // Papiniano on #660: Framer's entrance gave the opacity back to 0 for a frame as it ended. The entrance is CSS on the
+    // motion tokens now, and nothing is written on the panel's style to be undone.
+    it('enters in CSS on the motion tokens, nothing written on its style', async () => {
+      vi.mocked(articleDiscussionService.list).mockResolvedValue({ data: [], pagination: { page: 1, limit: 20, total: 0, pages: 0 } });
+      render(<ArticleDiscussionPanel anchor={dummyAnchor} isOpen={true} onClose={vi.fn()} />);
+      const panel = await screen.findByRole('dialog');
+      expect(panel).toHaveClass('animate-in', 'fade-in', 'duration-(--dur-pop)', 'ease-(--ease-out)');
+      expect(panel.style.opacity).toBe('');
+      expect(panel.style.transform).toBe('');
+    });
+
+    // Papiniano, #449 note 10: at 390 px the head's three controls were under 44 px (91×31, 122×28, 34×34).
+    it('gives the head\'s order, «Nuova glossa» and «Chiudi glosse» 44 px to touch on a phone, their size from md', async () => {
+      vi.mocked(articleDiscussionService.list).mockResolvedValue({ data: [], pagination: { page: 1, limit: 20, total: 0, pages: 0 } });
+      render(<ArticleDiscussionPanel anchor={dummyAnchor} isOpen={true} onClose={vi.fn()} />);
+      expect(await screen.findByRole('combobox')).toHaveClass('min-h-11', 'md:min-h-9');
+      expect(screen.getByRole('button', { name: /Nuova glossa/ })).toHaveClass('min-h-11', 'md:min-h-9');
+      expect(screen.getByRole('button', { name: 'Chiudi glosse' })).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-9', 'md:min-w-9');
+    });
+
+    it('counts the replies as the Forum does: not the comments under them', async () => {
+      vi.mocked(articleDiscussionService.list).mockResolvedValue({
+        data: [{ ...dummyThread, comments: [reply({}), reply({ id: 'c2', parentId: 'c1' })] }],
+        pagination: { page: 1, limit: 20, total: 1, pages: 1 },
+      });
+      render(<ArticleDiscussionPanel anchor={dummyAnchor} isOpen={true} onClose={vi.fn()} />);
+      expect(await screen.findByText(/· 1 risposta$/)).toBeInTheDocument();
+    });
+
+    it('names each reply\'s vote by its author and count', async () => {
+      await openThread({ ...dummyThread, comments: [reply({})] });
+      expect(screen.getByRole('button', { name: 'Vota la risposta di luigi, 1 voto' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Vota glossa, 3 voti' })).toBeInTheDocument();
+    });
+
+    it('asks before reporting, and «Annulla» sends nothing', async () => {
+      vi.mocked(articleDiscussionService.report).mockResolvedValue(undefined);
+      await openThread(dummyThread);
+      fireEvent.click(screen.getByRole('button', { name: 'Segnala la glossa' }));
+      fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Annulla' }));
+      expect(articleDiscussionService.report).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Segnala la glossa' }));
+      fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Segnala' }));
+      await waitFor(() => expect(articleDiscussionService.report).toHaveBeenCalledWith('thread-1', 'segnalazione'));
+    });
+
+    // LC114: one's own gloss has neither «Segnala» nor a vote, only its count.
+    it('offers no «Segnala» and no vote on one\'s own gloss', async () => {
+      await openThread({ ...dummyThread, isOwner: true });
+      expect(screen.getByRole('button', { name: 'Rispondi' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Segnala la glossa' })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Vota glossa/ })).toBeNull();
     });
   });
 });

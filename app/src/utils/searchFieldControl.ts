@@ -1,4 +1,5 @@
 import { appStore } from '../store/useAppStore';
+import { isWorkspaceCovered } from './findWindowControl';
 
 /**
  * The search page's field, reached from elsewhere: the sidebar's «Ricerca», the empty page's button and
@@ -27,6 +28,34 @@ export const PALETTE_SHORTCUT = typeof navigator !== 'undefined' && /mac/i.test(
 
 /** The id of the field's form: the menu grows from it on a computer. */
 export const SEARCH_FIELD_FORM_ID = 'search-field-form';
+/** The top bar's search pill (LC40): the menu grows out of it, as an island, on every page from lg. */
+export const SEARCH_ISLAND_ID = 'search-island';
+/** The island's one surface (LC69), Pietra's card: the pill and the panel it grows into wear the same ground and edge. */
+export const ISLAND_SURFACE = 'border border-border bg-card';
+/**
+ * The pill's hover and focus: hover darkens the edge; focus (any way, LC146) only moves the edge to `--focus-line`, one
+ * step darker. No ring, no halo, no second edge.
+ */
+export const ISLAND_FOCUS = 'hover:border-foreground/30 focus:outline-none focus:border-(--focus-line) focus-within:border-(--focus-line)';
+/** A pill thinner than a finger: its target is 44 px tall, centred on its drawn edge (40 px: 2 above and below). */
+export const ISLAND_TARGET = "after:absolute after:inset-x-0 after:inset-y-[calc(50%-22px)] after:content-['']";
+/**
+ * LC81: the pill and the panel's field are one object, so the shape grows without a jump. Below lg (the phone's and the
+ * search page's pill) 40 px and the field's type (16 px on a phone); from lg (the top bar's pill) 32 px and 13 px. The
+ * lens sits 12 px in, the words 36 px in, on both.
+ */
+export const ISLAND_SHAPE = 'relative flex h-10 min-w-0 items-center rounded-full pl-9 pr-3 lg:h-8 lg:pr-2';
+export const ISLAND_TEXT = 'text-[length:max(1rem,16px)] md:text-sm lg:text-[13px]';
+export const ISLAND_LENS = 'pointer-events-none absolute left-3 size-4 shrink-0 text-slate-400 lg:size-[15px]';
+/** The pill's words and its hint, the field's text and placeholder. */
+export const ISLAND_WORDS = 'text-slate-900 dark:text-white';
+export const ISLAND_HINT = 'text-slate-500 dark:text-slate-400';
+export const ISLAND_PLACEHOLDER = 'Norma, sentenza o tema';
+/**
+ * `ISLAND_FOCUS` for the panel's field, on its frame. An input matches `:focus-visible` after a tap too, so the frame
+ * only moves its edge (LC146), however the focus came.
+ */
+export const ISLAND_FIELD_FOCUS = 'hover:border-foreground/30 has-[input:focus]:border-(--focus-line)';
 
 let listener: Listener | null = null;
 let pending: { request: SearchFieldRequest; at: number } | null = null;
@@ -63,6 +92,9 @@ export function focusSearchFieldOrPalette(text?: string): void {
 export function openSearchMenu(): void {
   // Already open: nothing, as before R2 (the field's words would overwrite what is being typed in the box).
   if (appStore.getState().commandPaletteOpen) return;
+  // Under what covers the page (a modal dialog, the comparison, a sheet, the PDF viewer): the menu opens in the page,
+  // under it, unseen (L-75).
+  if (isWorkspaceCovered()) return;
   if (listener) listener({});
   else appStore.getState().openCommandPalette();
 }

@@ -7,6 +7,7 @@ import { useXpGrowth } from './seenProgress';
 import { INK_BG, INK_TEXT, MUTED_TEXT } from './tokens';
 import { XpGain } from './XpGain';
 import { useMountedFrame } from './xpGains';
+import { Illustration } from '../../../ui/Illustration';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -25,17 +26,22 @@ export function LevelBar({ livello, className }: { livello: XpLivello; className
   const share = livello.perIlProssimo > 0 ? Math.min(1, livello.nelLivello / livello.perIlProssimo) : 0;
   return (
     <div data-testid="level-bar" className={cn('grid gap-2', className)}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        {/* Keyed by the level: one reached while the page is open is pressed in too. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        {/* LC35: the level beside its laurel, an engraving. Keyed by the level: one reached while the page is open is
+            pressed in too. */}
+        <span className="flex items-center gap-2">
+        <Illustration name="learn-livello" className="h-11 w-11" />
         <motion.p
           key={livello.livello}
-          initial={levelUp && !reduce ? { scale: 1.5, opacity: 0 } : false}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: dur.scene, ease: ease.out, delay: 0.2 }}
+          // There from the first frame (LC133): it was hidden for 200 ms (a delay from opacity 0) as Learn opened.
+          initial={levelUp && !reduce ? { scale: 1.5 } : false}
+          animate={{ scale: 1 }}
+          transition={{ duration: dur.scene, ease: ease.out }}
           className={cn('origin-left font-serif text-2xl font-medium leading-none tabular-nums', INK_TEXT)}
         >
           Livello {formatCount(livello.livello)}
         </motion.p>
+        </span>
         <div className="flex items-center gap-2">
           <XpGain gain={gain !== null ? { id: livello.totale, punti: gain } : null} />
           {livello.oggi > 0 && (
@@ -55,7 +61,7 @@ export function LevelBar({ livello, className }: { livello: XpLivello; className
         aria-valuetext={`${livello.nelLivello} punti di ${livello.perIlProssimo} per il livello ${livello.livello + 1}`}
         className="block h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
       >
-        <span aria-hidden className={cn('block h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none', INK_BG)} style={{ width: `${share * 100}%` }} />
+        <span aria-hidden className={cn('block h-full rounded-full transition-[width] duration-(--dur-scene) ease-out motion-reduce:transition-none', INK_BG)} style={{ width: `${share * 100}%` }} />
       </span>
       <p className={cn('text-sm', MUTED_TEXT)}>
         <span aria-hidden>{`Ancora ${formatCount(left)} XP per il livello ${formatCount(livello.livello + 1)}`}</span>

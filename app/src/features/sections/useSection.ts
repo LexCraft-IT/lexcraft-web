@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
@@ -17,7 +17,7 @@ import { playSectionTransition } from './sectionTransition';
  */
 export const sectionStore = create<{
   section: SectionId;
-  /** The kind of the last of Opus and Gymnasium: the dossiers `/dossier` lists from any section (S7). */
+  /** The kind of the last of Opus and Gymnasium: the dossiers `/pratiche` lists from any section (S7). */
   dossierKind: DossierKind;
   setSection: (section: SectionId) => void;
 }>()(
@@ -50,7 +50,7 @@ export function useDossierKind(): DossierKind | null {
 /**
  * The section a kind of dossier lives in (S7): the study dossiers in Gymnasium, the work ones in Opus — and every one
  * in Opus without Gymnasium (`VITE_FEATURE_STUDIA` off), which the user could not reach. The one place that decides
- * it: the dossier pages' kicker and hue read it.
+ * it: the dossier pages' kicker and the empty list's drawing read it.
  */
 export function sectionOfDossierKind(kind: DossierKind | null | undefined): 'opus' | 'gymnasium' {
   return kind === 'studio' && isStudiaEnabled() ? 'gymnasium' : 'opus';
@@ -82,15 +82,26 @@ export function useSection() {
     if (fromPath) setSection(fromPath);
   }, [fromPath, setSection]);
 
+  // The change this instance started stops when it goes: its wait for the new title (two timers and an observer)
+  // would otherwise outlive it, and in a test outlive the page itself. The phone's drawer stays mounted when it
+  // closes, so a change chosen there keeps its focus on the new title (T1).
+  const startedHere = useRef<(() => void) | null>(null);
+  useEffect(
+    () => () => {
+      if (startedHere.current && finishRunning === startedHere.current) {
+        finishRunning();
+        finishRunning = null;
+      }
+    },
+    [],
+  );
+
   const sections = availableSections(devMode);
   const wanted = fromPath ?? stored;
   const section = sections.some((s) => s.id === wanted) ? wanted : 'opus';
 
-  /**
-   * `still`: chosen in the phone's drawer, whose closing is the change; `byPointer`: chosen with a pointer, so the new
-   * title takes the focus without its ring (`playSectionTransition`).
-   */
-  const chooseSection = (id: SectionId, { still = false, byPointer = false }: { still?: boolean; byPointer?: boolean } = {}) => {
+  /** `still`: chosen in the phone's drawer, whose closing is the change. */
+  const chooseSection = (id: SectionId, { still = false }: { still?: boolean } = {}) => {
     finishRunning?.();
     finishRunning = null;
     const go = () => {
@@ -104,7 +115,8 @@ export function useSection() {
     }
     // By hand: the app's BrowserRouter ignores navigate's `viewTransition` option, which needs a data router. The
     // router renders the new page in a transition: the old page's picture holds until its title is there.
-    finishRunning = playSectionTransition({ section: id, swap: go, still, byPointer });
+    finishRunning = playSectionTransition({ section: id, swap: go, still });
+    startedHere.current = finishRunning;
   };
 
   return { section, active: SECTIONS.find((s) => s.id === section)!, sections, chooseSection };

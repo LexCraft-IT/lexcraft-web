@@ -1,19 +1,20 @@
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search, SlidersHorizontal } from 'lucide-react';
 import type { NormaVisitata } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { TOUCH_TARGET_RESPONSIVE } from '../../../constants/interactions';
+import { Button } from '../../ui/Button';
+import { Expand } from '../../ui/Expand';
 import { citeNorm } from '../../../utils/sources';
 import { isEuropeanAct } from '../../../utils/versionDisplay';
 import { searchNorma } from '../../../utils/decisionSearchNorma';
 import type { ReadingBackEntry } from '../../../utils/readingBackStack';
 import { useIsDesktop } from '../../../hooks/useIsDesktop';
 import { useAppStore } from '../../../store/useAppStore';
-import { PluginSlot } from '../../../plugins/PluginSlot';
-import { getSlotComponents } from '../../../plugins/registry';
 import { DecisionResultList } from '../decisions/DecisionResultList';
 import { EuCaseLawBlock } from '../decisions/EuCaseLawBlock';
 import { CorteCostMassimeBlock } from '../decisions/CorteCostMassimeBlock';
+import { RassegnePanel } from '../rassegne/RassegnePanel';
 import { CaseLawControls } from './caseLaw/CaseLawControls';
 import { CaseLawFiltersContext } from './caseLaw/caseLawFiltersContext';
 import { narrowingCount, NO_FILTERS, type CaseLawFilters } from './caseLaw/caseLawFilter';
@@ -32,8 +33,6 @@ interface CaseLawSectionProps {
   tabId?: string;
   /** The way back to the article, recorded when a decision is opened from here. */
   backEntry?: ReadingBackEntry;
-  /** A past text: the section stays, and so do the Massimario and the Cassazione's search. */
-  isHistorical?: boolean;
 }
 
 const storageKey = (tabId: string) => `visualex:case-law-open:${tabId}`;
@@ -57,9 +56,9 @@ function writeOpen(tabId: string | undefined, open: boolean): void {
 }
 
 /**
- * «Giurisprudenza» under the article text: the Massimario's reviews (a plugin panel in the
- * `article_case_law` slot), the Corte costituzionale's massime from its open data
- * (`CorteCostMassimeBlock`, loaded when the section opens), on request the decisions of the
+ * «Giurisprudenza» under the article text: the Massimario's reviews (`RassegnePanel`, read from the
+ * Python API's own store, with MERL-T on or off), the Corte costituzionale's massime from its open
+ * data (`CorteCostMassimeBlock`, loaded when the section opens), on request the decisions of the
  * Cassazione that mention the article, and
  * a topic search of the Cassazione by the article's rubric (it took the place of the Brocardi
  * glossary's «Sentenze su questo tema», D-078). Closed by default; its state is kept
@@ -72,8 +71,9 @@ function writeOpen(tabId: string | undefined, open: boolean): void {
  * can search both archives only from a request sent without one (Task 15), so each opening of
  * the section starts from the route's own choice.
  */
-export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry, isHistorical = false }: CaseLawSectionProps) {
+export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry }: CaseLawSectionProps) {
   const panelId = useId();
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(() => readOpen(tabId));
   const [searched, setSearched] = useState(false);
   const desktop = useIsDesktop();
@@ -114,65 +114,66 @@ export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry, isH
 
   // A generic rubric («Definizioni», «Oggetto»…) alone would find every act's decisions: no link for it.
   const tema = topic?.trim() && !isGenericRubric(topic) ? topic.trim() : undefined;
-  const hasMassimario = getSlotComponents('article_case_law').length > 0;
   const offersCassazione = !isEuropeanAct(norma.tipo_atto);
 
   return (
     <div className="mt-8 border-t border-slate-200 pt-4 dark:border-slate-800">
       {/* A section's label, as the rest of the app writes it (R3): plain, `text-sm font-semibold`. */}
       <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {/* bare-button: the section's heading, the accordion's whole row (its name and the chevron at the far end). */}
         <button
+          ref={toggleRef}
           type="button"
           aria-expanded={open}
-          aria-controls={panelId}
+          aria-controls={open ? panelId : undefined}
           onClick={toggle}
           className={cn(
-            'flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+            'flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none ',
             TOUCH_TARGET_RESPONSIVE,
           )}
         >
           <span>Giurisprudenza</span>
-          <ChevronDown size={16} className={cn('transition-transform duration-200', open && 'rotate-180')} />
+          <ChevronDown size={16} className={cn('transition-transform duration-(--dur-pop)', open && 'rotate-180')} />
         </button>
       </h3>
 
-      <div id={panelId} hidden={!open} className="mt-3 space-y-6">
-        {open && (
+      {/* The section opens in the page under its heading (LC113, `Expand`); the focus stays on the heading. */}
+      <Expand id={panelId} open={open} initialFocusRef={toggleRef}>
           <CaseLawFiltersContext.Provider value={provided}>
+          <div className="mt-3 space-y-6">
             {/* One set of controls for every block; on a phone they sit behind «Filtri» */}
             <div>
               {!desktop && (
-                <button
+                <Button
                   type="button"
+                  variant="secondary"
                   aria-expanded={filtersOpen}
                   aria-controls={`${panelId}-filters`}
                   onClick={() => setFiltersOpen((v) => !v)}
-                  className={cn(
-                    'mb-2 inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-600 dark:text-slate-200',
-                    TOUCH_TARGET_RESPONSIVE,
-                  )}
+                  icon={<SlidersHorizontal size={14} aria-hidden="true" />}
+                  className="mb-2"
                 >
-                  <SlidersHorizontal size={14} aria-hidden="true" />
                   Filtri
                   {active > 0 && <span aria-hidden="true" className="rounded-full bg-primary-600 px-1.5 text-xs text-white">{active}</span>}
-                </button>
+                </Button>
               )}
-              {/* always there, so «Filtri» controls an element; hidden on a phone until it is opened */}
-              <div id={`${panelId}-filters`} hidden={!desktop && !filtersOpen}>
-                <CaseLawControls filters={filters} onChange={setFilters} counts={counts} />
-              </div>
+              {/* Always there, so «Filtri» controls an element; on a phone a space that opens under it (`Expand`). */}
+              {desktop ? (
+                <div id={`${panelId}-filters`}>
+                  <CaseLawControls filters={filters} onChange={setFilters} counts={counts} />
+                </div>
+              ) : (
+                <Expand id={`${panelId}-filters`} open={filtersOpen} onClose={() => setFiltersOpen(false)} keepMounted>
+                  <CaseLawControls filters={filters} onChange={setFilters} counts={counts} />
+                </Expand>
+              )}
             </div>
 
             {/* The Massimario's panel is its own heading ("Nelle rassegne della Cassazione", with the
                 count) and renders nothing when there are no reviews, so no wrapper of ours names it. */}
-            {hasMassimario && (
-              <div>
-                <PluginSlot
-                  slot="article_case_law"
-                  props={{ articleUrn, isHistorical, besideId: tabId, backEntry }}
-                />
-              </div>
-            )}
+            <div>
+              <RassegnePanel articleUrn={articleUrn} besideId={tabId} backEntry={backEntry} />
+            </div>
 
             {/* The Court's own massime, a separate collection with its licence line (G-281); a State act's article only */}
             {offersCassazione && articleUrn && (
@@ -191,7 +192,7 @@ export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry, isH
 
             {offersCassazione && <section aria-labelledby={`${panelId}-cassazione`} className="space-y-3">
               <h4 id={`${panelId}-cassazione`} className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                Cassazione — menzionano l’articolo
+                Cassazione: menzionano l’articolo
               </h4>
               {searched ? (
                 <DecisionResultList
@@ -200,22 +201,16 @@ export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry, isH
                   backEntry={backEntry}
                 />
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setSearched(true)}
-                  className={cn(
-                    'rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800',
-                    TOUCH_TARGET_RESPONSIVE,
-                  )}
-                >
+                <Button type="button" variant="secondary" onClick={() => setSearched(true)}>
                   Cerca nell’archivio della Cassazione
-                </button>
+                </Button>
               )}
             </section>}
 
             {/* The decisions on the article's subject, whether or not they cite it: a topic window beside.
                 The Cassazione's archive only, so not for an act of the Union. */}
             {offersCassazione && tema && (
+              // bare-button: a link-like row, the search's words over the topic quoted under them.
               <button
                 type="button"
                 onClick={() => {
@@ -224,7 +219,7 @@ export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry, isH
                   if (backEntry) pushReadingBack(backEntry);
                   openTopicSearch({ tema }, `Tema: ${tema}`, tabId ? { besideId: tabId } : undefined);
                 }}
-                className="group -mx-1 flex min-h-[44px] items-start gap-2 rounded-lg px-1 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                className="group -mx-1 flex min-h-[44px] items-start gap-2 rounded-md px-1 py-1.5 text-left focus-visible:outline-none "
               >
                 <Search size={14} aria-hidden="true" className="mt-1 shrink-0 text-primary-700 dark:text-primary-300" />
                 <span className="min-w-0">
@@ -240,14 +235,14 @@ export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry, isH
             {!offersCassazione && (
               <section aria-labelledby={`${panelId}-eu`} className="space-y-3">
                 <h4 id={`${panelId}-eu`} className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                  Corte di giustizia UE — citano l’articolo
+                  Corte di giustizia UE: citano l’articolo
                 </h4>
                 <EuCaseLawBlock norma={norma} besideId={tabId} backEntry={backEntry} />
               </section>
             )}
+          </div>
           </CaseLawFiltersContext.Provider>
-        )}
-      </div>
+      </Expand>
     </div>
   );
 }

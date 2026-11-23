@@ -2,49 +2,37 @@
  * Admin route wrapper that requires admin privileges
  */
 import { Navigate, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { ShieldAlert } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import { SessionKeptUnreachable, SessionLoading } from './ProtectedRoute';
+import { LexCraftLogo } from '../ui/LexCraftLogo';
 
 interface AdminRouteProps {
   children: React.ReactNode;
 }
 
 export function AdminRoute({ children }: AdminRouteProps) {
-  const { isAuthenticated, isAdmin, loading } = useAuth();
+  const { isAuthenticated, isAdmin, loading, user, retrying } = useAuth();
   const location = useLocation();
 
-  // Show loading state while checking authentication
-  if (loading) {
-    return (
-      <div className="fixed inset-0 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 z-50">
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ repeat: Infinity, duration: 1.5, repeatType: 'reverse' }}
-          className="mb-6 relative"
-        >
-          <div className="absolute inset-0 bg-amber-500 blur-xl opacity-20 rounded-full" />
-          <ShieldAlert className="w-16 h-16 text-amber-600 relative z-10" />
-        </motion.div>
-        <div className="space-y-2 text-center">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">VisuaLex Admin</h3>
-          <p className="text-sm text-slate-500 animate-pulse">Verifica autorizzazioni...</p>
-        </div>
-      </div>
-    );
-  }
+  // While the session is checked: the same screen as every signed-in page, with its line while it retries (#463).
+  if (loading) return <SessionLoading retrying={retrying} />;
 
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // The account not read (LC13): not taken for «not an administrator».
+  if (!user) return <SessionKeptUnreachable />;
+
   // Show access denied if not admin
   if (!isAdmin) {
     return (
       <div className="min-h-svh flex items-center justify-center bg-slate-50 dark:bg-slate-900 px-4">
         <div className="max-w-md w-full text-center">
+          {/* The still logo heads a screen without the shell (LC16). */}
+          <LexCraftLogo className="mx-auto mb-8 block h-auto w-[160px]" />
           <div className="inline-flex items-center justify-center w-20 h-20 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full mb-6">
             <ShieldAlert size={40} />
           </div>
@@ -57,7 +45,7 @@ export function AdminRoute({ children }: AdminRouteProps) {
           </p>
           <a
             href="/"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-medium transition-colors"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 dark:bg-toga-400 dark:hover:bg-toga-300 dark:text-ink-950 hover:bg-primary-700 text-white rounded-xl font-medium transition-colors"
           >
             Torna alla Home
           </a>

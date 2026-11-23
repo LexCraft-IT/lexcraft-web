@@ -10,6 +10,7 @@ import { TOUCH_TARGET_RESPONSIVE } from '../../../constants/interactions';
 import type { ReadingBackEntry } from '../../../utils/readingBackStack';
 import type { DecisionArchive, DecisionSearchHit, DecisionSearchQuery, SearchDecisionsAnswer } from '../../../types/decisions';
 import { Button } from '../../ui/Button';
+import { sentenzaFromDecision } from '../dossier/dossierUtils';
 import { CaseLawRow } from '../search/caseLaw/CaseLawRow';
 import { useCaseLawFilters, useReportCaseLawYears } from '../search/caseLaw/caseLawFiltersContext';
 import { applyCaseLawFilters } from '../search/caseLaw/caseLawFilter';
@@ -101,6 +102,7 @@ function Row({ hit, besideId, backEntry }: { hit: DecisionSearchHit; besideId?: 
       badges={[KIND_LABEL[hit.trovata]]}
       besideId={besideId}
       backEntry={backEntry}
+      dossierItem={sentenzaFromDecision(identita, attributi)}
     >
       {hit.frammento && <Fragment {...hit.frammento} />}
     </CaseLawRow>
@@ -115,8 +117,9 @@ function Segmented<T extends string>({ label, options, pressed, disabled, onPick
   onPick: (value: T) => void;
 }) {
   return (
-    <div role="group" aria-label={label} className="inline-flex overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
+    <div role="group" aria-label={label} className="inline-flex overflow-hidden rounded-md border border-slate-300 dark:border-slate-600">
       {options.map((o) => (
+        // bare-button: a segment of a two-way choice, pressed or not.
         <button
           key={o.value}
           type="button"
@@ -127,7 +130,7 @@ function Segmented<T extends string>({ label, options, pressed, disabled, onPick
           onClick={() => onPick(o.value)}
           className={`px-3 py-1.5 text-sm ${TOUCH_TARGET_RESPONSIVE} disabled:cursor-not-allowed disabled:opacity-50 ${
             pressed === o.value
-              ? 'bg-primary-600 text-white'
+              ? 'bg-primary-600 dark:bg-toga-400 dark:hover:bg-toga-300 dark:text-ink-950 text-white'
               : 'bg-white text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
           }`}
         >

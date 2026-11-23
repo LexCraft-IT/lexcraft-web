@@ -30,7 +30,7 @@ export function formatTimestampLong(ts: string | number | undefined | null): str
 // One group = one norm (tipo + numero + data) in one version and one annex, and all its
 // articles in the dossier. Two versions of one article are two groups, never "1284,1284";
 // nor are art. 1 of annex A and art. 1 of the body of the same decree one request "1,1".
-// Used both by the detail view ("Apri tutti su Dashboard") and the list view
+// Used both by the detail view ("Apri tutti nel Corpus") and the list view
 // ("apri rapido dalla card"). `triggerSearch` in the store overwrites any
 // previous search, so the consuming UI must pick a single group to open at
 // once — see OpenOnDashboardPicker for the multi-group UX.
@@ -72,13 +72,27 @@ export function computeNormaGroups(items: DossierItem[]): NormaGroup[] {
   return Array.from(groups.values());
 }
 
-// The search that opens a group on the dashboard: the version the group holds.
-export function searchParamsFromGroup(group: NormaGroup): SearchParams {
+// How many articles one search may ask for: the API's ceiling refuses more, so a larger group is
+// paged. The number lives in services/visualex/visualex_api/tools/config.py
+// (MAX_ARTICLES_PER_REQUEST); dossierUtils.test.ts reads it there and fails if this one drifts.
+export const MAX_ARTICLES_PER_SEARCH = 150;
+
+// The searches that open a group on the dashboard, the version the group holds: one, or one per
+// page of MAX_ARTICLES_PER_SEARCH articles for a group above the API's ceiling.
+export function searchParamsFromGroup(group: NormaGroup): SearchParams[] {
+  const pages: string[][] = [];
+  for (let i = 0; i < group.articles.length; i += MAX_ARTICLES_PER_SEARCH) {
+    pages.push(group.articles.slice(i, i + MAX_ARTICLES_PER_SEARCH));
+  }
+  return (pages.length ? pages : [[]]).map((page) => searchParamsForPage(group, page));
+}
+
+function searchParamsForPage(group: NormaGroup, articles: string[]): SearchParams {
   return {
     act_type: group.tipo_atto,
     act_number: group.numero_atto,
     date: group.data,
-    article: group.articles.join(','),
+    article: articles.join(','),
     version: (group.versione as SearchParams['version']) || 'vigente',
     version_date: group.data_versione || '',
     ...(group.allegato ? { annex: group.allegato } : {}),
@@ -104,7 +118,7 @@ export function searchesForGroups(
   createPractice: (label: string) => string,
 ): SearchParams[] {
   let sharedPracticeId: string | undefined;
-  return groups.map((group) => {
+  return groups.flatMap((group) => {
     const tabLabel = tabLabelForGroup(dossierTitle, group);
     let targetPracticeId: string;
     if (requestIsHistorical(group)) {
@@ -113,7 +127,7 @@ export function searchesForGroups(
       sharedPracticeId ??= createPractice(tabLabel);
       targetPracticeId = sharedPracticeId;
     }
-    return { ...searchParamsFromGroup(group), tabLabel, targetPracticeId };
+    return searchParamsFromGroup(group).map((params) => ({ ...params, tabLabel, targetPracticeId }));
   });
 }
 
@@ -170,19 +184,33 @@ export function unpackItemContent(content: unknown): { data: unknown; status?: '
   return _dossierMeta?.important ? { data: rest, status: 'important' } : { data: rest };
 }
 
-type ServerFields = Pick<DossierItem, 'citation' | 'actCitation' | 'aboutItemId' | 'createdBy'>;
+type ServerFields = Pick<DossierItem, 'citation' | 'actCitation' | 'aboutItemId' | 'createdBy' | 'assistantNotes' | 'assistantNote'>;
 
 // What only the server says about an item (its names, the article a note is
-// about, who wrote it), copied only when it said it: an answer from an older
-// server leaves the fields absent, and the page falls back.
+// about, who wrote it, how its application's notes stand — D7b), copied only
+// when it said it: an answer from an older server leaves the fields absent,
+// and the page falls back.
 export function serverFieldsFromApi(
-  api: Pick<DossierItemApi, 'citation' | 'act_citation' | 'about_item_id' | 'created_by'>,
+  api: Pick<DossierItemApi, 'citation' | 'act_citation' | 'about_item_id' | 'created_by' | 'assistant_notes' | 'assistant_note'>,
 ): ServerFields {
+  const note = api.assistant_note;
   return {
     ...(api.citation !== undefined ? { citation: api.citation } : {}),
     ...(api.act_citation !== undefined ? { actCitation: api.act_citation } : {}),
     ...(api.about_item_id !== undefined ? { aboutItemId: api.about_item_id } : {}),
     ...(api.created_by !== undefined ? { createdBy: api.created_by } : {}),
+    ...(api.assistant_notes !== undefined ? { assistantNotes: api.assistant_notes } : {}),
+    ...(note !== undefined ? {
+      assistantNote: note && {
+        state: note.state,
+        stateChangedAt: note.state_changed_at,
+        reviewComment: note.review_comment,
+        originalText: note.original_text,
+        edited: note.edited,
+        editedAt: note.edited_at,
+        editedBy: note.edited_by,
+      },
+    } : {}),
   };
 }
 
@@ -338,11 +366,20 @@ export function dossierItemFromApi(api: DossierItemApi): DossierItem {
 const SHARE_PREFIX = 'u8.';
 
 /** A dossier as it leaves the account (a share link, a JSON file): without its copy in the Forum or the
- *  admin's block, which are its owner's alone. */
+ *  admin's block, which are its owner's alone, nor how its owner reviewed what an application wrote (D7b: the
+ *  states, «Cosa non va?», who edited, the application's own words), which stays in the dossier. */
 export function shareableDossier(dossier: Dossier): Omit<Dossier, 'published' | 'forumBlocked'> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- left out on purpose
   const { published, forumBlocked, ...shareable } = dossier;
-  return shareable;
+  return {
+    ...shareable,
+    items: shareable.items.map((item) => {
+      if (item.assistantNotes === undefined && item.assistantNote === undefined) return item;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- left out on purpose
+      const { assistantNotes, assistantNote, ...rest } = item;
+      return rest as DossierItem;
+    }),
+  };
 }
 
 export function encodeDossierShare(dossier: Dossier): string {
@@ -443,13 +480,13 @@ export function importCounts(imported: number, lost: number): string {
 export function importReasonsText(reasons: string[]): string {
   if (reasons.length === 0) return '';
   const others = reasons.length - 1;
-  return ` — ${reasons[0]}${others > 0 ? ` e ${others === 1 ? 'un altro motivo' : `altri ${others} motivi`}` : ''}`;
+  return `: ${reasons[0]}${others > 0 ? ` e ${others === 1 ? 'un altro motivo' : `altri ${others} motivi`}` : ''}`;
 }
 
 /** The toast after an import: whole, or how many items were left out (not importable, or refused by the server). */
 export function importReport(imported: number, lost: number): string {
-  if (lost === 0) return 'Dossier importato';
-  return `Dossier importato in parte: ${importCounts(imported, lost)}`;
+  if (lost === 0) return 'Pratica importata';
+  return `Pratica importata in parte: ${importCounts(imported, lost)}`;
 }
 
 /** A dossier as a Forum suggestion carries it; the server makes each entry the item it stands for.

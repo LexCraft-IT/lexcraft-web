@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../../../store/useAppStore';
+import { useReadingSearch } from '../practice/readingHost';
 import { useCitationPreview } from '../../../hooks/useCitationPreview';
 import { useCitationLinks } from '../../../hooks/useCitationLinks';
 import { useDecisionLinks } from '../../../hooks/useDecisionLinks';
@@ -12,18 +13,24 @@ import { closeFindWindow, openFindWindow } from '../../../utils/findWindowContro
 import { useFindWindowScopedTo } from '../../../hooks/useFindWindowScopedTo';
 import { NotesPeekPanel } from '../search/NotesPeekPanel';
 import { HighlightsActionsPicker } from '../search/HighlightsActionsPicker';
-import { InlineNotePopover } from '../search/InlineNotePopover';
-import { InlineNoteComposer } from '../search/InlineNoteComposer';
-import { BlockAnnotationsPopover } from '../search/BlockAnnotationsPopover';
+import { BlockAnnotationsSheet } from '../search/BlockAnnotationsSheet';
 import { ArticleDiscussionPanel } from '../search/ArticleDiscussionPanel';
 import { PassageThreadsStatus } from '../search/PassageThreadsStatus';
 import { DecisionReadingToolbar } from './DecisionReadingToolbar';
 import { UnmatchedAnchors } from './UnmatchedAnchors';
+import { LostGlossesList, LostProposalsList } from '../search/LostProposalsList';
+import { MoveProposalBar } from '../search/MoveProposalBar';
+import { AnnotationMargin, type AnnotationMarginHandle } from '../search/AnnotationMargin';
+import { useEntryProposals } from '../../../hooks/useEntryProposals';
+import { useGlossPassage } from '../../../hooks/useGlossPassage';
+import { isGloss } from '../../../utils/aiReview';
+import { GLOSS_WORDS } from '../../../constants/glossWords';
 import { useAnnotationActions } from '../../../hooks/useAnnotationActions';
 import { useInlineNoteAnchors } from '../../../hooks/useInlineNoteAnchors';
+import { useNoteOpener, useSignTarget } from '../../../hooks/useSignTarget';
 import { useArticleTextInteractions } from '../../../hooks/useArticleTextInteractions';
 import { useRegisterFindRoot } from '../../../hooks/useRegisterFindRoot';
-import { describeBlock, groupAnnotationsByBlock, hasAnnotations } from '../../../utils/articleAnnotations';
+import { blockStarts, describeBlock, groupAnnotationsByBlock, isProposal as isProposalMark } from '../../../utils/articleAnnotations';
 import { useDiscussionWiring } from '../../../hooks/useDiscussionWiring';
 import type { DecisionAttributes, DecisionIdentity, DecisionText } from '../../../types/decisions';
 import { wrapCitationsInHtml, type ParsedCitationData } from '../../../utils/citationMatcher';
@@ -43,10 +50,12 @@ const NO_ARTICLE = '';
 
 /** A host that holds norms of its own (the dossier, D7d): the norms the text cites are its to open. */
 export interface CitedNorms {
-  /** Whether the host holds the norm: the preview's button then says «Apri tra le norme», else «Apri su Dashboard». */
+  /** Whether the host holds the norm: the preview's button then says «Apri tra le norme», else «Apri nel Corpus». */
   holds: (citation: ParsedCitationData) => boolean;
   /** A click on a cited norm, with the link clicked; the preview's button, with none. */
   open: (citation: ParsedCitationData, link: HTMLElement | null) => void;
+  /** The preview's button for a norm the host does not hold; «Apri in Ricerca» when absent (the dossier's «Fonti»). */
+  elsewhere?: string;
 }
 
 export interface DecisionReadingSurfaceProps {
@@ -81,6 +90,11 @@ export interface DecisionReadingSurfaceProps {
    * offers the rest. The text and its links are the same either way (gotcha 23).
    */
   citedNorms?: CitedNorms;
+  /**
+   * The dossier entry it is read in (D7b): what an application proposed on that entry is drawn and acted on here, and
+   * only here; never in the decision's downloads.
+   */
+  dossierItemId?: string;
 }
 
 /**
@@ -89,20 +103,21 @@ export interface DecisionReadingSurfaceProps {
  * it. Self-contained: it takes the decision as props and reaches only the store's search and
  * way-back actions, so any host can mount it.
  */
-export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, hostBlockId, findHostId, onLeave, citedNorms }: DecisionReadingSurfaceProps) {
+export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, hostBlockId, findHostId, onLeave, citedNorms, dossierItemId }: DecisionReadingSurfaceProps) {
   const {
-    triggerSearch, pushReadingBack, annotations, highlights, removeAnnotation, updateAnnotation,
-    removeHighlight, loadAnnotationsForArticle, loadHighlightsForArticle, showKeyPassages, updateSettings,
+    triggerSearch, annotations, highlights, removeAnnotation, updateAnnotation,
+    removeHighlight, loadAnnotationsForArticle, loadHighlightsForArticle, showKeyPassages, updateSettings, highlightColor, addHighlight,
   } = useAppStore(useShallow((s) => ({
     showKeyPassages: s.settings.showKeyPassages,
+    highlightColor: s.settings.highlightColor,
     updateSettings: s.updateSettings,
     triggerSearch: s.triggerSearch,
-    pushReadingBack: s.pushReadingBack,
     annotations: s.annotations,
     highlights: s.highlights,
     removeAnnotation: s.removeAnnotation,
     updateAnnotation: s.updateAnnotation,
     removeHighlight: s.removeHighlight,
+    addHighlight: s.addHighlight,
     loadAnnotationsForArticle: s.loadAnnotationsForArticle,
     loadHighlightsForArticle: s.loadHighlightsForArticle,
   })));
@@ -128,6 +143,16 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
   const decisionHighlights = useMemo(
     () => highlights.filter((h) => h.normaKey === key && h.articleId === NO_ARTICLE),
     [highlights, key],
+  );
+
+  // What an application proposed on the dossier entry (D7b): drawn with the reader's marks, never in their downloads.
+  // Its glosses (D8) are counted on the signs and shown beside the text, never drawn in it.
+  const {
+    highlights: proposalHighlights, glosses, glossAnchors, actions: proposalActions, moving, saveMove, cancelMove,
+  } = useEntryProposals(dossierItemId, key, NO_ARTICLE);
+  const shownHighlights = useMemo(
+    () => (proposalHighlights.length ? [...decisionHighlights, ...proposalHighlights] : decisionHighlights),
+    [decisionHighlights, proposalHighlights],
   );
 
   const plain = useMemo(() => decisionProjection(testo), [testo]);
@@ -159,37 +184,57 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
   const html = useMemo(
     () => wrapDecisionCitationsInHtml(
       wrapCitationsInHtml(renderDecisionHtml({
-        testo, highlights: decisionHighlights, annotations: decisionNotes, signs: true,
-        threads: locatedThreads, focusedThreadId, keyPassages: passages,
+        testo, highlights: shownHighlights, annotations: decisionNotes, signs: true,
+        threads: locatedThreads, focusedThreadId, keyPassages: passages, glosses: glossAnchors,
       })),
       { within, selfPath },
     ),
-    [testo, decisionHighlights, decisionNotes, locatedThreads, focusedThreadId, within, selfPath, passages],
+    [testo, shownHighlights, decisionNotes, locatedThreads, focusedThreadId, within, selfPath, passages, glossAnchors],
   );
 
   // What each paragraph's sign counts, for the popover it opens (the renderer derives the signs
   // from the same structure through the same module).
   const blockGroups = useMemo(
-    () => groupAnnotationsByBlock(plain, structure, decisionHighlights, decisionNotes, locatedThreads),
-    [plain, structure, decisionHighlights, decisionNotes, locatedThreads],
+    () => groupAnnotationsByBlock(plain, structure, shownHighlights, decisionNotes, locatedThreads, glossAnchors),
+    [plain, structure, shownHighlights, decisionNotes, locatedThreads, glossAnchors],
   );
-  const { openBlock, closeBlock } = useArticleTextInteractions(contentRef, key, { contentKey: html });
+  const { openBlock, blockAll, closeBlock, openBlockAt } = useArticleTextInteractions(contentRef, key, { contentKey: html });
   const openGroup = openBlock === null ? undefined : blockGroups[openBlock];
+  // A gloss whose words are in no paragraph (the text changed): listed under the text with its actions.
+  const lostGlosses = useMemo(() => {
+    if (glosses.length === 0) return glosses;
+    const shown = new Set(blockGroups.flatMap((g) => g.glosses.map((a) => a.id)));
+    return glosses.filter((g) => !shown.has(g.id));
+  }, [glosses, blockGroups]);
+  const marginRef = useRef<AnnotationMarginHandle>(null);
+  const [marginShown, setMarginShown] = useState(false);
+  // The sign (A4 §6): the paragraph's first card beside the text, else its sheet.
+  const sheetOpen = useSignTarget({ openBlock, blockAll, group: openGroup, marginShown, marginRef, closeBlock, openBlockAt });
 
   // What no longer lands is listed under the text (a free note has no anchor: the panel holds it).
+  // An application's proposal that no longer lands has a list of its own, with its note and its actions (D7b).
   const lost = useMemo(
     () => unmatchedAnchors(testo, decisionHighlights, decisionNotes),
     [testo, decisionHighlights, decisionNotes],
   );
+  const lostProposals = useMemo(
+    () => unmatchedAnchors(testo, proposalHighlights, []).highlights.filter(isProposalMark),
+    [testo, proposalHighlights],
+  );
 
-  const [isNotesOpen, setIsNotesOpen] = useState(false);
-  const [notesButtonEl, setNotesButtonEl] = useState<HTMLButtonElement | null>(null);
-  const [isHighlightsOpen, setIsHighlightsOpen] = useState(false);
-  const [highlightsButtonEl, setHighlightsButtonEl] = useState<HTMLButtonElement | null>(null);
+  // «Note» and «Evidenziazioni» open under the toolbar (LC139, L-73), one at a time.
+  const [space, setSpace] = useState<'notes' | 'highlights' | null>(null);
+  const isNotesOpen = space === 'notes';
+  const isHighlightsOpen = space === 'highlights';
   const [highlightsHidden, setHighlightsHidden] = useState(false);
   const findButtonRef = useRef<HTMLButtonElement>(null);
   const textRootRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<{ message: string; type: ToastProps['type'] } | null>(null);
+  const { shownId: shownGlossId, show: showGloss, hide: hideGloss } = useGlossPassage(textRootRef, plain, glossAnchors, html);
+  const showGlossPassage = useCallback(
+    (id: string, show: boolean) => (show ? showGloss(id) : hideGloss(id)),
+    [showGloss, hideGloss],
+  );
 
   // The find window's target for this decision (spec §13.1): one text, keyed by its own
   // `decisionKey`, the key the scope computes for a decision tab. No `hostTabId` (a host with no
@@ -245,6 +290,9 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
     setToast({ message: 'Passaggi chiave nascosti: li riaccendi da «Passaggi chiave» nella barra', type: 'info' });
   };
 
+  // A cited norm goes to whoever hosts the reading (LC52 c2); without a host, the store's search.
+  const search = useReadingSearch(triggerSearch);
+
   const origin = useMemo<ReadingBackEntry | undefined>(
     () => hostTabId ? { tabId: hostTabId, blockId: hostBlockId ?? hostTabId, articleId: '', label } : undefined,
     [hostTabId, hostBlockId, label],
@@ -252,7 +300,7 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
 
   const openCitation = useCallback((citation: ParsedCitationData, link: HTMLElement | null = null) => {
     if (citedNorms) return citedNorms.open(citation, link);
-    triggerSearch({
+    search({
       act_type: citation.act_type,
       act_number: citation.act_number || '',
       date: citation.date || '',
@@ -261,16 +309,20 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
       ...(hostTabId ? { besideId: hostTabId } : {}),
     });
     onLeave?.();
-  }, [triggerSearch, hostTabId, onLeave, citedNorms]);
+  }, [search, hostTabId, onLeave, citedNorms]);
 
-  const decisionLinks = useDecisionLinks({ besideId: hostTabId, origin, onOpened: onLeave });
+  const decisionLinks = useDecisionLinks({ besideId: hostTabId, onOpened: onLeave });
   useCitationLinks(contentRef, { onOpen: openCitation, origin, showPreview, hidePreview, isHoveringPopupRef, decisions: decisionLinks.links });
 
   const showToast = (message: string, type: ToastProps['type']) => setToast({ message, type });
   const {
     noteAnchor, composerRect, clearAnchor, handlePopupHighlight, handlePopupAddNote, handleAddNote, closeComposer, commitComposer,
-  } = useAnnotationActions({ key, articleId: NO_ARTICLE, highlights: decisionHighlights, showToast });
-  const { inlineNote, closeInlineNote } = useInlineNoteAnchors(contentRef, decisionNotes);
+  } = useAnnotationActions({
+    key, articleId: NO_ARTICLE, plain, breaks: () => blockStarts(plain, structure), showToast,
+  });
+  // A note's wavy words: its card beside the text, else its paragraph's sheet (A4 §6, no popover).
+  const openNoteBeside = useNoteOpener(marginRef, openBlockAt);
+  useInlineNoteAnchors(contentRef, decisionNotes, openNoteBeside);
 
   const exportSlug = slugify(key) || 'decisione';
   const exportNotes = () => {
@@ -309,10 +361,8 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
         highlightsCount={decisionHighlights.length}
         isNotesOpen={isNotesOpen}
         isHighlightsOpen={isHighlightsOpen}
-        notesButtonRef={setNotesButtonEl}
-        highlightsButtonRef={setHighlightsButtonEl}
-        onToggleNotes={() => setIsNotesOpen((v) => !v)}
-        onToggleHighlights={() => setIsHighlightsOpen((v) => !v)}
+        onToggleNotes={() => setSpace((s) => (s === 'notes' ? null : 'notes'))}
+        onToggleHighlights={() => setSpace((s) => (s === 'highlights' ? null : 'highlights'))}
         isDiscussionOpen={discussion.open}
         onToggleDiscussion={discussion.toggle}
         isFindOpen={isFindOpen}
@@ -333,10 +383,17 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
         <KeyPassagePopover
           kind={passages[shownPassage.index].kind}
           anchorEl={shownPassage.el}
-          // the passage becomes a highlight of the reader's, through the ordinary action
+          // the passage becomes a highlight of the reader's, through the ordinary action, in the colour chosen (H1):
+          // a highlight made, never the highlighter's rules (A4), which would take away one already there
           onMakeOwn={() => {
             const p = passages[shownPassage.index];
-            handlePopupHighlight(plain.slice(p.start, p.end), 'yellow', p.start);
+            const words = plain.slice(p.start, p.end);
+            if (decisionHighlights.some((h) => h.startOffset === p.start && h.text.toLowerCase() === words.toLowerCase())) {
+              showToast('Questa occorrenza è già evidenziata', 'info');
+              return;
+            }
+            // No notification, as every highlight made (A4): Ctrl+Z (⌘Z) takes it back.
+            addHighlight(key, NO_ARTICLE, words, '', highlightColor, p.start);
           }}
           onHideAll={hideKeyPassages}
           onClose={() => setOpenPassage(null)}
@@ -344,11 +401,10 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
       )}
       <NotesPeekPanel
         isOpen={isNotesOpen}
-        anchorEl={notesButtonEl}
         annotations={decisionNotes}
         articleLabel={label}
         noteAnchor={noteAnchor}
-        onClose={() => setIsNotesOpen(false)}
+        onClose={() => setSpace((s) => (s === 'notes' ? null : s))}
         onAddNote={handleAddNote}
         onUpdateNote={updateAnnotation}
         onRemoveNote={removeAnnotation}
@@ -358,41 +414,60 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
       />
       <HighlightsActionsPicker
         isOpen={isHighlightsOpen}
-        anchorEl={highlightsButtonEl}
         highlightsCount={decisionHighlights.length}
         highlightsHidden={highlightsHidden}
-        onClose={() => setIsHighlightsOpen(false)}
+        onClose={() => setSpace((s) => (s === 'highlights' ? null : s))}
         onToggleVisibility={() => setHighlightsHidden((v) => !v)}
         onExportTxt={exportHighlights}
       />
-      {inlineNote && (
-        <InlineNotePopover
-          note={inlineNote.note}
-          anchorEl={inlineNote.anchorEl}
-          onClose={closeInlineNote}
-          onUpdate={updateAnnotation}
-          onRemove={removeAnnotation}
-        />
-      )}
-      {composerRect && noteAnchor && (
-        <InlineNoteComposer
-          anchorRect={composerRect}
-          anchorText={noteAnchor.anchorText}
-          onSave={commitComposer}
-          onClose={closeComposer}
-        />
-      )}
-      <ArticleBody
-        contentRef={contentRef}
+      <AnnotationMargin
+        ref={marginRef}
+        plain={plain}
         textRootRef={textRootRef}
-        itemKey={key}
-        processedContent={html}
-        className="vlx-art vlx-decision"
-        onPopupHighlight={handlePopupHighlight}
-        onPopupAddNote={handlePopupAddNote}
-        onPopupCopy={copySelection}
-        onPopupDiscuss={discussion.popupDiscuss}
-      />
+        contentKey={html}
+        notes={decisionNotes}
+        onUpdateNote={updateAnnotation}
+        onRemoveNote={removeAnnotation}
+        // A note being written (A4 §6): beside the text where it has room, else in a sheet from the bottom.
+        draft={composerRect && noteAnchor ? { text: noteAnchor.anchorText, startOffset: noteAnchor.startOffset } : null}
+        onSaveDraft={commitComposer}
+        onCancelDraft={closeComposer}
+        threads={locatedThreads}
+        onOpenThread={discussion.openThread}
+        textHash={textHash}
+        glosses={glosses}
+        glossActions={proposalActions}
+        shownGlossId={shownGlossId}
+        onShowGlossPassage={showGlossPassage}
+        onWideChange={setMarginShown}
+      >
+        <ArticleBody
+          contentRef={contentRef}
+          textRootRef={textRootRef}
+          itemKey={key}
+          processedContent={html}
+          className="vlx-art vlx-decision"
+          onPopupHighlight={handlePopupHighlight}
+          // A note being written keeps its words: a new selection refocuses it (the note tool takes every one).
+          onPopupAddNote={(text, startOffset, rect) => { if (!marginRef.current?.keepDraft()) handlePopupAddNote(text, startOffset, rect); }}
+          onPopupCopy={copySelection}
+          onPopupDiscuss={discussion.popupDiscuss}
+          selectionPopup={!moving}
+        />
+      </AnnotationMargin>
+      {moving && (
+        <MoveProposalBar
+          key={moving.id}
+          textRootRef={textRootRef}
+          proposalId={moving.id}
+          startOffset={moving.startOffset}
+          text={moving.text}
+          onSave={saveMove}
+          onCancel={cancelMove}
+          label={isGloss(moving) ? GLOSS_WORDS.moveTitle : undefined}
+          focusAfter={isGloss(moving) ? () => marginRef.current?.focus([`gloss:${moving.id}`]) ?? false : undefined}
+        />
+      )}
       {!discussion.open && (
         <PassageThreadsStatus error={discussion.error} loading={discussion.loading} onRetry={discussion.reload} />
       )}
@@ -403,22 +478,24 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
         onRemoveHighlight={removeHighlight}
         onRemoveAnnotation={removeAnnotation}
       />
-      {openBlock !== null && hasAnnotations(openGroup) && (
-        <BlockAnnotationsPopover
-          key={openBlock}
-          containerRef={contentRef}
-          blockIndex={openBlock}
-          blockLabel={describeBlock(plain, structure.blocks[openBlock])}
-          group={openGroup}
-          contentKey={html}
-          textHash={textHash}
-          onOpenThread={discussion.openThread}
-          onClose={closeBlock}
-          onUpdateNote={updateAnnotation}
-          onRemoveNote={removeAnnotation}
-          onRemoveHighlight={removeHighlight}
-        />
-      )}
+      {proposalActions && <LostProposalsList proposals={lostProposals} actions={proposalActions} />}
+      {proposalActions && <LostGlossesList glosses={lostGlosses} actions={proposalActions} />}
+      <BlockAnnotationsSheet
+        containerRef={contentRef}
+        blockIndex={sheetOpen && openGroup ? openBlock : null}
+        blockLabel={(index) => describeBlock(plain, structure.blocks[index])}
+        groups={blockGroups}
+        textHash={textHash}
+        onOpenThread={discussion.openThread}
+        onClose={closeBlock}
+        onUpdateNote={updateAnnotation}
+        onRemoveNote={removeAnnotation}
+        onRemoveHighlight={removeHighlight}
+        proposalActions={proposalActions}
+        glosses={glosses}
+        shownGlossId={shownGlossId}
+        onShowGlossPassage={showGlossPassage}
+      />
       <ArticleDiscussionPanel
         anchor={discussionAnchor}
         label={label}
@@ -439,13 +516,6 @@ export function DecisionReadingSurface({ identity, testo, attributi, hostTabId, 
         article={preview.article}
         position={preview.position}
         onClose={hidePreview}
-        // In the dossier: «Apri tra le norme» for a norm it holds, else Dashboard, as the dossier's own buttons say.
-        openLabel={citedNorms && preview.citation ? (citedNorms.holds(preview.citation) ? 'Apri tra le norme' : 'Apri su Dashboard') : undefined}
-        onOpenCitation={(citation) => {
-          // the popup's own button is a jump like a click: the way back is recorded the same
-          if (origin) pushReadingBack(origin);
-          openCitation(citation);
-        }}
         onMouseEnter={() => { isHoveringPopupRef.current = true; }}
         onMouseLeave={() => {
           isHoveringPopupRef.current = false;

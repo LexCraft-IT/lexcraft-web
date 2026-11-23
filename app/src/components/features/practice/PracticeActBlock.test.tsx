@@ -6,6 +6,8 @@ import type { ArticleData, Norma } from '../../../types';
 
 const h = vi.hoisted(() => ({
   desktop: true,
+  /** The block's layout; by default the desktop's overview, or the phone's column. */
+  layout: undefined as 'phone' | 'overview' | 'index' | undefined,
   trees: [] as Array<Record<string, unknown>>,
   navs: [] as Array<Record<string, unknown>>,
   studies: [] as Array<Record<string, unknown>>,
@@ -19,17 +21,22 @@ vi.mock('../../../utils/actStructureCache', () => ({
   fetchActTree: () => Promise.resolve({ articles: [], metadata: { annexes: h.annexes } }),
   fetchActRubriche: () => Promise.resolve({ rubriche: {}, abrogati: [], parts: [] }),
 }));
-vi.mock('../search/ArticleTabContent', () => ({ ArticleTabContent: () => <div data-testid="reader" /> }));
+// The reader shows what it is given for the end of its status line (LC70), as the real one's bar does.
+vi.mock('../search/ArticleTabContent', async () => {
+  const { useContext } = await import('react');
+  const { StatusLineEnd } = await import('../search/statusLineEnd');
+  return { ArticleTabContent: () => <div data-testid="reader">{useContext(StatusLineEnd)}</div> };
+});
 vi.mock('../search/TreeViewPanel', () => ({
   TreeViewPanel: (props: Record<string, unknown>) => {
     h.trees.push(props);
-    return null;
+    return <div data-testid="structure" id={props.id as string} />;
   },
 }));
 vi.mock('../workspace/ArticleNavigation', () => ({
   ArticleNavigation: (props: Record<string, unknown>) => {
     h.navs.push(props);
-    return null;
+    return <span data-testid="article-nav" />;
   },
 }));
 vi.mock('../workspace/LazyStudyMode', () => ({
@@ -41,6 +48,7 @@ vi.mock('../workspace/LazyStudyMode', () => ({
 
 import { appStore, useAppStore } from '../../../store/useAppStore';
 import { PracticeActBlock } from './PracticeActBlock';
+import { SimpleReadingContext } from './simpleReading';
 import { registerUndoToastListener, type UndoToast } from '../../../hooks/useUndoableAction';
 import { resetNotifications } from '../../ui/notifications/notifications';
 import { articleRowKey, practiceArticleKey } from '../../../utils/practice';
@@ -50,13 +58,13 @@ const s = () => appStore.getState();
 const L24_URN: Norma = { ...L24, urn: 'urn:nir:stato:legge:2017-03-08;24' };
 const PAST = { data_versione: '2007-12-29' };
 const answer = (body: unknown) => ({ ok: true, json: () => Promise.resolve(body) });
-const lastTree = () => h.trees.at(-1) as { variant: string; isOpen: boolean; onArticleSelect: (n: string, a: string | null) => void };
+const lastTree = () => h.trees.at(-1) as { isOpen: boolean; onArticleSelect: (n: string, a: string | null) => void };
 const lastNav = () => h.navs.at(-1) as { onNavigate: (id: string) => void; onLoadArticle: (id: string) => void };
 
 function setUp(norma: Norma, articles: ArticleData[]) {
   appStore.setState({
     practices: [], activePracticeId: null, practiceRows: {}, pendingReveal: null, readingBackStack: [],
-    structureWindow: { blockId: null, position: { x: 0, y: 0 } },
+    structureWindow: { blockId: null },
   });
   return s().addArticlesToPractice(null, norma, articles);
 }
@@ -67,16 +75,19 @@ function Block({ practiceId, actId }: { practiceId: string; actId: string }) {
   return (
     <DndContext>
       <SortableContext items={[actId]}>
-        <PracticeActBlock practiceId={practiceId} act={held} onViewPdf={h.onViewPdf} onCrossReference={vi.fn()} />
+        <PracticeActBlock practiceId={practiceId} act={held} onViewPdf={h.onViewPdf} onCrossReference={vi.fn()} layout={h.layout ?? (h.desktop ? 'overview' : 'phone')} />
       </SortableContext>
     </DndContext>
   );
 }
 
 const indexLine = () => screen.getByRole('list', { name: /Articoli sul tavolo/ });
+// The act's «⋯», not an article row's (a row of the Corpus has its own «⋯» for the phone, LC59).
+const ACT_MENU = /^Azioni su (?!art\.)/;
 
 beforeEach(() => {
   h.desktop = true;
+  h.layout = undefined;
   h.trees.length = 0;
   h.navs.length = 0;
   h.studies.length = 0;
@@ -93,6 +104,15 @@ describe('PracticeActBlock: the heading (spec §3.2)', () => {
     expect(screen.getByRole('button', { name: 'Struttura della norma' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Esporta PDF della norma' }));
     expect(h.onViewPdf).toHaveBeenCalledWith(CC_RD.urn);
+  });
+
+  it("Studio, Struttura, PDF and «⋯» take the tabs' ground under the pointer (LC72)", () => {
+    const { practiceId, actId } = setUp(CC_RD, [article(CC_RD, '2043')]);
+    const { container } = render(<Block practiceId={practiceId} actId={actId} />);
+    const head = within(container.querySelector('header')!);
+    for (const name of ['Modalità studio', 'Struttura della norma', 'Esporta PDF della norma', /^Azioni su/]) {
+      expect(head.getByRole('button', { name })).toHaveClass('vlx-hover-tile');
+    }
   });
 
   describe('the heading\'s height, for a reading toolbar to pin under it', () => {
@@ -147,6 +167,17 @@ describe('PracticeActBlock: the index on top (D3)', () => {
     act(() => s().setRowOpen(articleRowKey(practiceId, actId, practiceArticleKey(article(L24, '7'))), true));
     const chips = within(indexLine()).getAllByRole('button');
     expect(chips.map((c) => c.getAttribute('aria-current'))).toEqual([null, 'true']);
+  });
+
+  it('with three rows open only the current one is marked and drawn as such, not all three (LC70)', () => {
+    const { practiceId, actId } = setUp(L24, [article(L24, '1'), article(L24, '5'), article(L24, '7')]);
+    render(<Block practiceId={practiceId} actId={actId} />);
+    for (const n of ['1', '7', '5']) {
+      act(() => s().setRowOpen(articleRowKey(practiceId, actId, practiceArticleKey(article(L24, n))), true));
+    }
+    const chips = within(indexLine()).getAllByRole('button');
+    expect(chips.map((c) => c.getAttribute('aria-current'))).toEqual([null, 'true', null]);
+    expect(chips.map((c) => c.classList.contains('bg-slate-200/70'))).toEqual([false, true, false]);
   });
 
   it('lists every row once, with the annex and the past text marked', () => {
@@ -242,7 +273,7 @@ describe('PracticeActBlock: «⋯»', () => {
       expect(screen.queryByRole('alertdialog')).toBeNull();
       expect(s().practices[0].acts).toHaveLength(0);
       await act(async () => {});
-      expect(shown!.message).toBe('Atto tolto dalla pratica');
+      expect(shown!.message).toBe('Atto tolto dal tavolo');
       await act(async () => { await shown!.onUndo(); });
       expect(s().practices[0].acts.map((a) => a.id)).toEqual([actId]);
     } finally {
@@ -251,45 +282,12 @@ describe('PracticeActBlock: «⋯»', () => {
     }
   });
 
-  it("«Sposta in un'altra pratica» lists the other practices and moves the act", () => {
+  it("has no «Sposta in un'altra pratica» (LC60: the Ricerca is one reading bench)", () => {
     const { practiceId, actId } = setUp(L24, [article(L24, '5')]);
-    const other = s().createPractice('Responsabilità medica', { activate: false });
-    s().createPractice('Appalti', { activate: false });
+    s().createPractice('Responsabilità medica', { activate: false });
     render(<Block practiceId={practiceId} actId={actId} />);
-    fireEvent.click(screen.getByRole('button', { name: /Azioni su/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: "Sposta in un'altra pratica" }));
-    const dialog = screen.getByRole('dialog', { name: "Sposta in un'altra pratica" });
-    const choices = within(dialog).getAllByRole('button').map((b) => b.textContent).filter((t) => t !== '');
-    expect(choices).toEqual(expect.arrayContaining(['Responsabilità medica', 'Appalti', 'Nuova pratica']));
-    expect(choices).not.toContain(s().practices[0].label);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Responsabilità medica' }));
-    expect(s().practices.find((p) => p.id === practiceId)?.acts).toHaveLength(0);
-    expect(s().practices.find((p) => p.id === other)?.acts.map((a) => a.id)).toEqual([actId]);
-    expect(s().activePracticeId).toBe(practiceId);
-  });
-
-  it('«Nuova pratica» moves the act into a new practice named after it, and stays on this table', () => {
-    const { practiceId, actId } = setUp(L24, [article(L24, '5')]);
-    render(<Block practiceId={practiceId} actId={actId} />);
-    fireEvent.click(screen.getByRole('button', { name: /Azioni su/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: "Sposta in un'altra pratica" }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Nuova pratica' }));
-    expect(s().practices).toHaveLength(2);
-    expect(s().practices[1].label).toBe('l. 24/2017');
-    expect(s().practices[1].acts.map((a) => a.id)).toEqual([actId]);
-    expect(s().activePracticeId).toBe(practiceId);
-  });
-
-  it('«Nuova pratica» is one store write', () => {
-    const { practiceId, actId } = setUp(L24, [article(L24, '5')]);
-    render(<Block practiceId={practiceId} actId={actId} />);
-    fireEvent.click(screen.getByRole('button', { name: /Azioni su/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: "Sposta in un'altra pratica" }));
-    const writes = vi.fn();
-    const stop = appStore.subscribe(writes);
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Nuova pratica' }));
-    stop();
-    expect(writes).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: ACT_MENU }));
+    expect(screen.queryByRole('menuitem', { name: "Sposta in un'altra pratica" })).toBeNull();
   });
 
   it('the annex suggestion reveals an article the act already holds and fetches nothing', async () => {
@@ -308,18 +306,22 @@ describe('PracticeActBlock: «⋯»', () => {
 });
 
 describe('PracticeActBlock: the structure window and the arrows (§6.4)', () => {
-  it('on a desktop Struttura owns the window', async () => {
+  it('on a desktop Struttura opens the act\'s index', async () => {
     const { practiceId, actId } = setUp(L24_URN, [article(L24, '5')]);
     render(<Block practiceId={practiceId} actId={actId} />);
     const structure = screen.getByRole('button', { name: 'Struttura della norma' });
-    // It opens a window: expanded, not pressed (R3b).
+    // It opens a space in the card: expanded, not pressed (R3b).
     expect(structure).toHaveAttribute('aria-expanded', 'false');
     expect(structure).not.toHaveAttribute('aria-pressed');
     fireEvent.click(structure);
     expect(s().structureWindow.blockId).toBe(actId);
     expect(screen.getByRole('button', { name: 'Struttura della norma' })).toHaveAttribute('aria-expanded', 'true');
-    await waitFor(() => expect(lastTree()).toEqual(expect.objectContaining({ variant: 'window', isOpen: true })));
-    expect(h.trees.every((t) => t.variant === 'window')).toBe(true);
+    // In the card (LC77): right under its heading, before its text, and named by the command.
+    const space = screen.getByTestId('structure');
+    expect(space.previousElementSibling?.tagName).toBe('HEADER');
+    expect(space.closest('section')).toHaveAttribute('data-act-id', actId);
+    expect(screen.getByRole('button', { name: 'Struttura della norma' })).toHaveAttribute('aria-controls', space.id);
+    await waitFor(() => expect(lastTree()).toEqual(expect.objectContaining({ isOpen: true })));
   });
 
   it('on a phone width the act\'s tools are entries of «⋯», not buttons (R3)', () => {
@@ -329,20 +331,19 @@ describe('PracticeActBlock: the structure window and the arrows (§6.4)', () => 
     for (const name of ['Modalità studio', 'Struttura della norma', 'Esporta PDF della norma']) {
       expect(screen.queryByRole('button', { name })).toBeNull();
     }
-    fireEvent.click(screen.getByRole('button', { name: /^Azioni su/ }));
+    fireEvent.click(screen.getByRole('button', { name: ACT_MENU }));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-      'Modalità studio', 'Struttura della norma', 'Esporta PDF della norma', "Sposta in un'altra pratica", "Rimuovi l'atto",
+      'Modalità studio', 'Struttura della norma', 'Esporta PDF della norma', "Rimuovi l'atto",
     ]);
   });
 
-  it('on a phone width Struttura opens the drawer, not the window', async () => {
+  it('on a phone width Struttura opens the index here, not through the store', async () => {
     h.desktop = false;
     const { practiceId, actId } = setUp(L24_URN, [article(L24, '5')]);
     render(<Block practiceId={practiceId} actId={actId} />);
-    fireEvent.click(screen.getByRole('button', { name: /^Azioni su/ }));
+    fireEvent.click(screen.getByRole('button', { name: ACT_MENU }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Struttura della norma' }));
-    await waitFor(() => expect(lastTree()).toEqual(expect.objectContaining({ variant: 'drawer', isOpen: true })));
-    expect(h.trees.every((t) => t.variant === 'drawer')).toBe(true);
+    await waitFor(() => expect(lastTree()).toEqual(expect.objectContaining({ isOpen: true })));
     expect(s().structureWindow.blockId).toBeNull();
   });
 
@@ -350,13 +351,13 @@ describe('PracticeActBlock: the structure window and the arrows (§6.4)', () => 
     h.desktop = false;
     const { practiceId, actId } = setUp(L24_URN, [article(L24, '5')]);
     render(<Block practiceId={practiceId} actId={actId} />);
-    expect(lastTree()).toEqual(expect.objectContaining({ variant: 'drawer', isOpen: false }));
+    expect(lastTree()).toEqual(expect.objectContaining({ isOpen: false }));
     // the palette's «Apri l'indice e sfoglia» lands on this act (`addActIndexToPractice`)
     act(() => { s().addActIndexToPractice(practiceId, L24); });
-    await waitFor(() => expect(lastTree()).toEqual(expect.objectContaining({ variant: 'drawer', isOpen: true })));
+    await waitFor(() => expect(lastTree()).toEqual(expect.objectContaining({ isOpen: true })));
     act(() => { (lastTree() as unknown as { onClose: () => void }).onClose(); });
     expect(s().structureWindow.blockId).toBeNull();
-    expect(lastTree()).toEqual(expect.objectContaining({ variant: 'drawer', isOpen: false }));
+    expect(lastTree()).toEqual(expect.objectContaining({ isOpen: false }));
   });
 
   it('a pick from the index of an article not on the table loads it into this act and reveals it', async () => {
@@ -390,5 +391,129 @@ describe('PracticeActBlock: the structure window and the arrows (§6.4)', () => 
     expect(h.legalFetch).not.toHaveBeenCalled();
     act(() => { lastNav().onNavigate('5'); });
     expect(s().pendingReveal?.rowKey).toBe(articleRowKey(practiceId, actId, practiceArticleKey(article(L24, '5'))));
+  });
+});
+
+describe('PracticeActBlock: the two views (U2)', () => {
+  it('in the overview it is a panel, its tools beside its title, not at the far end of the row', () => {
+    const { practiceId, actId } = setUp(L24_URN, [article(L24, '5')]);
+    const { container } = render(<Block practiceId={practiceId} actId={actId} />);
+    const section = container.querySelector('section') as HTMLElement;
+    expect(section).toHaveAttribute('data-layout', 'overview');
+    expect(section).toHaveClass('rounded-[8px]', 'border');
+    // The title gives way, the tools follow it: no `ml-auto` pushing them to the edge.
+    const studio = screen.getByRole('button', { name: 'Modalità studio' });
+    const tools = studio.parentElement?.parentElement as HTMLElement;
+    expect(tools).not.toHaveClass('ml-auto');
+    expect(screen.getByRole('heading', { name: /legge|l\. 8 marzo/i }).parentElement).toHaveClass('md:flex-initial');
+    expect(container.querySelector('header')).toHaveClass('md:sticky');
+  });
+
+  it('in the index its tools are entries of «⋯», its heading pins nothing, its articles are entries', () => {
+    h.layout = 'index';
+    const { practiceId, actId } = setUp(L24_URN, [article(L24, '5'), article(L24, '7')]);
+    const { container } = render(<Block practiceId={practiceId} actId={actId} />);
+    for (const name of ['Modalità studio', 'Struttura della norma', 'Esporta PDF della norma']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    expect(container.querySelector('header')).not.toHaveClass('md:sticky');
+    expect(container.querySelector('section')).not.toHaveClass('border');
+    expect(container.querySelector('section')?.style.getPropertyValue('--practice-head')).toBe('0px');
+    // No row, no reader, no chips: one entry per article.
+    expect(container.querySelector('[data-practice-row]')).toBeNull();
+    const entries = within(screen.getByRole('list', { name: /Articoli sul tavolo/ })).getAllByRole('button', { name: /^Apri accanto: / });
+    expect(entries.map((e) => e.textContent)).toEqual([expect.stringContaining('art. 5'), expect.stringContaining('art. 7')]);
+    fireEvent.click(screen.getByRole('button', { name: /^Azioni su/ }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Modalità studio', 'Struttura della norma', 'Esporta PDF della norma', "Rimuovi l'atto",
+    ]);
+  });
+
+  it('an entry of the index opens its article beside with the focus; its ✕ takes it off the table', () => {
+    h.layout = 'index';
+    const { practiceId, actId } = setUp(L24_URN, [article(L24, '5'), article(L24, '7')]);
+    render(<Block practiceId={practiceId} actId={actId} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Apri accanto: art\. 7/ }));
+    const key = practiceArticleKey(article(L24, '7'));
+    expect(s().practices[0].beside.map((b) => b.id)).toEqual([`article:${actId}:${key}`]);
+    expect(s().windowFocusRequest).toBe(`article:${actId}:${key}`);
+    expect(screen.getByRole('button', { name: /^Vai alla finestra: art\. 7/ })).toHaveAccessibleName(/aperto accanto$/);
+    fireEvent.click(screen.getByRole('button', { name: /^Togli dal tavolo .*5/ }));
+    expect(s().practices[0].acts[0].articles.map((a) => a.norma_data.numero_articolo)).toEqual(['7']);
+  });
+
+  it('the panel and the index\'s entry are one piece of the passage (L-62), by the act\'s id; the phone\'s section none', () => {
+    const { practiceId, actId } = setUp(L24_URN, [article(L24, '5')]);
+    const { container, unmount } = render(<Block practiceId={practiceId} actId={actId} />);
+    const name = `vlx-practice-act-${actId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    expect(container.querySelector('section')).toHaveClass('vlx-vt');
+    expect(container.querySelector('section')?.style.getPropertyValue('--vlx-vt')).toBe(name);
+    unmount();
+    h.layout = 'index';
+    const index = render(<Block practiceId={practiceId} actId={actId} />);
+    expect(index.container.querySelector('section')?.style.getPropertyValue('--vlx-vt')).toBe(name);
+    index.unmount();
+    h.layout = 'phone';
+    const phone = render(<Block practiceId={practiceId} actId={actId} />);
+    expect(phone.container.querySelector('section')).not.toHaveClass('vlx-vt');
+    expect(phone.container.querySelector('section')?.style.getPropertyValue('--vlx-vt')).toBe('');
+  });
+
+  it('an act of the index with no article offers the structure', () => {
+    h.layout = 'index';
+    const { practiceId, actId } = setUp(L24_URN, []);
+    render(<Block practiceId={practiceId} actId={actId} />);
+    expect(screen.queryByRole('list', { name: /Articoli sul tavolo/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Scegli un articolo dalla struttura' }));
+    expect(s().structureWindow.blockId).toBe(actId);
+  });
+});
+
+describe('PracticeActBlock: one act of two articles reads as one of one (LC70)', () => {
+  it('the selector, one head per article, the first too; no grip and no fold on the act', () => {
+    const { practiceId, actId } = setUp(L24_URN, [article(L24_URN, '5'), article(L24_URN, '7')]);
+    const { container } = render(<Block practiceId={practiceId} actId={actId} />);
+    expect(h.navs.length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: /^(Espandi|Comprimi) art\. / })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /^Sposta / })).toHaveClass('hidden');
+    expect(screen.getByRole('button', { name: /^Sposta / })).not.toHaveClass('md:block');
+    expect(container.querySelector('header .lucide-chevron-down')).toBeNull();
+  });
+});
+
+describe('PracticeActBlock: where the selector stands (LC70, Luca)', () => {
+  it('one article: on its status line, not on a line of its own; no rule under the act\'s heading', () => {
+    const { practiceId, actId } = setUp(L24_URN, [article(L24_URN, '5')]);
+    const { container } = render(
+      <SimpleReadingContext.Provider value={{ simple: true, practiceItems: [] }}>
+        <Block practiceId={practiceId} actId={actId} />
+      </SimpleReadingContext.Provider>,
+    );
+    return waitFor(() => {
+      expect(within(screen.getByTestId('reader')).getByTestId('article-nav')).toBeInTheDocument();
+      expect(screen.getAllByTestId('article-nav')).toHaveLength(1);
+      expect(container.querySelector('header')).not.toHaveClass('border-b');
+    });
+  });
+
+  it('more articles, on a computer: at the right of the act\'s heading, once; the status stays with each article', () => {
+    const { practiceId, actId } = setUp(L24_URN, [article(L24_URN, '5'), article(L24_URN, '7')]);
+    const { container } = render(<Block practiceId={practiceId} actId={actId} />);
+    const header = container.querySelector('header')!;
+    expect(within(header).getByTestId('article-nav')).toBeInTheDocument();
+    expect(screen.getAllByTestId('article-nav')).toHaveLength(1);
+    expect(header).toHaveClass('border-b');
+  });
+
+  it('more articles, on a phone: first in the index\'s line, not in the heading', () => {
+    h.desktop = false;
+    try {
+      const { practiceId, actId } = setUp(L24_URN, [article(L24_URN, '5'), article(L24_URN, '7')]);
+      const { container } = render(<Block practiceId={practiceId} actId={actId} />);
+      expect(within(container.querySelector('header')!).queryByTestId('article-nav')).toBeNull();
+      expect(screen.getAllByTestId('article-nav')).toHaveLength(1);
+    } finally {
+      h.desktop = true;
+    }
   });
 });

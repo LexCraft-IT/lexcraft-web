@@ -3,14 +3,11 @@ import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../Sidebar', () => ({ Sidebar: () => null }));
-vi.mock('../../ui/SettingsModal', () => ({ SettingsModal: () => null }));
-vi.mock('../../ui/FeedbackButton', () => ({ FeedbackButton: () => null }));
 vi.mock('../../ui/ChangelogNotification', () => ({ ChangelogNotification: () => null }));
 vi.mock('../../ui/Toast', () => ({ NotificationHost: () => null }));
 // The planner's host reads the tasks from the server: not under test here.
 vi.mock('../../features/planner/PlannerHost', () => ({ PlannerHost: () => null }));
 vi.mock('../../ui/SyncErrorToast', () => ({ SyncErrorToast: () => null }));
-vi.mock('../../ui/KeyboardShortcutsModal', () => ({ KeyboardShortcutsModal: () => null }));
 vi.mock('../../../hooks/useServiceHealth', () => ({ useServiceHealth: () => ({ snapshot: { overall: 'online', services: [], checkedAt: '' }, refresh: vi.fn() }) }));
 vi.mock('../../features/compare/CompareView', () => ({ CompareView: () => null }));
 vi.mock('../../../plugins/PluginSlot', () => ({ PluginSlot: () => null }));
@@ -21,9 +18,11 @@ vi.mock('../../../hooks/useTour', () => ({
 
 import { Layout } from '../Layout';
 import { closeFindWindow } from '../../../utils/findWindowControl';
+import { appStore } from '../../../store/useAppStore';
 
 afterEach(() => {
   act(() => closeFindWindow());
+  appStore.setState((s) => ({ settings: { ...s.settings, focusMode: false } }));
 });
 
 // The find window, by its name: the search page also draws its own search field.
@@ -40,6 +39,24 @@ describe('Layout — Cmd/Ctrl+F', () => {
     act(() => closeFindWindow());
     press({ ctrlKey: true });
     expect(screen.getByRole('search', FIND)).toBeInTheDocument();
+  });
+
+  it('is not the full screen\'s key, which takes Shift too', () => {
+    render(<MemoryRouter><Layout /></MemoryRouter>);
+    press({ metaKey: true });
+    expect(screen.getByRole('search', FIND)).toBeInTheDocument();
+    expect(appStore.getState().settings.focusMode).toBe(false);
+  });
+
+  it('with Shift, on the search page, toggles the full screen and opens no find window', () => {
+    render(<MemoryRouter><Layout /></MemoryRouter>);
+    const event = new KeyboardEvent('keydown', { key: 'F', metaKey: true, shiftKey: true, cancelable: true, bubbles: true });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(appStore.getState().settings.focusMode).toBe(true);
+    expect(screen.queryByRole('search', FIND)).not.toBeInTheDocument();
   });
 
   it('keeps the browser\'s own find away', () => {
@@ -76,7 +93,7 @@ describe('Layout — Cmd/Ctrl+F', () => {
     overlay.remove();
   });
 
-  it.each(['/dossier', '/forum', '/history', '/grafo'])('leaves the browser\'s own find alone on %s', (path) => {
+  it.each(['/pratiche', '/forum', '/history', '/labs/grafo'])('leaves the browser\'s own find alone on %s', (path) => {
     render(<MemoryRouter initialEntries={[path]}><Layout /></MemoryRouter>);
     const event = new KeyboardEvent('keydown', { key: 'f', metaKey: true, cancelable: true, bubbles: true });
     act(() => {
@@ -91,15 +108,15 @@ describe('Layout — Cmd/Ctrl+F', () => {
       <MemoryRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<Link to="/dossier">Dossier</Link>} />
-            <Route path="dossier" element={<p>I miei dossier</p>} />
+            <Route index element={<Link to="/pratiche">Pratiche</Link>} />
+            <Route path="pratiche" element={<p>I miei dossier</p>} />
           </Route>
         </Routes>
       </MemoryRouter>,
     );
     press({ metaKey: true });
     expect(screen.getByRole('search', FIND)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: 'Dossier' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Pratiche' }));
     expect(screen.getByText('I miei dossier')).toBeInTheDocument();
     expect(screen.queryByRole('search', FIND)).not.toBeInTheDocument();
   });

@@ -6,6 +6,8 @@ import type {
   ArticleDiscussionPassageSummary,
   ThreadPassage,
 } from '../types';
+import type { CommunityFeedResponse, CommunityThread } from '../types/community';
+import type { Materia } from '../types/studia';
 
 /**
  * What a discussion hangs on, given by the caller. An article: its norm key, its
@@ -50,7 +52,7 @@ export const articleDiscussionService = {
     anchor: DiscussionAnchor,
     title: string,
     body: string,
-    extras: { passage?: ThreadPassage; articleUrn?: string; textHash?: string } = {}
+    extras: { passage?: ThreadPassage; articleUrn?: string; textHash?: string; materia?: Materia } = {}
   ): Promise<ArticleDiscussionThread> {
     passagesInFlight.delete(passagesKey(anchor));
     const response = await apiClient.post('/article-discussions', { ...anchor, title, body, ...extras });
@@ -70,6 +72,42 @@ export const articleDiscussionService = {
   },
   async report(threadId: string, reason: string, details?: string): Promise<void> {
     await apiClient.post(`/article-discussions/${threadId}/report`, { reason, details });
+  },
+  /** The Community's feed of every discussion, by last activity; `materia` filters on the server. */
+  async feed(params: { materia?: Materia; page?: number } = {}): Promise<CommunityFeedResponse> {
+    const response = await apiClient.get('/article-discussions/feed', { params });
+    return response.data;
+  },
+  /** One discussion with its replies, the accepted one first, and their comments. */
+  async get(threadId: string): Promise<CommunityThread> {
+    const response = await apiClient.get(`/article-discussions/${encodeURIComponent(threadId)}`);
+    return response.data;
+  },
+  /** The discussion's author marks the reply that settled it; `null` withdraws the mark. */
+  async accept(threadId: string, commentId: string | null): Promise<{ acceptedCommentId: string | null }> {
+    const response = await apiClient.post(`/article-discussions/${threadId}/accept`, { commentId });
+    return response.data;
+  },
+  /** The author edits a discussion's title and text (never its anchor). */
+  async editThread(threadId: string, edit: { title?: string; body?: string }): Promise<void> {
+    await apiClient.patch(`/article-discussions/${threadId}`, edit);
+  },
+  /** The author deletes a discussion: `deleted` when nothing of anyone else hangs on it, else `emptied` (its place stays). */
+  async deleteThread(threadId: string): Promise<{ outcome: 'deleted' | 'emptied' }> {
+    const response = await apiClient.delete(`/article-discussions/${threadId}`);
+    return response.data;
+  },
+  /** The author edits a reply or a comment. */
+  async editComment(commentId: string, body: string): Promise<void> {
+    await apiClient.patch(`/article-discussion-comments/${commentId}`, { body });
+  },
+  /** The author deletes a reply or a comment: `deleted`, or `emptied` when others' comments hang on it. */
+  async deleteComment(commentId: string): Promise<{ outcome: 'deleted' | 'emptied' }> {
+    const response = await apiClient.delete(`/article-discussion-comments/${commentId}`);
+    return response.data;
+  },
+  async reportComment(commentId: string, reason: string, details?: string): Promise<void> {
+    await apiClient.post(`/article-discussion-comments/${commentId}/report`, { reason, details });
   },
   /** Admin only: release (or withdraw again) a decision thread's withdrawn quotation. */
   async setPassageReleased(threadId: string, passageReleased: boolean): Promise<{ passageReleased: boolean }> {

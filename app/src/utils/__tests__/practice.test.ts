@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import type { ArticleData, Norma, NormaVisitata } from '../../types';
 import { buildItemKey, uniqueArticleIdFromNorma } from '../normaKeys';
 import {
-  addArticles, articleWindowId, besideAfterOpen, besideRefFor, decisionOrder, decisionWindowId, findPracticeArticle,
+  searchTableLabel,
+  addArticles, articleRowKey, articleWindowId, besideAfterOpen, besideRefFor, besideRefOfRow, decisionOrder, decisionRowKey, decisionWindowId, findPracticeArticle,
   holdsSubject, mergeDecisionEntries, practiceArticleKey, practiceCountLine, practiceCounts, sameBesideSubject, sameDecision, sameEntry,
   subjectOfRef,
   type BesideRef, type Practice, type PracticeDecision,
@@ -191,6 +192,13 @@ describe('the subjects of the windows and of the way back', () => {
     expect(holdsSubject(practice, { kind: 'decision', decisionId: 'dec' })).toBe(true);
     expect(holdsSubject(practice, { kind: 'decision', decisionId: 'gone' })).toBe(false);
   });
+
+  it('the window that shows a revealed row (U2: the reading view opens it beside); none for a row the practice lacks', () => {
+    expect(besideRefOfRow(practice, articleRowKey('p', 'act', key))).toEqual(besideRefFor({ kind: 'article', actId: 'act', articleKey: key }));
+    expect(besideRefOfRow(practice, decisionRowKey('p', 'dec'))).toEqual(besideRefFor({ kind: 'decision', decisionId: 'dec' }));
+    expect(besideRefOfRow(practice, articleRowKey('other', 'act', key))).toBeNull();
+    expect(besideRefOfRow(practice, decisionRowKey('p', 'gone'))).toBeNull();
+  });
 });
 
 describe('mergeDecisionEntries', () => {
@@ -236,5 +244,20 @@ describe('practiceCountLine', () => {
       decisions: [{ id: 'd', reference: { corte: 'corte_costituzionale', numero: 71, anno: 2020 }, label: 'Corte cost., n. 71/2020', identified: false }],
     };
     expect(practiceCounts(p)).toEqual({ acts: 2, articles: 3, decisions: 1 });
+  });
+});
+
+describe('searchTableLabel (LC68: a new Ricerca table is named after the day, not the act)', () => {
+  const today = new Date(2026, 10, 17);
+  it('names the day and the month in words, with no year in the current one', () => {
+    expect(searchTableLabel(new Date(2026, 10, 17), today)).toBe('Ricerca del 17 novembre');
+  });
+  it('adds the year when it is not the current one', () => {
+    expect(searchTableLabel(new Date(2025, 11, 31), today)).toBe('Ricerca del 31 dicembre 2025');
+  });
+  it('writes the article as Italian does: «dell\'8», «dell\'11», «del 1º»', () => {
+    expect(searchTableLabel(new Date(2026, 2, 8), today)).toBe("Ricerca dell'8 marzo");
+    expect(searchTableLabel(new Date(2026, 1, 11), today)).toBe("Ricerca dell'11 febbraio");
+    expect(searchTableLabel(new Date(2026, 4, 1), today)).toBe('Ricerca del 1º maggio');
   });
 });

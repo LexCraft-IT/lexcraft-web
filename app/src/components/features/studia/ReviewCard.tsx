@@ -14,14 +14,14 @@ export interface ReviewCardProps {
   onOpenAnchor: (anchor: AncoraScheda) => void;
 }
 
-const MEASURE = 'max-w-[60ch]';
+const MEASURE = 'max-w-measure';
 const TEXT = 'whitespace-pre-line break-words text-left font-serif leading-[1.7]';
 
 /**
  * A card in the lesson (Gymnasium spec §5.4, over the Studia screens spec §6 as rewritten for G2): a sheet of
  * paper on the page — the area's tile, no shadow or gradient — that comes in with each card (opacity and a few
  * pixels, 180 ms, `motion-safe:` only; the session keys it by step). The article as a small source line in the
- * interface's sans above, the question in the reader's serif one step above the answer, at a 60ch measure.
+ * interface's sans above, the question in the reader's serif one step above the answer, at the reading measure (U1).
  * Showing the answer is the card's own motion: a hairline draws across, then the answer unfolds beneath it
  * (`motion-safe:` only). Under it the explanation and the articles, each a 44 px button that opens the article
  * beside the card (in a sheet on a phone). Question, answer and explanation are plain text, left to React as
@@ -46,10 +46,10 @@ export function ReviewCard({ card, revealed, focusKey, onOpenAnchor }: ReviewCar
   return (
     <article
       aria-label="Scheda in ripasso"
-      className={cn(TILE, 'p-5 md:px-10 md:py-9', 'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2')}
+      className={cn(TILE, 'p-6 md:px-12 md:py-12', 'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2')}
     >
       {citation && <p className="mb-3 break-words text-sm font-medium text-slate-500 dark:text-slate-400">{citation}</p>}
-      <h2 ref={question} tabIndex={-1} className={cn(MEASURE, TEXT, 'text-xl text-slate-900 focus:outline-none md:text-2xl dark:text-slate-50')}>{card.domanda}</h2>
+      <h2 ref={question} tabIndex={-1} className={cn(MEASURE, TEXT, 'text-2xl leading-snug text-slate-900 focus:outline-none md:text-[30px] dark:text-slate-50')}>{card.domanda}</h2>
       {revealed && (
         <>
           <hr className={cn(MEASURE, 'my-5 origin-left border-slate-200 motion-safe:animate-vlx-rule dark:border-slate-700')} />
@@ -66,12 +66,13 @@ export function ReviewCard({ card, revealed, focusKey, onOpenAnchor }: ReviewCar
                 <ul className="flex flex-wrap gap-2">
                   {anchors.map((anchor) => (
                     <li key={`${anchor.normaKey}|${anchor.articleId}`} className="min-w-0 max-w-full">
+                      {/* bare-button: a chip of the card's article, its words wrapping inside it. */}
                       <button
                         type="button"
                         onClick={() => onOpenAnchor(anchor)}
                         title="Apri l’articolo"
                         className={cn(
-                          'inline-flex min-h-[44px] max-w-full items-center gap-2 rounded-lg border border-slate-200 px-3 text-left text-sm font-medium text-slate-700 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-900',
+                          'inline-flex min-h-[44px] max-w-full items-center gap-2 rounded-md border border-slate-200 px-3 text-left text-sm font-medium text-slate-700 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-900',
                           'dark:border-slate-700 dark:text-slate-200 dark:hover:border-primary-700 dark:hover:bg-primary-900/30 dark:hover:text-primary-200',
                           FOCUS_RING,
                         )}

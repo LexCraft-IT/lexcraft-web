@@ -1,9 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Z_INDEX } from '../../../constants/zIndex';
-import { ease } from '../../../lib/motion';
+import { dur, ease } from '../../../lib/motion';
 import { cn } from '../../../lib/utils';
-import type { Box } from './wirePath';
+import { CONTROL_RADIUS } from '../controlStyles';
+/** A rectangle on screen: where the button was. */
+export interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
 
 /** How long the button says the outcome, in milliseconds; a caller that removes the button waits this long. */
 export const OUTCOME_MS = 1600;
@@ -37,7 +44,7 @@ export function OutcomeTick({ label, box, still, onDone }: OutcomeTickProps) {
     <motion.div
       aria-hidden
       className={cn(
-        'pointer-events-none fixed flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 bg-white px-2 text-sm font-medium text-emerald-800 shadow-sm',
+        'pointer-events-none fixed flex items-center justify-center gap-1.5 whitespace-nowrap border border-emerald-200 bg-white px-2 text-sm font-medium text-emerald-800 shadow-sm', CONTROL_RADIUS,
         'dark:border-emerald-900/60 dark:bg-ink-900 dark:text-emerald-300',
         Z_INDEX.modal,
       )}
@@ -54,7 +61,7 @@ export function OutcomeTick({ label, box, still, onDone }: OutcomeTickProps) {
           strokeLinecap="round"
           strokeLinejoin="round"
           initial={{ pathLength: still ? 1 : 0 }}
-          animate={{ pathLength: 1, transition: { duration: 0.22, delay: 0.08, ease: ease.out } }}
+          animate={{ pathLength: 1, transition: { duration: dur.panel, delay: 0.08, ease: ease.out } }}
         />
       </svg>
       {label}

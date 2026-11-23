@@ -27,12 +27,13 @@ describe('VersionBanner — a past text', () => {
         expect(screen.getByText('Note ed evidenziazioni non sono mostrate su un testo storico.')).toBeInTheDocument();
     });
 
-    it('offers the way back to the text in force and the citation', () => {
+    it('offers the way back to the text in force, the citation and the version’s link', () => {
         const onAction = vi.fn();
         render(<VersionBanner banner={bannerOf(MIDDLE)} onAction={onAction} />);
         fireEvent.click(screen.getByRole('button', { name: 'Vai al testo attuale' }));
         fireEvent.click(screen.getByRole('button', { name: 'Copia citazione' }));
-        expect(onAction.mock.calls).toEqual([['go_current'], ['copy_citation']]);
+        fireEvent.click(screen.getByRole('button', { name: 'Copia link Normattiva' }));
+        expect(onAction.mock.calls).toEqual([['go_current'], ['copy_citation'], ['copy_link']]);
     });
 
     it('only informs when nothing handles the actions (the dossier reader)', () => {
@@ -46,9 +47,10 @@ describe('VersionBanner — an article that did not exist yet', () => {
         const onAction = vi.fn();
         render(<VersionBanner banner={bannerOf(NOT_YET, '2010-01-01')} onAction={onAction} variant="state" />);
         expect(screen.getByText('Questo articolo non esisteva al 1° gennaio 2010. È in vigore dal 13 settembre 2014.')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Vai al testo attuale' }));
         fireEvent.click(screen.getByRole('button', { name: 'Vai al testo del 13 settembre 2014' }));
         fireEvent.click(screen.getByRole('button', { name: 'Scegli un’altra data' }));
-        expect(onAction.mock.calls).toEqual([['open_next_day'], ['pick_date']]);
+        expect(onAction.mock.calls).toEqual([['go_current'], ['open_next_day'], ['pick_date']]);
     });
 });
 

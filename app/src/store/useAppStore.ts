@@ -4,7 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuidv4 } from 'uuid';
 import { resetNotifications } from '../components/ui/notifications/notifications';
-import type { AppSettings, Bookmark, Dossier, DossierItem, DossierKind, DossierNormaData, DossierSentenzaData, Annotation, Highlight, Norma, NormaVisitata, ArticleData, SearchParams, QuickNorm, CustomAlias, Environment } from '../types';
+import type { AppSettings, SettingsSection, Bookmark, Dossier, DossierItem, DossierKind, DossierNormaData, DossierSentenzaData, Annotation, Highlight, Norma, NormaVisitata, ArticleData, SearchParams, QuickNorm, CustomAlias, Environment } from '../types';
 import { getErrorMessage } from '../utils/errors';
 import {
     appendBackEntry,
@@ -19,17 +19,18 @@ import { decisionPath, formatDecisionShort, identityOf } from '../utils/decision
 import {
     addArticles, articleRowKey, besideAfterOpen, besideRefFor, DEFAULT_PRACTICE_LABEL, DEFAULT_SEARCH_LABEL, decisionRowKey,
     findPracticeArticle, holdsSubject, labelOr, MAX_BESIDE, mergeDecisionEntries, practiceArticleKey,
-    practiceLabel, sameBesideSubject, sameDecision, sanitizePractices, subjectOfRef, type BesideRef, type Practice,
+    corpusPractices, isBoundPractice,
+    practiceLabel, sameBesideSubject, searchTableLabel, sameDecision, sanitizePractices, subjectOfRef, type BesideRef, type Practice,
     type PracticeAct, type PracticeDecision, type PracticeSubject,
 } from '../utils/practice';
-import { shortAct } from '../utils/sources';
-import { DECISIONS_PRACTICE_LABEL, practiceNoticeText, practicesFromTabs } from '../utils/practiceMigration';
+import { practiceNoticeText, practicesFromTabs } from '../utils/practiceMigration';
 import { guardedStorage, type StorageFailure } from '../utils/guardedStorage';
 import { isDesktopViewport } from '../hooks/useIsDesktop';
+import { highlightColorName, isHighlightColor, sanitizeHighlightMeanings } from '../utils/highlightColors';
 
 // Services for API sync
 import { bookmarkService } from '../services/bookmarkService';
-import { dossierService, type DossierItemApi } from '../services/dossierService';
+import { dossierService } from '../services/dossierService';
 import { annotationService } from '../services/annotationService';
 import { highlightService } from '../services/highlightService';
 import { environmentService, type EnvironmentApi } from '../services/environmentService';
@@ -46,6 +47,12 @@ import {
     highlightStoreToCreate,
 } from '../utils/storeApiMappers';
 import { serverFieldsFromApi, dossierFromApi, dossierItemFromApi, itemContentFor, serverItemFor } from '../components/features/dossier/dossierUtils';
+import { shiftAiReviewCount } from '../utils/aiReview';
+import { afterSaving, forgetRemovals, holdGesture, isRemovalPending, removeAtOnce, removeWithUndo, savingDone, savingStarted } from './deferredRemovals';
+import { isTextShown } from './textsOnScreen';
+import type { Ink } from '../utils/highlighterRules';
+import type { NoteKind } from '../utils/inkTargets';
+import type { HighlightCreate, HighlightUpdate } from '../types/api';
 
 // ── Environment wire ↔ store converters ───────────────────────────────
 // The server stores the per-slice content (dossiers / quickNorms / aliases /
@@ -111,6 +118,18 @@ function upsertById<T extends { id: string }>(list: T[], entity: T): void {
     else list.push(entity);
 }
 
+/**
+ * Notes the server refused as too long (400 «too_long», a field over its length): kept on screen under their
+ * temporary id, so what was written is not lost; an edit sends them again as new notes (`updateAnnotation`).
+ */
+const unsavedAnnotations = new Set<string>();
+
+/** The server's words for a field over its length (`{ error: 'too_long', detail }`), or null for any other failure. */
+function tooLongDetail(err: unknown): string | null {
+    const data = (err as { data?: { error?: string; detail?: string } } | null)?.data;
+    return data?.error === 'too_long' ? data.detail ?? 'La nota è troppo lunga.' : null;
+}
+
 interface SearchPanelState {
     isCollapsed: boolean;
     position: { x: number; y: number };
@@ -123,8 +142,33 @@ export interface StructureWindowState {
      * it would open a window owned by nothing.
      */
     blockId: string | null;
-    /** Where the user parked it. Persisted: that is the point of a movable window. */
-    position: { x: number; y: number };
+}
+
+/** The reading tools (A4): the highlighter, and the note tool (§6). */
+export type ReadingTool = 'highlight' | 'note';
+
+/** What the note tool writes: a personal note, or a gloss (a discussion with colleagues). */
+export type NoteToolKind = NoteKind;
+
+/** One gesture of the highlighter over existing highlights (A4), as `useHighlightInk` turns a plan into it. */
+export interface HighlightEdit {
+    normaKey: string;
+    articleId: string;
+    /** Highlights taken away, held until the next gesture (`holdGesture`). */
+    remove: string[];
+    recolor: { id: string; color: Highlight['color'] }[];
+    /**
+     * Highlights with an author (from the Forum) that keep their row with other words, and maybe another colour:
+     * `PUT` of the range (#411), so the row and its first author stay.
+     */
+    reshape?: { id: string; text: string; startOffset: number; color: Highlight['color'] }[];
+    /**
+     * New highlights: the parts a cut leaves (`from` the highlight cut), a piece recoloured. A part of a highlight with
+     * an author is made from it (`splitFrom`, #412) and keeps the author.
+     */
+    add: { text: string; startOffset: number; color: Highlight['color']; from?: string }[];
+    /** What the gesture did: said to a screen reader (no notification, A4), and «Annullato: …» once undone. */
+    message: string;
 }
 
 /** What an import made of a dossier: the new dossier's id, and how many items the server took or refused. */
@@ -132,7 +176,64 @@ export interface ImportOutcome {
     id: string;
     imported: number;
     failed: number;
+    /** The server's own words for a cap it hit (409, G-576), each once: «Una pratica può contenere al massimo …». */
+    refusals?: string[];
+    /** Stopped before the end: the first item not sent, for `resume`. */
+    next?: number;
+    /** Why it stopped: the server kept asking to slow down (429), or the connection or the server failed (no answer, 5xx). */
+    stopped?: 'rate' | 'network';
 }
+
+/** How an import runs: where it is said, and where a stopped one goes on (the same dossier, from `from`). */
+export interface ImportOptions {
+    onProgress?: (progress: ImportProgress) => void;
+    resume?: { id: string; from: number };
+}
+
+/**
+ * The pace of an import's writes, under the server's write limit (`WRITE_POINTS`, 200 a minute per user): one every
+ * 320 ms is about 187 a minute, a margin for the page's other writes. A 429 still met waits and tries again, at most
+ * `IMPORT_RETRIES` times for one item; then the import stops, and nothing past it is counted as refused.
+ */
+export const IMPORT_PACE_MS = 320;
+const IMPORT_RETRIES = 3;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Where an import is: the items in so far in this run, of how many in all, and whether it waits after a 429. */
+export interface ImportProgress {
+    done: number;
+    total: number;
+    waiting: boolean;
+    /** What it waits for, while `waiting`. */
+    reason?: 'rate' | 'network';
+}
+
+/** What a wait and another try may get through: the write limit (429), the server failing (5xx), no answer at all. */
+const transientFailure = (err: unknown): 'rate' | 'network' | null => {
+    const status = (err as { status?: number } | null)?.status;
+    if (status === 429) return 'rate';
+    return status === undefined || status >= 500 ? 'network' : null;
+};
+
+/** After a 429: the server's `Retry-After`, else waits that grow (2, 4, 8 … s, at most a minute). */
+const retryWaitMs = (err: unknown, attempt: number): number => {
+    const seconds = Number((err as { retryAfter?: unknown } | null)?.retryAfter);
+    return (Number.isFinite(seconds) && seconds > 0 ? seconds : Math.min(2 ** (attempt + 1), 60)) * 1000;
+};
+
+/** An import the server refused whole, a cap on the dossiers (409): its words. */
+export interface ImportRefused {
+    refused: string;
+}
+
+/** The codes of the server's caps (`apps/server/src/utils/dossierCaps.ts`); another 409 («Already exists») is not one. */
+const CAP_CODES = new Set(['dossier_limit', 'dossier_items_limit', 'account_items_limit']);
+
+/** A cap's Italian words, as `services/api.ts` rejects them (`message` is the server's `detail`); anything else: null. */
+const capRefusal = (err: unknown): string | null => {
+    const e = err as { status?: number; message?: unknown; data?: { error?: unknown } } | null;
+    return e?.status === 409 && CAP_CODES.has(String(e.data?.error)) && typeof e.message === 'string' && e.message ? e.message : null;
+};
 
 interface AppState {
     settings: AppSettings;
@@ -174,6 +275,8 @@ interface AppState {
     isLoadingData: boolean;
     dataError: string | null;
     isDataLoaded: boolean;
+    /** The user's dossiers were read from the server (a failed read leaves the list empty, not known). Session-only. */
+    dossiersLoaded: boolean;
 
     /**
      * Transient user-facing error for server sync failures (highlights /
@@ -190,8 +293,26 @@ interface AppState {
     /** A citation to put in the palette's box as it opens («Cerca nella barra di ricerca» on a decision
      *  that was not found); taken once by the palette. Session-only, absent from `partialize`. */
     commandPaletteQuery: string | null;
-    quickNormsManagerOpen: boolean;
-    aliasManagerOpen: boolean;
+    /** Impostazioni asked for, at a part or its top (LC84: a page, `/impostazioni`): `Layout` goes there and clears it,
+     *  so a reader's gear opens it from any component, router or not. Session-only, absent from `partialize`. */
+    settingsRequest: { section: SettingsSection | null } | null;
+    /**
+     * The reading tool on (A4): the highlighter, which applies its ink to every selection as it is released, or the note
+     * tool, which opens the editor of a note (or a gloss) on it, until its button is pressed again or Esc. One for the
+     * whole app, as in a word processor: turning one on turns the other off. Session-only, absent from `partialize`: a
+     * tool left on is never found on at the next visit.
+     */
+    readingTool: ReadingTool | null;
+    /**
+     * What the note tool writes (A4 §6): a personal note, or a gloss — a discussion with colleagues, where the reader has
+     * them. Session-only, as the tool.
+     */
+    noteToolKind: NoteToolKind;
+    /**
+     * «Nessun colore» chosen as the highlighter's ink (A4): it takes highlights away. Session-only, absent from
+     * `partialize`: the colour saved stays `settings.highlightColor` (H1), the ink again after a reload.
+     */
+    highlighterEraser: boolean;
     searchPanelState: SearchPanelState;
 
     /**
@@ -201,8 +322,16 @@ interface AppState {
      * practices from them once, in `migrate` (spec §9).
      */
     practices: Practice[];
-    /** The practice on screen; null with none. Persisted. */
+    /** The practice on screen; null with none. Persisted while `corpusPracticesPending`. */
     activePracticeId: string | null;
+    /**
+     * LC60: the Ricerca is a reading bench of the session, never saved in the browser. A load that finds the Corpus's
+     * practices of before saved there sets this: they wait for the riquadro (`CorpusPracticesDialog`), saved as before
+     * (and parked at a sign-out) until it is answered, so none is lost on the way. Session-only, read from the saved value.
+     */
+    corpusPracticesPending: boolean;
+    /** The riquadro was answered: the Corpus's practices leave the store and the browser; a dossier's tables stay. */
+    endCorpusPractices: () => void;
     /** The open rows (T15), keyed `practiceId/actId/articleKey` or `practiceId/decisionId`.
      *  Session-only, absent from `partialize`: after a reload every row is closed. */
     practiceRows: Record<string, true>;
@@ -233,12 +362,25 @@ interface AppState {
      * False when there was nothing to put back: «Annulla» then says so, never «Ripristinato».
      */
     reopenPractices: (closed: { practice: Practice; index: number }[], rows: Record<string, true>, activeId: string | null) => boolean;
-    /** Ignored for an id that names no practice. */
+    /**
+     * A reading table bound to `dossier` (LC51 c1): one practice per dossier, with its `dossierId`, named after it,
+     * holding its articles as rows of their acts WITHOUT their text (`setPracticeArticleText` gives a row its text once
+     * it is read) and its decisions closed and unread, as «Apri tutto» adds them. Session only: never saved in the
+     * browser, never the Corpus's active practice. A table already open for the dossier is re-synced and returned.
+     */
+    openDossierPractice: (dossier: Dossier) => string;
+    /** The bound table of a refreshed dossier takes what the dossier gained; what is on the table only, its open rows
+     *  and its windows stay (additive: nothing is removed). Nothing when no table is open for the dossier. */
+    resyncDossierPractice: (dossier: Dossier) => void;
+    /** A row's text, fetched once the row is read: the row keeps its key (`norma_data`) and its place. Nothing for a
+     *  row the act does not hold. */
+    setPracticeArticleText: (practiceId: string, actId: string, articleKey: string, loaded: ArticleData) => void;
+    /** Ignored for an id that names no practice, and for a bound table (never the Corpus's active practice). */
     setActivePractice: (id: string) => void;
     reorderPractices: (fromIndex: number, toIndex: number) => void;
     /**
      * A search's articles into a practice (T11, §5.1): `null` is the active practice, created when
-     * there is none (named `options.label ?? shortAct(norma)`) and made active; an id that names no
+     * there is none (named `options.label`, else «Ricerca del …» and today's date) and made active; an id that names no
      * practice (closed meanwhile) falls back to the same, with a `console.warn` naming it. The
      * articles join their act (`addArticles`, T2). `reveal`, `'first'` (the first article given) or
      * an article id (found through `findPracticeArticle`), opens that row and sets `pendingReveal`.
@@ -346,9 +488,10 @@ interface AppState {
      * «Apri accanto» (§4.2): a window on `ref` beside the practice's table, which is made active.
      * Nothing moves when a window already shows that subject; with two, the oldest that is not the
      * asker goes and its subject stays in the table (D10, T16). A ref to something the practice does
-     * not hold, or a practice that is not open, opens nothing and is warned.
+     * not hold, or a practice that is not open, opens nothing and is warned. With `focus` (a row's or
+     * the index's «Apri accanto», U2) the window takes the keyboard focus, opened or already there.
      */
-    openBeside: (practiceId: string, ref: BesideRef, askerId?: string) => void;
+    openBeside: (practiceId: string, ref: BesideRef, askerId?: string, options?: { focus?: boolean }) => void;
     /** Closes the window; its subject stays in the table (D7). */
     closeBeside: (practiceId: string, refId: string) => void;
     /**
@@ -425,10 +568,9 @@ interface AppState {
     openCommandPaletteWith: (query: string) => void;
     takeCommandPaletteQuery: () => string | null;
     closeCommandPalette: () => void;
-    openQuickNormsManager: () => void;
-    closeQuickNormsManager: () => void;
-    openAliasManager: () => void;
-    closeAliasManager: () => void;
+    /** Asks for Impostazioni, at `section` when given (the reader's gear asks for «Significato dei colori»). */
+    openSettings: (section?: SettingsSection) => void;
+    clearSettingsRequest: () => void;
     toggleSearchPanel: () => void;
     setSearchPanelPosition: (position: { x: number; y: number }) => void;
 
@@ -448,7 +590,6 @@ interface AppState {
     // Structure Window Actions
     openStructureWindow: (blockId: string) => void;
     closeStructureWindow: () => void;
-    setStructureWindowPosition: (position: { x: number; y: number }) => void;
 
     // Reading Back-Stack Actions
     /**
@@ -495,7 +636,7 @@ interface AppState {
     flushDossierOrder: (dossierId: string) => void;
     updateDossierItemStatus: (dossierId: string, itemId: string, status: 'unread' | 'important') => void;
     moveToDossier: (sourceDossierId: string, targetDossierId: string, itemIds: string[]) => void;
-    importDossier: (dossier: Dossier) => Promise<ImportOutcome | null>; // null when the dossier itself could not be created
+    importDossier: (dossier: Dossier, options?: ImportOptions) => Promise<ImportOutcome | ImportRefused | null>; // null when the dossier itself could not be created
 
     addAnnotation: (normaKey: string, articleId: string, text: string, anchor?: { anchorText: string; startOffset: number }) => void;
     removeAnnotation: (id: string) => void;
@@ -504,6 +645,16 @@ interface AppState {
 
     addHighlight: (normaKey: string, articleId: string, text: string, range: string, color: Highlight['color'], startOffset?: number) => void;
     removeHighlight: (id: string) => void;
+    /**
+     * One gesture of the highlighter over existing highlights (A4, `planInk`): the new parts and the new colours sent at
+     * once, the removals held until the next gesture; Ctrl+Z (⌘Z) puts the removed back and takes the parts and colours
+     * back (`holdGesture`). No notification.
+     */
+    editHighlights: (edit: HighlightEdit) => void;
+    setReadingTool: (tool: ReadingTool | null) => void;
+    setNoteToolKind: (kind: NoteToolKind) => void;
+    /** The highlighter's ink (A4): a colour, saved as the colour of new highlights (H1); «Nessun colore» for the session. */
+    setHighlighterInk: (ink: Ink) => void;
     getHighlights: (normaKey: string, articleId: string) => Highlight[];
     loadHighlightsForArticle: (normaKey: string, articleId: string) => Promise<void>;
 
@@ -558,6 +709,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     focusMode: false,
     splitView: false,
     showKeyPassages: true,
+    highlightColor: 'yellow',
+    highlightColorMeanings: {},
     studyMode: {
         fontSize: 18,
         lineHeight: 1.8,
@@ -593,9 +746,155 @@ let saveFailureReported = false;
 // follows in the same hydration (`practicesOnLoad`): the notice is session-only, so it travels here.
 let migrationNotice: string | null = null;
 
+/** What a highlight's `PUT` changes (A4): its colour, and its range for one that keeps its row with other words (#411). */
+type HighlightShape = { color: Highlight['color']; text?: string; startOffset?: number };
+
+/** Whether `h` shows `shape` (its colour, and its words where the shape gives them). */
+const isShaped = (h: Highlight, shape: HighlightShape) =>
+    h.color === shape.color && (shape.text === undefined || (h.text === shape.text && h.startOffset === shape.startOffset));
+
+/** Whether a highlight is attributed to someone else (one taken from the Forum, gotcha 21). */
+const hasAuthor = (h: Highlight) => Boolean(h.sourceSuggestionId || h.originalAuthor);
+
 const appStore = createStore<AppState>()(
     persist(
-        immer((set, get) => ({
+        immer((set, get) => {
+            // Per highlight, its colours and ranges sent one after the other (A4): «Annulla» right after a change must not
+            // land first.
+            const colourWrites = new Map<string, Promise<boolean>>();
+            // A highlight's server id by the temporary one it was shown with (A4): what a gesture recorded under the
+            // temporary id («Annulla», a colour) reaches it once it is saved.
+            const serverIds = new Map<string, string>();
+            const serverIdOf = (id: string) => serverIds.get(id) ?? id;
+
+            /**
+             * Sends a highlight already on screen (optimistic): its server id replaces the temporary one, keeping a colour
+             * changed while it travelled (whose `PUT` waits for the id, `sendHighlightUpdate`); refused, it goes, and the
+             * reader is told. A removal meanwhile waits for the id (`deferredRemovals`). True once saved. A piece cut from
+             * a highlight with an author is made from it (`splitFrom`, #412: the server copies the author), once that one
+             * has its server id; one whose creation failed takes the piece with it.
+             */
+            const saveHighlight = (optimistic: Highlight, splitFrom?: string): Promise<boolean> => {
+                const wirePayload = highlightStoreToCreate(optimistic);
+                // No startOffset — cannot persist server-side. Keep the optimistic entry local only (legacy behaviour).
+                if (!wirePayload) return Promise.resolve(true);
+                const tempId = optimistic.id;
+                // Removed before the server answers: the removal waits for the server's id (`deferredRemovals`).
+                savingStarted(`highlight:${tempId}`);
+                if (splitFrom === undefined) return createHighlight(tempId, wirePayload);
+                return new Promise<boolean>((resolve) => {
+                    afterSaving(`highlight:${splitFrom}`, (origin) => {
+                        const from = origin === undefined ? serverIdOf(splitFrom) : origin && (origin.item as Highlight).id;
+                        resolve(createHighlight(tempId, from ? { ...wirePayload, splitFrom: from } : null));
+                    });
+                });
+            };
+
+            /** `saveHighlight`'s request, and what its answer does on screen; none (null) when it cannot be made. */
+            const createHighlight = (tempId: string, payload: HighlightCreate | null): Promise<boolean> => {
+                return (payload ? highlightService.create(payload) : Promise.reject(new Error('the highlight it is cut from was not saved')))
+                    .then((serverHighlight) => {
+                        const mapped = highlightApiToStore(serverHighlight);
+                        const current = get().highlights.find(h => h.id === tempId);
+                        // A colour, or words, given while it travelled stay: their `PUT` waits for this id.
+                        const kept = current ? { ...mapped, color: current.color, text: current.text, startOffset: current.startOffset } : mapped;
+                        set((state) => {
+                            const idx = state.highlights.findIndex(h => h.id === tempId);
+                            if (idx !== -1) state.highlights[idx] = kept;
+                        });
+                        serverIds.set(tempId, kept.id);
+                        savingDone(`highlight:${tempId}`, {
+                            key: `highlight:${kept.id}`,
+                            path: `/highlights/${encodeURIComponent(kept.id)}`,
+                            remove: () => highlightService.delete(kept.id),
+                            item: kept,
+                        });
+                        return true;
+                    })
+                    .catch((err) => {
+                        savingDone(`highlight:${tempId}`, null);
+                        console.error('Failed to sync highlight:', err);
+                        set((state) => {
+                            state.highlights = state.highlights.filter(h => h.id !== tempId);
+                        });
+                        get().pushSyncError('Impossibile salvare l\'evidenziazione. Riprova.');
+                        return false;
+                    });
+            };
+
+            /**
+             * A highlight's new colour sent (A4, `PUT /highlights/:id`) — and its new range, for one that keeps its row
+             * with other words (#411) —, once it has its server id if it is still being created; refused, what is on
+             * screen goes back to `previous` and the reader is told. One gone meanwhile (404) needs nothing. True once
+             * written (or gone), false when refused or never created.
+             */
+            const sendHighlightUpdate = (id: string, next: HighlightShape, previous: HighlightShape): Promise<boolean> => new Promise((resolve) => {
+                afterSaving(`highlight:${id}`, (saved) => {
+                    // Its creation failed: there is nothing to change.
+                    if (saved === null) { resolve(false); return; }
+                    const serverId = saved ? (saved.item as Highlight).id : serverIdOf(id);
+                    const body: HighlightUpdate = next.text === undefined || next.startOffset === undefined
+                        ? { color: next.color }
+                        : { color: next.color, text: next.text, startOffset: next.startOffset, endOffset: next.startOffset + next.text.length };
+                    const write = (colourWrites.get(serverId) ?? Promise.resolve(true))
+                        .then(() => highlightService.update(serverId, body))
+                        .then(() => true, (err: unknown) => {
+                            if ((err as { status?: number } | null)?.status === 404) return true;
+                            console.error('Failed to sync highlight change:', err);
+                            set((state) => {
+                                const h = state.highlights.find(x => x.id === serverId || x.id === id);
+                                if (h && isShaped(h, next)) Object.assign(h, previous);
+                            });
+                            get().pushSyncError(next.text === undefined
+                                ? 'Impossibile cambiare il colore dell\'evidenziazione. Riprova.'
+                                : 'Impossibile modificare l\'evidenziazione. Riprova.');
+                            return false;
+                        });
+                    colourWrites.set(serverId, write);
+                    void write.then(() => { if (colourWrites.get(serverId) === write) colourWrites.delete(serverId); });
+                    resolve(write);
+                });
+            });
+
+            /**
+             * Whether the store holds that very highlight already — the same words at the same place, in the same colour,
+             * on the same text: it is never made twice (the owner's duplicates, 5 November 2026).
+             */
+            const holdsHighlight = (normaKey: string, articleId: string, text: string, startOffset: number | undefined, color: Highlight['color'], besides: readonly string[] = []) =>
+                typeof startOffset === 'number' && get().highlights.some(h => !besides.includes(h.id) && h.normaKey === normaKey
+                    && h.articleId === articleId && h.startOffset === startOffset && h.text === text && h.color === color);
+
+            /** A highlight's removal the server refused: it is back on screen, and the reader is told. */
+            const highlightDeleteRefused = (err: unknown) => {
+                console.error('Failed to sync highlight delete:', err);
+                get().pushSyncError('Impossibile eliminare l\'evidenziazione. Riprova.');
+            };
+
+            /**
+             * The undo of the highlights a gesture created (A4): each off the screen at once, deleted once its creation
+             * has answered, under its server id; one whose creation failed (`saved` false) needs nothing. False when it
+             * took none back.
+             */
+            const takeBackCreated = (created: readonly Highlight[], saved: ReadonlyMap<string, boolean>): boolean => {
+                let any = false;
+                for (const part of created) {
+                    if (saved.get(part.id) === false) continue;
+                    const id = serverIdOf(part.id);
+                    // Held by a later gesture's removal: that one decides (sent, or put back by its own undo).
+                    if (isRemovalPending(`highlight:${id}`) || isRemovalPending(`highlight:${part.id}`)) continue;
+                    const current = get().highlights.find(h => h.id === id || h.id === part.id) ?? part;
+                    set((state) => { state.highlights = state.highlights.filter(h => h.id !== id && h.id !== part.id); });
+                    removeAtOnce(
+                        { key: `highlight:${id}`, path: `/highlights/${encodeURIComponent(id)}`, remove: () => highlightService.delete(id), item: current },
+                        (item) => set((state) => { if (!state.highlights.some(h => h.id === item.id)) state.highlights.push(item); }),
+                        highlightDeleteRefused,
+                    );
+                    any = true;
+                }
+                return any;
+            };
+
+            return {
             settings: DEFAULT_SETTINGS,
             bookmarks: [],
             dossiers: [],
@@ -613,6 +912,7 @@ const appStore = createStore<AppState>()(
             isLoadingData: false,
             dataError: null,
             isDataLoaded: false,
+            dossiersLoaded: false,
 
             lastSyncError: null,
             pushSyncError: (message) => set((state) => {
@@ -632,14 +932,21 @@ const appStore = createStore<AppState>()(
             sidebarVisible: true,
             commandPaletteOpen: false,
             commandPaletteQuery: null,
-            quickNormsManagerOpen: false,
-            aliasManagerOpen: false,
+            settingsRequest: null,
+            readingTool: null,
+            noteToolKind: 'note',
+            highlighterEraser: false,
             searchPanelState: {
                 isCollapsed: false,
                 position: { x: window.innerWidth - 420, y: 20 },
             },
             practices: [],
             activePracticeId: null,
+            corpusPracticesPending: false,
+            endCorpusPractices: () => {
+                get().closeAllPractices();
+                set((state) => { state.corpusPracticesPending = false; });
+            },
             practiceRows: {},
             pendingReveal: null,
             practiceNotice: null,
@@ -680,7 +987,10 @@ const appStore = createStore<AppState>()(
                 if (index < 0) return;
                 const closed = state.practices[index];
                 if (state.activePracticeId === id) {
-                    state.activePracticeId = (state.practices[index + 1] ?? state.practices[index - 1])?.id ?? null;
+                    // the neighbour in the bar: a bound table is not in it
+                    const next = state.practices.slice(index + 1).find((p) => !isBoundPractice(p)) ??
+                        state.practices.slice(0, index).reverse().find((p) => !isBoundPractice(p));
+                    state.activePracticeId = next?.id ?? null;
                 }
                 if (closed.acts.some((a) => a.id === state.structureWindow.blockId)) state.structureWindow.blockId = null;
                 state.practices.splice(index, 1);
@@ -690,17 +1000,22 @@ const appStore = createStore<AppState>()(
             },
 
             closeAllPractices: () => set((state) => {
-                if (state.practices.some((p) => p.acts.some((a) => a.id === state.structureWindow.blockId))) {
+                // «Chiudi tutte» is the Corpus's: a bound table stays, with its rows, its reveal and its reader.
+                const kept = state.practices.filter(isBoundPractice);
+                const keeps = (practiceId: string | undefined) => kept.some((p) => p.id === practiceId);
+                if (state.practices.some((p) => !isBoundPractice(p) && p.acts.some((a) => a.id === state.structureWindow.blockId))) {
                     state.structureWindow.blockId = null;
                 }
-                state.practices = [];
+                state.practices = kept;
                 state.activePracticeId = null;
-                state.practiceRows = {};
-                state.pendingReveal = null;
-                state.phoneReader = null;
+                state.practiceRows = Object.fromEntries(Object.entries(state.practiceRows).filter(([key]) => keeps(key.split('/')[0])));
+                if (!keeps(state.pendingReveal?.practiceId)) state.pendingReveal = null;
+                if (!keeps(state.phoneReader?.practiceId)) state.phoneReader = null;
             }),
 
-            reopenPractices: (closed, rows, activeId) => {
+            reopenPractices: (asked, rows, activeId) => {
+                // «Annulla» puts back Corpus practices only: a bound table is rebuilt from its dossier, never restored.
+                const closed = asked.filter(({ practice }) => !isBoundPractice(practice));
                 const openNow = new Set(get().practices.map((p) => p.id));
                 if (closed.every(({ practice }) => openNow.has(practice.id))) return false;
                 set((state) => {
@@ -719,20 +1034,25 @@ const appStore = createStore<AppState>()(
 
             setActivePractice: (id) => {
                 const { practices, activePracticeId } = get();
-                if (activePracticeId === id || !practices.some((p) => p.id === id)) return;
+                const named = practices.find((p) => p.id === id);
+                if (activePracticeId === id || !named || isBoundPractice(named)) return;
                 set((state) => { activate(state, id); });
             },
 
             reorderPractices: (fromIndex, toIndex) => {
-                if (!movable(get().practices.length, fromIndex, toIndex)) return;
+                // The indices are the bar's, which shows no bound table: those keep their places.
+                if (!movable(corpusPractices(get().practices).length, fromIndex, toIndex)) return;
                 set((state) => {
-                    const [moved] = state.practices.splice(fromIndex, 1);
-                    state.practices.splice(toIndex, 0, moved);
+                    const slots = state.practices.flatMap((p, i) => (isBoundPractice(p) ? [] : [i]));
+                    const order = slots.map((i) => state.practices[i]);
+                    const [moved] = order.splice(fromIndex, 1);
+                    order.splice(toIndex, 0, moved);
+                    slots.forEach((slot, k) => { state.practices[slot] = order[k]; });
                 });
             },
 
             addArticlesToPractice: (practiceId, norma, articles, options = {}) => {
-                const landing = landingPractice(get(), practiceId, () => labelOr(options.label, shortAct(norma)), 'addArticlesToPractice');
+                const landing = landingPractice(get(), practiceId, options.label, 'addArticlesToPractice');
                 const id = landing.practice.id;
                 const { acts, actId } = addArticles(landing.practice.acts, norma, articles, uuidv4);
                 const act = acts.find((a) => a.id === actId);
@@ -757,14 +1077,14 @@ const appStore = createStore<AppState>()(
             },
 
             addActIndexToPractice: (practiceId, norma) => {
-                const landing = landingPractice(get(), practiceId, () => shortAct(norma), 'addActIndexToPractice');
+                const landing = landingPractice(get(), practiceId, undefined, 'addActIndexToPractice');
                 const id = landing.practice.id;
                 const { acts, actId } = addArticles(landing.practice.acts, norma, [], uuidv4);
                 set((state) => {
                     state.practices = landing.practices.map((p) => (p.id === id ? { ...p, acts } : p));
                     activate(state, id);
                     // The index is the act's drawer, in the column: the phone's reader gives way to it.
-                    state.phoneReader = null;
+                    readerGivesWay(state, id);
                     state.structureWindow.blockId = actId;
                 });
                 return actId;
@@ -776,7 +1096,7 @@ const appStore = createStore<AppState>()(
                 if (!hit) return false;
                 // Its practice comes on screen in the same step (carry-over ruling 9: the way back, a find match).
                 set((state) => {
-                    state.activePracticeId = practiceId;
+                    putOnScreen(state, practiceId);
                     revealRow(state, practiceId, actId, practiceArticleKey(hit));
                 });
                 return true;
@@ -786,7 +1106,7 @@ const appStore = createStore<AppState>()(
                 const act = get().practices.find((p) => p.id === practiceId)?.acts.find((a) => a.id === actId);
                 if (!act || !act.articles.some((a) => practiceArticleKey(a) === articleKey)) return false;
                 set((state) => {
-                    state.activePracticeId = practiceId;
+                    putOnScreen(state, practiceId);
                     revealRow(state, practiceId, actId, articleKey);
                 });
                 return true;
@@ -795,7 +1115,7 @@ const appStore = createStore<AppState>()(
             revealPracticeDecision: (practiceId, decisionId) => {
                 if (!get().practices.find((p) => p.id === practiceId)?.decisions.some((d) => d.id === decisionId)) return false;
                 set((state) => {
-                    state.activePracticeId = practiceId;
+                    putOnScreen(state, practiceId);
                     revealDecisionRow(state, practiceId, decisionId);
                 });
                 return true;
@@ -859,7 +1179,8 @@ const appStore = createStore<AppState>()(
                 const source = practices.find((p) => p.id === fromPracticeId);
                 const target = practices.find((p) => p.id === toPracticeId);
                 const act = source?.acts.find((a) => a.id === actId);
-                if (!source || !target || !act) return;
+                // A bound table is not on the move's list: its acts are its dossier's.
+                if (!source || !target || !act || isBoundPractice(source) || isBoundPractice(target)) return;
                 // Into a practice holding the same act, it joins that act and takes its id.
                 const merged = addArticles(target.acts, act.norma, act.articles, () => act.id);
                 const nowId = merged.actId;
@@ -944,7 +1265,7 @@ const appStore = createStore<AppState>()(
                     ...(isDesktopViewport() ? { askerId: asked.askerId ?? windowIdOf(get(), asked.besideId) } : { reader: true }),
                 };
                 const before = get();
-                const landing = landingPractice(before, options.practiceId ?? null, () => DECISIONS_PRACTICE_LABEL, 'openDecision');
+                const landing = landingPractice(before, options.practiceId ?? null, undefined, 'openDecision');
                 const practiceId = landing.practice.id;
                 const existing = landing.practice.decisions.find((d) => sameDecision(d.reference, reference));
                 const decisionId = existing?.id ?? uuidv4();
@@ -1004,19 +1325,46 @@ const appStore = createStore<AppState>()(
             addKnownDecisions: (practiceId, decisions) => {
                 if (decisions.length === 0 || !get().practices.some((p) => p.id === practiceId)) return;
                 set((state) => {
-                    const practice = state.practices.find((p) => p.id === practiceId) as Practice;
-                    for (const known of decisions) {
-                        const reference = identityOf(known);
-                        const entry: PracticeDecision = {
-                            id: uuidv4(), reference, label: formatDecisionShort({ ...reference, sezione: known.sezione }), identified: true,
-                        };
-                        if (known.data_deposito) entry.depositDate = known.data_deposito;
-                        if (known.tipo) entry.tipo = known.tipo;
-                        if (known.sezione) entry.sezione = known.sezione;
-                        const at = practice.decisions.findIndex((d) => sameDecision(d.reference, reference));
-                        if (at < 0) practice.decisions.push(entry);
-                        else practice.decisions[at] = mergeDecisionEntries(practice.decisions[at], entry);
-                    }
+                    mergeKnownDecisions(state.practices.find((p) => p.id === practiceId) as Practice, decisions);
+                });
+            },
+
+            openDossierPractice: (dossier) => {
+                const held = get().practices.find((p) => p.dossierId === dossier.id);
+                if (held) {
+                    get().resyncDossierPractice(dossier);
+                    return held.id;
+                }
+                const created: Practice = { ...newPractice(dossier.title, true), dossierId: dossier.id };
+                set((state) => {
+                    state.practices.push(created);
+                    syncFromDossier(state.practices[state.practices.length - 1], dossier);
+                });
+                return created.id;
+            },
+
+            resyncDossierPractice: (dossier) => {
+                if (!get().practices.some((p) => p.dossierId === dossier.id)) return;
+                set((state) => {
+                    syncFromDossier(state.practices.find((p) => p.dossierId === dossier.id) as Practice, dossier);
+                });
+            },
+
+            setPracticeArticleText: (practiceId, actId, articleKey, loaded) => {
+                const held = get().practices.find((p) => p.id === practiceId)?.acts.find((a) => a.id === actId);
+                if (!held || !held.articles.some((a) => practiceArticleKey(a) === articleKey)) return;
+                set((state) => {
+                    const act = state.practices.find((p) => p.id === practiceId)?.acts.find((a) => a.id === actId);
+                    const at = act ? act.articles.findIndex((a) => practiceArticleKey(a) === articleKey) : -1;
+                    if (!act || at < 0) return;
+                    // The row keeps its own `norma_data`: its key, and so its open row and its windows, do not move.
+                    // The rest is the load's alone: an earlier failed load leaves no `error` behind.
+                    const { norma_data: _asked, brocardi_info: _info, brocardi_error: _error, ...text } =
+                        loaded as ArticleData & { brocardi_info?: unknown; brocardi_error?: unknown };
+                    void _asked; void _info; void _error;
+                    act.articles[at] = { ...text, norma_data: act.articles[at].norma_data };
+                    // An act a dossier gave no URN takes the one its text came with, as a search's act does (LC54).
+                    if (!act.norma.urn && loaded.norma_data?.url) act.norma.urn = loaded.norma_data.url;
                 });
             },
 
@@ -1067,7 +1415,7 @@ const appStore = createStore<AppState>()(
                 });
             },
 
-            openBeside: (practiceId, ref, askerId) => {
+            openBeside: (practiceId, ref, askerId, options) => {
                 const practice = get().practices.find((p) => p.id === practiceId);
                 const subject = subjectOfRef(ref);
                 if (!practice || (subject && !holdsSubject(practice, subject))) {
@@ -1075,8 +1423,10 @@ const appStore = createStore<AppState>()(
                     return;
                 }
                 const beside = besideWith(practice.beside, ref, askerId);
-                // Already shown: asked again, that window takes focus (carry-over 11).
-                const shownId = beside === practice.beside && isDesktopViewport() ? shownWindowId(practice.beside, ref) : undefined;
+                // Already shown: asked again, that window takes focus (carry-over 11); asked with `focus`, a new one too.
+                const shownId = !isDesktopViewport() ? undefined
+                    : beside === practice.beside ? shownWindowId(practice.beside, ref)
+                    : options?.focus ? ref.id : undefined;
                 if (beside === practice.beside && get().activePracticeId === practiceId && (!shownId || get().windowFocusRequest === shownId)) return;
                 set((state) => {
                     activate(state, practiceId);
@@ -1103,7 +1453,7 @@ const appStore = createStore<AppState>()(
                 const shown = get().phoneReader;
                 if (get().activePracticeId === practiceId && shown?.practiceId === practiceId && shown.ref.id === ref.id) return;
                 set((state) => {
-                    state.activePracticeId = practiceId;
+                    putOnScreen(state, practiceId);
                     state.phoneReader = { practiceId, ref };
                 });
             },
@@ -1116,10 +1466,7 @@ const appStore = createStore<AppState>()(
             decisionFocusRequest: null,
             windowFocusRequest: null,
             phoneReader: null,
-            structureWindow: {
-                blockId: null,
-                position: { x: Math.max(16, window.innerWidth - 400), y: 96 },
-            },
+            structureWindow: { blockId: null },
             readingBackStack: [],
 
             updateSettings: (newSettings) => set((state) => {
@@ -1144,6 +1491,7 @@ const appStore = createStore<AppState>()(
                     // CORS, backend down, 500 — all looked identical). Log the
                     // reason so devs see it in the console and the UI at least
                     // surfaces a dataError banner when both calls fail.
+                    let dossiersRead = true;
                     const [bookmarksRes, dossiersRes, environmentsRes, quickNormsRes, customAliasesRes] = await Promise.all([
                         bookmarkService.getAll().catch((err) => {
                             console.error('fetchUserData: bookmarks failed:', err);
@@ -1151,6 +1499,7 @@ const appStore = createStore<AppState>()(
                         }),
                         dossierService.getAll().catch((err) => {
                             console.error('fetchUserData: dossiers failed:', err);
+                            dossiersRead = false;
                             return [];
                         }),
                         environmentService.getAll().catch((err) => {
@@ -1192,12 +1541,15 @@ const appStore = createStore<AppState>()(
                         state.customAliases = customAliases;
                         state.isLoadingData = false;
                         state.isDataLoaded = true;
+                        state.dossiersLoaded = dossiersRead;
+                        // Unread pratiche are an error, not an empty list (LC73): the page says so and offers «Riprova».
+                        if (!dossiersRead) state.dataError = 'Non riesco a leggere le pratiche. Riprova tra poco.';
                     });
                 } catch (error) {
                     console.error('Failed to fetch user data:', error);
                     set((state) => {
                         state.isLoadingData = false;
-                        state.dataError = getErrorMessage(error) || 'Failed to load user data';
+                        state.dataError = getErrorMessage(error) || 'Non riesco a leggere i tuoi dati. Riprova tra poco.';
                     });
                 }
             },
@@ -1205,6 +1557,8 @@ const appStore = createStore<AppState>()(
             clearUserData: () => {
                 // The notifications on screen go, without carrying out what they held (an import waiting for its «Annulla»).
                 resetNotifications();
+                // A removal's answer still out puts nothing back in the emptied store.
+                forgetRemovals();
                 // The backup of the last user's saved tabs (`backupV0`) goes too: a shared browser keeps nothing of them.
                 removeV0Backup();
                 set((state) => {
@@ -1219,11 +1573,13 @@ const appStore = createStore<AppState>()(
                     state.customAliases = [];
                     state.environments = [];
                     state.isDataLoaded = false;
+                    state.dossiersLoaded = false;
                     state.dataError = null;
 
                     // The practices: a shared browser must not show the last user's table (spec §10).
                     state.practices = [];
                     state.activePracticeId = null;
+                    state.corpusPracticesPending = false;
                     state.practiceRows = {};
                     state.pendingReveal = null;
                     state.practiceNotice = null;
@@ -1233,6 +1589,10 @@ const appStore = createStore<AppState>()(
                     state.windowFocusRequest = null;
                     state.phoneReader = null;
                     state.commandPaletteQuery = null;
+                    // The reading tools (A4): the next person on the browser never finds one on.
+                    state.readingTool = null;
+                    state.noteToolKind = 'note';
+                    state.highlighterEraser = false;
                 });
             },
 
@@ -1260,24 +1620,16 @@ const appStore = createStore<AppState>()(
                 return query;
             },
 
+            openSettings: (section) => set((state) => {
+                state.settingsRequest = { section: section ?? null };
+            }),
+
+            clearSettingsRequest: () => set((state) => {
+                state.settingsRequest = null;
+            }),
+
             closeCommandPalette: () => set((state) => {
                 state.commandPaletteOpen = false;
-            }),
-
-            openQuickNormsManager: () => set((state) => {
-                state.quickNormsManagerOpen = true;
-            }),
-
-            closeQuickNormsManager: () => set((state) => {
-                state.quickNormsManagerOpen = false;
-            }),
-
-            openAliasManager: () => set((state) => {
-                state.aliasManagerOpen = true;
-            }),
-
-            closeAliasManager: () => set((state) => {
-                state.aliasManagerOpen = false;
             }),
 
             toggleSearchPanel: () => set((state) => {
@@ -1295,7 +1647,7 @@ const appStore = createStore<AppState>()(
                 // A topic-search window of the practice the link reads in,
                 // else the active one (T8); a phone shows it in the full-screen reader, beside nothing.
                 const before = get();
-                const landing = landingPractice(before, practiceOfPlace(before, options?.besideId), () => DECISIONS_PRACTICE_LABEL, 'openTopicSearch');
+                const landing = landingPractice(before, practiceOfPlace(before, options?.besideId), undefined, 'openTopicSearch');
                 const ref: BesideRef = { id: topicWindowId(landing.practice.id, query), kind: 'decision-search', query, label: labelOr(label, DEFAULT_SEARCH_LABEL) };
                 if (!isDesktopViewport()) {
                     const shown = before.phoneReader;
@@ -1359,10 +1711,6 @@ const appStore = createStore<AppState>()(
 
             closeStructureWindow: () => set((state) => {
                 state.structureWindow.blockId = null;
-            }),
-
-            setStructureWindowPosition: (position) => set((state) => {
-                state.structureWindow.position = position;
             }),
 
             // ── Reading back-stack ───────────────────────────────────────
@@ -1513,7 +1861,7 @@ const appStore = createStore<AppState>()(
                     return created.id;
                 } catch (err) {
                     console.error('Failed to create dossier:', err);
-                    get().pushSyncError('Impossibile creare il dossier. Riprova.');
+                    get().pushSyncError('Impossibile creare la pratica. Riprova.');
                     return null;
                 }
             },
@@ -1539,7 +1887,7 @@ const appStore = createStore<AppState>()(
                             if (!state.dossiers.some(d => d.id === id)) state.dossiers.splice(Math.min(index, state.dossiers.length), 0, dossier);
                         });
                     }
-                    get().pushSyncError('Impossibile eliminare il dossier. Riprova.');
+                    get().pushSyncError('Impossibile eliminare la pratica. Riprova.');
                     return null;
                 }
             },
@@ -1564,7 +1912,7 @@ const appStore = createStore<AppState>()(
                     ...(updates.kind !== undefined && { kind: updates.kind }),
                 }).catch(err => {
                     console.error('Failed to update dossier:', err);
-                    get().pushSyncError('Impossibile salvare le modifiche al dossier. Riprova.');
+                    get().pushSyncError('Impossibile salvare le modifiche alla pratica. Riprova.');
                 });
             },
 
@@ -1582,7 +1930,7 @@ const appStore = createStore<AppState>()(
                 if (!dossier) return;
                 dossierService.update(id, { isPinned: dossier.isPinned }).catch(err => {
                     console.error('Failed to update dossier pin:', err);
-                    get().pushSyncError('Impossibile salvare il dossier in evidenza. Riprova.');
+                    get().pushSyncError('Impossibile salvare la pratica in evidenza. Riprova.');
                 });
             },
 
@@ -1693,10 +2041,28 @@ const appStore = createStore<AppState>()(
                     return null;
                 }
 
+                // An application's note leaving takes its count off the light of the article it is about (D7b);
+                // a rollback gives it back.
+                // Only the articles still in the dossier are shifted, and only those are shifted back (an article trashed
+                // with its note comes back with its count as it was).
+                const shifted = new Set<string>();
+                const shiftNoteCounts = (d: Dossier, back: boolean) => {
+                    for (const { item } of removed) {
+                        if (item.type !== 'note' || !item.assistantNote || !item.aboutItemId) continue;
+                        if (back && !shifted.has(item.id)) continue;
+                        const about = d.items.find(i => i.id === item.aboutItemId);
+                        if (!about) continue;
+                        if (!back) shifted.add(item.id);
+                        shiftAiReviewCount(about, back ? null : item.assistantNote.state, back ? item.assistantNote.state : null);
+                    }
+                };
                 // Optimistic update
                 set((state) => {
                     const d = state.dossiers.find(x => x.id === dossierId);
-                    if (d) d.items = d.items.filter(i => !wanted.has(i.id));
+                    if (d) {
+                        d.items = d.items.filter(i => !wanted.has(i.id));
+                        shiftNoteCounts(d, false);
+                    }
                 });
 
                 try {
@@ -1716,8 +2082,9 @@ const appStore = createStore<AppState>()(
                         for (const { item, index } of removed) {
                             if (!d.items.some(i => i.id === item.id)) d.items.splice(Math.min(index, d.items.length), 0, item);
                         }
+                        shiftNoteCounts(d, true);
                     });
-                    get().pushSyncError('Impossibile rimuovere dal dossier. Riprova.');
+                    get().pushSyncError('Impossibile rimuovere dalla pratica. Riprova.');
                     return null;
                 }
             },
@@ -1797,7 +2164,7 @@ const appStore = createStore<AppState>()(
                     });
                 } catch (err) {
                     console.error('Failed to reload the dossier:', dossierId, err);
-                    if (!quiet) get().pushSyncError('Ripristinato, ma non riesco a ricaricare il dossier: aggiorna la pagina.');
+                    if (!quiet) get().pushSyncError('Ripristinato, ma non riesco a ricaricare la pratica: aggiorna la pagina.');
                 }
             },
 
@@ -1966,49 +2333,87 @@ const appStore = createStore<AppState>()(
                         }
                     }
                     if (failed > 0) {
-                        get().pushSyncError('Impossibile spostare alcuni elementi tra i dossier. Riprova.');
+                        get().pushSyncError('Impossibile spostare alcuni elementi tra le pratiche. Riprova.');
                     }
                 })();
             },
 
-            importDossier: async (dossier) => {
+            importDossier: async (dossier, { onProgress, resume } = {}) => {
                 // Persist the dossier server-side first: any `addItem` call later
                 // (add note, add norma) does `findFirst({ id, userId })` on the
                 // server and 404s if we only populated the local store. Create
                 // the shell, recreate items in parallel, then push the fully
                 // populated dossier with server ids into the store.
                 try {
-                    const created = await dossierService.create({
-                        name: dossier.title,
-                        description: dossier.description,
-                        ...(dossier.tags && dossier.tags.length > 0 && { tags: dossier.tags }),
-                    });
+                    // Resumed: the dossier the first run made, already in the store.
+                    const held = resume ? get().dossiers.find((d) => d.id === resume.id) : undefined;
+                    const created = resume
+                        ? { id: resume.id, created_at: held?.createdAt ?? new Date().toISOString() }
+                        : await dossierService.create({
+                            name: dossier.title,
+                            description: dossier.description,
+                            ...(dossier.tags && dossier.tags.length > 0 && { tags: dossier.tags }),
+                        });
 
-                    const itemResults = await Promise.allSettled(
-                        dossier.items.map(async (item) => {
-                            const serverItem = await dossierService.addItem(created.id, {
-                                ...serverItemFor(item),
-                                content: itemContentFor(item),
-                            });
-                            return { serverItem, original: item };
-                        })
-                    );
-
-                    const items: DossierItem[] = itemResults
-                        .filter((r): r is PromiseFulfilledResult<{ serverItem: DossierItemApi; original: DossierItem }> => r.status === 'fulfilled')
-                        .map((r) => ({
-                            ...r.value.original,
-                            id: r.value.serverItem.id,
-                            addedAt: r.value.serverItem.created_at,
-                            ...serverFieldsFromApi(r.value.serverItem),
-                        }));
-
-                    const failedCount = itemResults.filter((r) => r.status === 'rejected').length;
-                    if (failedCount > 0) {
-                        console.warn(`importDossier: ${failedCount}/${dossier.items.length} items failed to sync`);
+                    // One at a time, in order and at the limit's pace: a burst would meet 429s. A cap (409, G-576)
+                    // refuses every later item too: they are counted with it, not sent.
+                    const items: DossierItem[] = [];
+                    let failedCount = 0;
+                    let refusal: string | null = null;
+                    let next: number | undefined;
+                    let stopped: 'rate' | 'network' | undefined;
+                    let lastSent = 0;
+                    const total = dossier.items.length;
+                    for (let index = resume?.from ?? 0; index < total; index++) {
+                        const item = dossier.items[index];
+                        if (refusal) {
+                            failedCount++;
+                            continue;
+                        }
+                        let attempt = 0;
+                        for (;;) {
+                            const wait = lastSent + IMPORT_PACE_MS - Date.now();
+                            if (lastSent > 0 && wait > 0) await sleep(wait);
+                            lastSent = Date.now();
+                            try {
+                                const serverItem = await dossierService.addItem(created.id, {
+                                    ...serverItemFor(item),
+                                    content: itemContentFor(item),
+                                });
+                                items.push({ ...item, id: serverItem.id, addedAt: serverItem.created_at, ...serverFieldsFromApi(serverItem) });
+                                break;
+                            } catch (err) {
+                                // The limit, the server or the connection: wait and try again; still failing, stop here.
+                                const transient = transientFailure(err);
+                                if (transient && attempt < IMPORT_RETRIES) {
+                                    onProgress?.({ done: items.length, total, waiting: true, reason: transient });
+                                    await sleep(retryWaitMs(err, attempt++));
+                                    continue;
+                                }
+                                if (transient) {
+                                    next = index;
+                                    stopped = transient;
+                                } else {
+                                    refusal = capRefusal(err);
+                                    failedCount++;
+                                }
+                                break;
+                            }
+                        }
+                        if (next !== undefined) break;
+                        onProgress?.({ done: items.length, total, waiting: false });
                     }
+                    if (failedCount > 0) {
+                        console.warn(`importDossier: ${failedCount}/${total} items failed to sync`);
+                    }
+                    const refusals = refusal ? [refusal] : [];
 
                     set((state) => {
+                        const resumed = resume && state.dossiers.find((d) => d.id === resume.id);
+                        if (resumed) {
+                            resumed.items.push(...items);
+                            return;
+                        }
                         upsertById(state.dossiers, {
                             id: created.id,
                             title: dossier.title,
@@ -2019,10 +2424,17 @@ const appStore = createStore<AppState>()(
                             isPinned: !!dossier.isPinned,
                         });
                     });
-                    return { id: created.id, imported: items.length, failed: failedCount };
+                    return {
+                        id: created.id,
+                        imported: items.length,
+                        failed: failedCount,
+                        ...(refusals.length > 0 && { refusals }),
+                        ...(next !== undefined && { next, stopped }),
+                    };
                 } catch (err) {
                     console.error('Failed to import dossier:', err);
-                    return null;
+                    const refused = capRefusal(err);
+                    return refused ? { refused } : null;
                 }
             },
 
@@ -2039,6 +2451,8 @@ const appStore = createStore<AppState>()(
                 };
                 set((state) => { state.annotations.push(optimistic); });
 
+                // Removed before the server answers: the removal waits for the server's id (`deferredRemovals`).
+                savingStarted(`annotation:${tempId}`);
                 annotationService
                     .create(annotationStoreToCreate(optimistic))
                     .then((serverAnnotation) => {
@@ -2047,9 +2461,23 @@ const appStore = createStore<AppState>()(
                             const idx = state.annotations.findIndex(a => a.id === tempId);
                             if (idx !== -1) state.annotations[idx] = mapped;
                         });
+                        savingDone(`annotation:${tempId}`, {
+                            key: `annotation:${mapped.id}`,
+                            path: `/annotations/${encodeURIComponent(mapped.id)}`,
+                            remove: () => annotationService.delete(mapped.id),
+                            item: mapped,
+                        });
                     })
                     .catch((err) => {
+                        savingDone(`annotation:${tempId}`, null);
                         console.error('Failed to sync annotation:', err);
+                        // Too long: a retry cannot succeed, so the note stays with its text and the server says why.
+                        const detail = tooLongDetail(err);
+                        if (detail) {
+                            unsavedAnnotations.add(tempId);
+                            get().pushSyncError(detail);
+                            return;
+                        }
                         set((state) => {
                             state.annotations = state.annotations.filter(a => a.id !== tempId);
                         });
@@ -2057,25 +2485,46 @@ const appStore = createStore<AppState>()(
                     });
             },
 
+            // Behind «Annulla» (`removeWithUndo`): off the screen at once, sent when its notification closes or the page
+            // goes or is hidden. A 404 is a removal done; one still being created is removed under the server's id.
             removeAnnotation: (id) => {
-                const previous = get().annotations.find(a => a.id === id);
+                const index = get().annotations.findIndex(a => a.id === id);
+                if (index === -1) return;
+                const previous = get().annotations[index];
                 set((state) => {
                     state.annotations = state.annotations.filter(a => a.id !== id);
                 });
-                if (!previous) return;
-                // 404 is fine: entry may have been a local-only optimistic
-                // insert that never reached the server.
-                annotationService.delete(id).catch((err) => {
-                    if (err?.status === 404) return;
-                    console.error('Failed to sync annotation delete:', err);
-                    set((state) => { state.annotations.push(previous); });
-                    get().pushSyncError('Impossibile eliminare la nota. Riprova.');
+                removeWithUndo({
+                    key: `annotation:${id}`,
+                    message: 'Nota rimossa',
+                    path: `/annotations/${encodeURIComponent(id)}`,
+                    remove: () => annotationService.delete(id),
+                    item: previous,
+                    putBack: (item) => set((state) => {
+                        if (state.annotations.some(a => a.id === item.id)) return;
+                        state.annotations.splice(Math.min(index, state.annotations.length), 0, item);
+                    }),
+                    onRefused: (err) => {
+                        console.error('Failed to sync annotation delete:', err);
+                        get().pushSyncError('Impossibile eliminare la nota. Riprova.');
+                    },
                 });
             },
 
             updateAnnotation: (id, newText) => {
                 const previous = get().annotations.find(a => a.id === id);
                 if (!previous || previous.text === newText) return;
+                // Never saved (too long): the edit, shortened, is sent as the note it was meant to be.
+                if (unsavedAnnotations.delete(id)) {
+                    set((state) => {
+                        state.annotations = state.annotations.filter(a => a.id !== id);
+                    });
+                    const anchor = previous.anchorText !== undefined && previous.startOffset !== undefined
+                        ? { anchorText: previous.anchorText, startOffset: previous.startOffset }
+                        : undefined;
+                    get().addAnnotation(previous.normaKey, previous.articleId, newText, anchor);
+                    return;
+                }
                 // Optimistic update first so the UI reflects the edit
                 // immediately; revert in catch if the server rejects.
                 set((state) => {
@@ -2085,6 +2534,12 @@ const appStore = createStore<AppState>()(
                 annotationService.update(id, { content: newText }).catch((err) => {
                     if (err?.status === 404) return;
                     console.error('Failed to sync annotation update:', err);
+                    // Too long: the edit stays on screen, the server keeps the text before it, and says why.
+                    const detail = tooLongDetail(err);
+                    if (detail) {
+                        get().pushSyncError(detail);
+                        return;
+                    }
                     set((state) => {
                         const a = state.annotations.find(x => x.id === id);
                         if (a) a.text = previous.text;
@@ -2111,7 +2566,8 @@ const appStore = createStore<AppState>()(
                 try {
                     const wirePrefix = buildWireNormaKeyPrefix(normaKey, articleRoot);
                     const server = await annotationService.getByNormaKeyPrefix(wirePrefix);
-                    const mapped = server.map(annotationApiToStore);
+                    // One waiting behind «Annulla» is not drawn back: the server still has it until then.
+                    const mapped = server.map(annotationApiToStore).filter(a => !isRemovalPending(`annotation:${a.id}`));
                     set((state) => {
                         // Replace every annotation whose articleId sits under
                         // this article root (main body + its sub-sections)
@@ -2134,9 +2590,9 @@ const appStore = createStore<AppState>()(
 
             // ── Highlight actions: optimistic update + server sync ─────────
             addHighlight: (normaKey, articleId, text, range, color, startOffset) => {
-                const tempId = uuidv4();
+                if (holdsHighlight(normaKey, articleId, text, startOffset, color)) return;
                 const optimistic: Highlight = {
-                    id: tempId,
+                    id: uuidv4(),
                     normaKey,
                     articleId,
                     text,
@@ -2145,43 +2601,159 @@ const appStore = createStore<AppState>()(
                     ...(typeof startOffset === 'number' ? { startOffset } : {}),
                 };
                 set((state) => { state.highlights.push(optimistic); });
-
-                const wirePayload = highlightStoreToCreate(optimistic);
-                if (!wirePayload) {
-                    // No startOffset — cannot persist server-side. Keep the
-                    // optimistic entry local only (legacy behaviour).
-                    return;
-                }
-
-                highlightService
-                    .create(wirePayload)
-                    .then((serverHighlight) => {
-                        const mapped = highlightApiToStore(serverHighlight);
-                        set((state) => {
-                            const idx = state.highlights.findIndex(h => h.id === tempId);
-                            if (idx !== -1) state.highlights[idx] = mapped;
-                        });
-                    })
-                    .catch((err) => {
-                        console.error('Failed to sync highlight:', err);
-                        set((state) => {
-                            state.highlights = state.highlights.filter(h => h.id !== tempId);
-                        });
-                        get().pushSyncError('Impossibile salvare l\'evidenziazione. Riprova.');
-                    });
+                const saved = new Map<string, boolean>();
+                void saveHighlight(optimistic).then((ok) => { saved.set(optimistic.id, ok); });
+                // A gesture of its own (A4): said to a screen reader only, taken back by the shortcut.
+                holdGesture<Highlight>({
+                    message: `Testo evidenziato in ${highlightColorName(color)}`,
+                    onScreen: () => isTextShown(normaKey),
+                    targets: [],
+                    putBack: () => {},
+                    onRefused: highlightDeleteRefused,
+                    onUndo: () => takeBackCreated([optimistic], saved),
+                });
             },
 
+            editHighlights: ({ normaKey, articleId, remove, recolor, reshape = [], add, message }) => {
+                const before = get().highlights;
+                // In the order they stood, so each goes back to its own place.
+                const removed = remove
+                    .flatMap((id) => {
+                        const index = before.findIndex(h => h.id === id);
+                        return index === -1 ? [] : [{ index, item: before[index] }];
+                    })
+                    .sort((a, b) => a.index - b.index);
+                const recolored = recolor.flatMap(({ id, color }) => {
+                    const item = before.find(h => h.id === id);
+                    return item && item.color !== color ? [{ id, from: item.color, to: color }] : [];
+                });
+                // A highlight with an author keeps its row with other words (#411): its range and colour change in place.
+                const reshaped = reshape.flatMap(({ id, text, startOffset, color }) => {
+                    const item = before.find(h => h.id === id);
+                    if (!item || (item.text === text && item.startOffset === startOffset && item.color === color)) return [];
+                    return [{ id, from: { text: item.text, startOffset: item.startOffset, color: item.color }, to: { text, startOffset, color } }];
+                });
+                const kept = [...remove, ...reshaped.map(r => r.id)];
+                // One that would repeat a highlight that stays, or another part, is not made.
+                const fresh = add.filter((part, i) => !holdsHighlight(normaKey, articleId, part.text, part.startOffset, part.color, kept)
+                    && add.findIndex(p => p.text === part.text && p.startOffset === part.startOffset && p.color === part.color) === i);
+                // A part keeps what the server holds of its highlight beyond the words (its `note`, unused here), and the
+                // first author of one from the Forum (gotcha 21), which the server copies from it (`splitFrom`, #412).
+                const origins = fresh.map((part) => (part.from ? before.find(h => h.id === part.from) : undefined));
+                const created: Highlight[] = fresh.map((part, i) => {
+                    const origin = origins[i];
+                    return {
+                        id: uuidv4(), normaKey, articleId, text: part.text, rangeSerialized: '', color: part.color, startOffset: part.startOffset,
+                        ...(origin?.note ? { note: origin.note } : {}),
+                        ...(origin && hasAuthor(origin)
+                            ? { sourceSuggestionId: origin.sourceSuggestionId ?? null, originalAuthor: origin.originalAuthor ?? null }
+                            : {}),
+                    };
+                });
+                set((state) => {
+                    const gone = new Set(removed.map(({ item }) => item.id));
+                    state.highlights = state.highlights.filter(h => !gone.has(h.id));
+                    for (const { id, to } of recolored) {
+                        const h = state.highlights.find(x => x.id === id);
+                        if (h) h.color = to;
+                    }
+                    for (const { id, to } of reshaped) {
+                        const h = state.highlights.find(x => x.id === id);
+                        if (h) Object.assign(h, to);
+                    }
+                    state.highlights.push(...created);
+                });
+                // The parts and the ranges are sent at once; the removals wait for them (a page that goes first keeps the
+                // highlight whole), and a part or a range refused takes the whole gesture back.
+                const saved = new Map<string, boolean>();
+                const creations = created.map((part, i) => {
+                    const origin = origins[i];
+                    return saveHighlight(part, origin && hasAuthor(origin) ? origin.id : undefined).then((ok) => { saved.set(part.id, ok); return ok; });
+                });
+                const ranges = reshaped.map(({ id, from, to }) => sendHighlightUpdate(id, to, from));
+                const ready = creations.length + ranges.length > 0
+                    ? Promise.all([...creations, ...ranges]).then((all) => all.every(Boolean))
+                    : undefined;
+                for (const { id, from, to } of recolored) void sendHighlightUpdate(id, { color: to }, { color: from });
+
+                const putBack = (item: Highlight) => set((state) => {
+                    if (state.highlights.some(h => h.id === item.id)) return;
+                    const index = removed.find(r => r.item.id === item.id)?.index ?? state.highlights.length;
+                    state.highlights.splice(Math.min(index, state.highlights.length), 0, item);
+                });
+                // No notification (A4, 5 November): said to a screen reader, taken back by the shortcut while it is the
+                // last gesture, its removals held until the next.
+                holdGesture({
+                    message,
+                    onScreen: () => isTextShown(normaKey),
+                    targets: removed.map(({ item }) => ({
+                        key: `highlight:${item.id}`,
+                        path: `/highlights/${encodeURIComponent(item.id)}`,
+                        remove: () => highlightService.delete(item.id),
+                        item,
+                    })),
+                    putBack,
+                    onRefused: highlightDeleteRefused,
+                    ready,
+                    // The parts go (once created, when they are still on their way), the colours and the ranges come back.
+                    onUndo: () => {
+                        const parts = takeBackCreated(created, saved);
+                        const back = (id: string, to: HighlightShape, from: HighlightShape, written?: Promise<boolean>) => {
+                            // Recorded under a temporary id, it may have its server id by now.
+                            const current = serverIdOf(id);
+                            // Only while it still shows what this gesture gave it: a later gesture's colour or range
+                            // (taken back after it, a part refused late) stands, on screen and on the server.
+                            const h = get().highlights.find(x => x.id === current || x.id === id);
+                            if (!h || !isShaped(h, from)) return;
+                            set((state) => {
+                                const now = state.highlights.find(x => x.id === current || x.id === id);
+                                if (now) Object.assign(now, to);
+                            });
+                            // One refused is back already, on the server and on screen.
+                            void (written ?? Promise.resolve(true)).then((ok) => { if (ok) void sendHighlightUpdate(current, to, from); });
+                        };
+                        for (const { id, from, to } of recolored) back(id, { color: from }, { color: to });
+                        reshaped.forEach(({ id, from, to }, i) => back(id, from, to, ranges[i]));
+                        return parts || recolored.length > 0 || reshaped.length > 0;
+                    },
+                });
+            },
+
+            setReadingTool: (tool) => set((state) => {
+                state.readingTool = tool;
+            }),
+
+            setNoteToolKind: (kind) => set((state) => {
+                state.noteToolKind = kind;
+            }),
+
+            setHighlighterInk: (ink) => set((state) => {
+                state.highlighterEraser = ink === 'none';
+                if (ink !== 'none') state.settings.highlightColor = ink;
+            }),
+
+            // A gesture of the reader's (A4): no notification, taken back by the shortcut, sent with the next gesture.
             removeHighlight: (id) => {
-                const previous = get().highlights.find(h => h.id === id);
+                const index = get().highlights.findIndex(h => h.id === id);
+                if (index === -1) return;
+                const previous = get().highlights[index];
                 set((state) => {
                     state.highlights = state.highlights.filter(h => h.id !== id);
                 });
-                if (!previous) return;
-                highlightService.delete(id).catch((err) => {
-                    if (err?.status === 404) return;
-                    console.error('Failed to sync highlight delete:', err);
-                    set((state) => { state.highlights.push(previous); });
-                    get().pushSyncError('Impossibile eliminare l\'evidenziazione. Riprova.');
+                holdGesture({
+                    message: 'Evidenziazione rimossa',
+                    onScreen: () => isTextShown(previous.normaKey),
+                    targets: [{
+                        key: `highlight:${id}`,
+                        path: `/highlights/${encodeURIComponent(id)}`,
+                        remove: () => highlightService.delete(id),
+                        item: previous,
+                    }],
+                    putBack: (item) => set((state) => {
+                        if (state.highlights.some(h => h.id === item.id)) return;
+                        state.highlights.splice(Math.min(index, state.highlights.length), 0, item);
+                    }),
+                    onRefused: highlightDeleteRefused,
                 });
             },
 
@@ -2198,7 +2770,8 @@ const appStore = createStore<AppState>()(
                 try {
                     const wirePrefix = buildWireNormaKeyPrefix(normaKey, articleRoot);
                     const server = await highlightService.getByNormaKeyPrefix(wirePrefix);
-                    const mapped = server.map(highlightApiToStore);
+                    // One waiting behind «Annulla» is not drawn back: the server still has it until then.
+                    const mapped = server.map(highlightApiToStore).filter(h => !isRemovalPending(`highlight:${h.id}`));
                     set((state) => {
                         state.highlights = state.highlights
                             .filter(h => !(
@@ -2538,7 +3111,8 @@ const appStore = createStore<AppState>()(
                     }
                 }
             }
-        })),
+        };
+        }),
         {
             name: STORAGE_NAME,
             // A write the browser refuses (a full localStorage) is caught, never thrown out of `set` (T20).
@@ -2551,14 +3125,11 @@ const appStore = createStore<AppState>()(
             partialize: (state) => ({
                 settings: state.settings,
                 searchPanelState: state.searchPanelState,
-                // Narrowed on purpose: the parked position is worth keeping,
-                // the owning block id is not — it would rehydrate a window
-                // belonging to a block that no longer exists.
-                structureWindow: { position: state.structureWindow.position, blockId: null },
-                // The practices are UI state too (spec D6); the open rows, the pending reveal and
-                // the notice are the session's.
-                practices: state.practices,
-                activePracticeId: state.activePracticeId,
+                // LC60: the Ricerca's table is the session's, and so is a table bound to a dossier (LC51). Only the
+                // Corpus's practices of before stay saved, until the riquadro is answered; the open rows, the pending
+                // reveal and the notice are the session's.
+                practices: state.corpusPracticesPending ? corpusPractices(state.practices) : [],
+                activePracticeId: state.corpusPracticesPending ? state.activePracticeId : null,
                 // Every other user-data slice is server-backed and hydrated by
                 // fetchUserData, so it does not survive in localStorage —
                 // persisting would cause drift with the server. The practices
@@ -2585,6 +3156,10 @@ const appStore = createStore<AppState>()(
                     settings: {
                         ...DEFAULT_SETTINGS,
                         ...(p.settings ?? {}),
+                        // Only a colour this app draws: an older or damaged save gets the default.
+                        highlightColor: isHighlightColor(p.settings?.highlightColor) ? p.settings.highlightColor : DEFAULT_SETTINGS.highlightColor,
+                        // A meaning of the user's only where it is one (trimmed, 1–40 characters); the rest is the default.
+                        highlightColorMeanings: sanitizeHighlightMeanings(p.settings?.highlightColorMeanings),
                         studyMode: {
                             ...DEFAULT_SETTINGS.studyMode,
                             ...(p.settings?.studyMode ?? {}),
@@ -2618,12 +3193,12 @@ function newPractice(label: string, custom: boolean): Practice {
 /**
  * Where a search or the index lands (T11, §5.1): the practice `wanted` names; `null`, or an id that
  * names no practice (closed meanwhile, warned with its id), means the active practice, created when
- * there is none (named `label()`) and then made active. Pure over the plain state.
+ * there is none (named `label`, else «Ricerca del …» and today's date, LC68) and then made active. Pure over the plain state.
  */
 function landingPractice(
     state: Pick<AppState, 'practices' | 'activePracticeId'>,
     wanted: string | null,
-    label: () => string,
+    label: string | undefined,
     caller: string,
 ): { practices: Practice[]; practice: Practice; activePracticeId: string | null } {
     const { practices, activePracticeId } = state;
@@ -2634,7 +3209,7 @@ function landingPractice(
     }
     const active = practices.find((p) => p.id === activePracticeId);
     if (active) return { practices, practice: active, activePracticeId };
-    const created = newPractice(label(), false);
+    const created = newPractice(labelOr(label, searchTableLabel(new Date())), false);
     return { practices: [...practices, created], practice: created, activePracticeId: created.id };
 }
 
@@ -2649,8 +3224,68 @@ function foldedBy(state: AppState, practiceId: string, subject: PracticeSubject)
 /** Makes a practice the one on screen. The phone's reader belongs to one practice: another one
  *  coming on screen takes the reader off, in the same update (T19). */
 function activate(state: AppState, practiceId: string): void {
-    if (state.phoneReader && state.phoneReader.practiceId !== practiceId) state.phoneReader = null;
+    if (isBound(state, practiceId)) return;
+    if (state.phoneReader && state.phoneReader.practiceId !== practiceId) readerGivesWay(state, practiceId);
     state.activePracticeId = practiceId;
+}
+
+/** The phone's reader gives way to `practiceId` when it is that practice's, or when both are the Corpus's (T19). A bound
+ *  table's reader and the Corpus's never close each other (LC52 c2). */
+function readerGivesWay(state: AppState, practiceId: string): void {
+    const reader = state.phoneReader;
+    if (!reader) return;
+    if (reader.practiceId === practiceId || (!isBound(state, reader.practiceId) && !isBound(state, practiceId))) {
+        state.phoneReader = null;
+    }
+}
+
+/** A practice comes on screen without touching the phone's reader; a bound table never does (LC51). */
+function putOnScreen(state: AppState, practiceId: string): void {
+    if (!isBound(state, practiceId)) state.activePracticeId = practiceId;
+}
+
+function isBound(state: Pick<AppState, 'practices'>, practiceId: string): boolean {
+    const practice = state.practices.find((p) => p.id === practiceId);
+    return !!practice && isBoundPractice(practice);
+}
+
+/** Decisions whose identity is known into `practice`, identified and closed; one entry per decision (T17). */
+function mergeKnownDecisions(
+    practice: Practice,
+    decisions: Array<DecisionIdentity & { sezione?: string; tipo?: string; data_deposito?: string }>,
+): void {
+    for (const known of decisions) {
+        const reference = identityOf(known);
+        const entry: PracticeDecision = {
+            id: uuidv4(), reference, label: formatDecisionShort({ ...reference, sezione: known.sezione }), identified: true,
+        };
+        if (known.data_deposito) entry.depositDate = known.data_deposito;
+        if (known.tipo) entry.tipo = known.tipo;
+        if (known.sezione) entry.sezione = known.sezione;
+        const at = practice.decisions.findIndex((d) => sameDecision(d.reference, reference));
+        if (at < 0) practice.decisions.push(entry);
+        else practice.decisions[at] = mergeDecisionEntries(practice.decisions[at], entry);
+    }
+}
+
+/**
+ * A bound table takes its dossier (LC51 c1): the title, each article as a row of its act WITHOUT its text (read when
+ * the row opens), the decisions as «Apri tutto» adds them (`openInPractice.ts`). Additive: acts, rows and decisions
+ * already there keep their ids, so the open rows and the windows stay.
+ */
+function syncFromDossier(practice: Practice, dossier: Dossier): void {
+    practice.label = labelOr(dossier.title, DEFAULT_PRACTICE_LABEL);
+    for (const item of dossier.items) {
+        if (item.type !== 'norma') continue;
+        const { article_text: _text, ...norma_data } = item.data;
+        void _text;
+        const act: Norma = { tipo_atto: norma_data.tipo_atto, data: norma_data.data, numero_atto: norma_data.numero_atto };
+        if (norma_data.tipo_atto_reale) act.tipo_atto_reale = norma_data.tipo_atto_reale;
+        // The act's URN, as a search gives it (an article's): its «Struttura» and «PDF» need it (LC54).
+        if (norma_data.urn) act.urn = norma_data.urn;
+        practice.acts = addArticles(practice.acts, act, [{ norma_data }], uuidv4).acts;
+    }
+    mergeKnownDecisions(practice, dossier.items.flatMap((item) => (item.type === 'sentenza' ? [item.data] : [])));
 }
 
 /** Opens a row and asks for it to be revealed; unfolds its act, which would hide it. The row moves
@@ -2664,7 +3299,7 @@ function revealRow(state: AppState, practiceId: string, actId: string, articleKe
     delete state.practiceRows[rowKey];
     state.practiceRows[rowKey] = true;
     // A row is revealed in the table: the phone's reader, which replaces the column, gives way.
-    state.phoneReader = null;
+    readerGivesWay(state, practiceId);
     const window_ = foldedBy(state, practiceId, { kind: 'article', actId, articleKey });
     if (window_) state.windowFocusRequest = window_;
     else state.pendingReveal = { practiceId, rowKey };
@@ -2746,13 +3381,16 @@ function practiceBackEntry(state: AppState, entry: ReadingBackEntry): PracticeBa
 function walkBackTo(state: AppState, entry: PracticeBackEntry): void {
     const practice = state.practices.find((p) => p.id === entry.practiceId);
     if (!practice) return;
-    state.activePracticeId = practice.id;
+    putOnScreen(state, practice.id);
     const { subject } = entry;
     if (!isDesktopViewport()) {
         // A phone has no windows: a subject read beside is read in the full-screen reader, and a row of
         // the table is revealed with the reader closed (T19).
-        state.phoneReader = entry.place === 'beside' ? { practiceId: practice.id, ref: besideRefFor(subject) } : null;
-        if (entry.place === 'beside') return;
+        if (entry.place === 'beside') {
+            state.phoneReader = { practiceId: practice.id, ref: besideRefFor(subject) };
+            return;
+        }
+        readerGivesWay(state, practice.id);
     }
     if (entry.place === 'beside') {
         const ref = besideRefFor(subject);
@@ -2770,7 +3408,7 @@ function walkBackTo(state: AppState, entry: PracticeBackEntry): void {
 function revealDecisionRow(state: AppState, practiceId: string, decisionId: string): void {
     const rowKey = decisionRowKey(practiceId, decisionId);
     state.practiceRows[rowKey] = true;
-    state.phoneReader = null;
+    readerGivesWay(state, practiceId);
     const window_ = foldedBy(state, practiceId, { kind: 'decision', decisionId });
     if (window_) state.windowFocusRequest = window_;
     else state.pendingReveal = { practiceId, rowKey };
@@ -2891,7 +3529,7 @@ function migratePersisted(persisted: unknown, from: number): Record<string, unkn
  *  logged once (gotcha 18); nothing is thrown, since a throw in `merge` would reset the store. The
  *  session-only fields start empty, whatever the storage holds, except the migration's notice. */
 function practicesOnLoad(persisted: unknown): Pick<AppState,
-    'practices' | 'activePracticeId' | 'practiceRows' | 'pendingReveal' | 'practiceNotice'> {
+    'practices' | 'activePracticeId' | 'practiceRows' | 'pendingReveal' | 'practiceNotice' | 'corpusPracticesPending'> {
     const p = (persisted ?? {}) as { practices?: unknown; activePracticeId?: unknown };
     const sanitized = sanitizePractices(p.practices);
     const dropped = [...sanitized.dropped];
@@ -2908,7 +3546,8 @@ function practicesOnLoad(persisted: unknown): Pick<AppState,
     warnDropped(dropped);
     const practiceNotice = migrationNotice;
     migrationNotice = null;
-    return { practices, activePracticeId, practiceRows: {}, pendingReveal: null, practiceNotice };
+    // LC60: what a load finds are the Corpus's practices of before, waiting for the riquadro.
+    return { practices, activePracticeId, practiceRows: {}, pendingReveal: null, practiceNotice, corpusPracticesPending: practices.length > 0 };
 }
 
 /** A save the browser refused (T20): logged once a session with the key, the size and the error's
@@ -2920,7 +3559,7 @@ function reportSaveFailure({ name, bytes, error }: StorageFailure): void {
     const errorName = (error as { name?: unknown } | null)?.name;
     console.error(`persist: the browser refused to save "${name}" (${bytes} bytes): ${typeof errorName === 'string' ? errorName : String(error)}`, error);
     queueMicrotask(() => {
-        appStore.getState().pushSyncError('Lo spazio del browser è esaurito: il tavolo di lavoro potrebbe non essere salvato. Chiudi qualche pratica.');
+        appStore.getState().pushSyncError('Lo spazio del browser è esaurito: le impostazioni potrebbero non essere salvate.');
     });
 }
 

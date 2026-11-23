@@ -8,6 +8,9 @@ import { subjectHue } from './components/features/studia/progress/tokens';
 import { MATERIA_LABEL } from './components/features/studia/studiaLabels';
 import type { Materia } from './types/studia';
 import { FOCUS_BUTTON_CLEARANCE } from './components/layout/PageFrame';
+import { CARD_GRID_COLUMNS, FULL_PAGE_FRAME, PAGE_FRAME } from './components/layout/frame';
+import { OVERVIEW_GRID } from './components/features/practice/besideLayout';
+import { PLACE_CHANGE, dur } from './lib/motion';
 
 /**
  * Tailwind failures are silent: a class whose token the theme never declares
@@ -45,19 +48,77 @@ describe('the primary colour scale', () => {
   }, 30000);
 });
 
-describe('the page frame (W2)', () => {
-  it('compiles the room a header leaves for the Focus button, from `lg`', async () => {
-    const css = await compile([FOCUS_BUTTON_CLEARANCE]);
-    expect(css).toMatch(/padding-right:\s*clamp\(0px,\s*calc\(2\.75rem - \(100vw - var\(--sidebar-width,\s*0px\) - 80rem\) \/ 2\),\s*2\.75rem\)/);
-    expect(css).toContain('@media (width >= 64rem)');
+describe('the page frame (W2, U1)', () => {
+  it('compiles the room a top row leaves for the full-screen button, against the frame\'s own width, where `Layout` says it floats', async () => {
+    const css = await compile([FOCUS_BUTTON_CLEARANCE, 'lg:[--focus-button-room:4.25rem]', 'md:[--focus-button-room:4.25rem]']);
+    expect(css).toMatch(/padding-right:\s*max\(0px,\s*calc\(var\(--focus-button-room,\s*0px\) - \(100vw - var\(--sidebar-width,\s*0px\) - 100%\) \/ 2\)\)/);
+    expect(css).toMatch(/@media \(width >= 64rem\)\s*\{\s*--focus-button-room:\s*4\.25rem/);
+    expect(css).toMatch(/@media \(width >= 48rem\)\s*\{\s*--focus-button-room:\s*4\.25rem/);
   }, 30000);
+
+  it('declares the frame once, 1056 px (LC21) and 2400 in full screen, its margins outside it (U1)', async () => {
+    const css = await compile([...PAGE_FRAME.split(' '), 'max-w-frame', 'max-w-frame-full']);
+    expect(css).toMatch(/--container-frame:\s*66rem/);
+    expect(css).toMatch(/--container-frame-full:\s*150rem/);
+    expect(css).toMatch(/\.max-w-frame\s*\{\s*max-width:\s*var\(--container-frame\)/);
+    expect(css).toMatch(/\.max-w-frame-full\s*\{\s*max-width:\s*var\(--container-frame-full\)/);
+    // The margins are padding outside the frame: 16 px, 32 from `md`, 48 from 1536 px.
+    expect(css).toMatch(/\.box-content\s*\{\s*box-sizing:\s*content-box/);
+    expect(css).toContain('@media (width >= 96rem)');
+    expect(css).toMatch(/\.\\32 xl\\:px-12/);
+  }, 30000);
+
+  it('widens to the full screen\'s frame while a page that declares itself `full` is in it (U1)', async () => {
+    const css = await compile([FULL_PAGE_FRAME]);
+    expect(css).toMatch(/:has\(\*:is\(\[data-page-width=full\]\)\)\s*\{\s*max-width:\s*var\(--container-frame-full\)/);
+    // Not for a page that is leaving (LC84: `PageSlide`'s inert layer).
+    expect(css).toContain(':not([inert] *)');
+  }, 30000);
+
+  it('compiles the grid of cards of at least 20rem, and the Forum\'s packs turning into it by their own width (U1 §7)', async () => {
+    const band: [string, string][] = [
+      ['@min-[61.5rem]:grid', 'display: grid'],
+      ['@min-[61.5rem]:pb-1', 'padding-bottom:'],
+      ['@min-[61.5rem]:w-auto', 'width: auto'],
+      ['@min-[61.5rem]:overflow-x-visible', 'overflow-x: visible'],
+      ['@min-[61.5rem]:hidden', 'display: none'],
+    ];
+    const css = await compile([CARD_GRID_COLUMNS, '@container', ...band.map(([name]) => name)]);
+    expect(css).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(20rem,\s*100%\),\s*1fr\)\)/);
+    expect(css).toMatch(/\.\\@container\s*\{\s*container-type:\s*inline-size/);
+    // Each class's rule holds its declaration inside the query on the band's own width.
+    const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const [name, declaration] of band) {
+      // The class as CSS writes it in a selector: every character it escapes, the backslash first among them.
+      const selector = `.${name.replace(/[\\@[\].:]/g, '\\$&')}`;
+      expect(css).toMatch(new RegExp(`${literal(selector)}\\s*\\{\\s*@container \\(width >= 61\\.5rem\\)\\s*\\{\\s*${literal(declaration)}`));
+    }
+  }, 30000);
+});
+
+describe('the reading measure (U1)', () => {
+  it('is one value in the theme, 70 characters, read as `max-w-measure` and by the reading surface', async () => {
+    const css = await compile(['max-w-measure']);
+    expect(css).toMatch(/--container-measure:\s*70ch/);
+    expect(css).toMatch(/\.max-w-measure\s*\{\s*max-width:\s*var\(--container-measure\)/);
+    expect(css).toMatch(/\.vlx-art\s*\{[^}]*max-width:\s*var\(--container-measure\)/);
+  }, 30000);
+
+  it('writes the token\'s number in the signs\' container query, which cannot read a variable', () => {
+    const source = readFileSync(CSS_PATH, 'utf8');
+    const measure = source.match(/--container-measure:\s*(\d+)ch/)?.[1];
+    expect(measure).toBe('70');
+    expect(source).toContain(`@container vlx-frame (min-width: calc(${measure}ch + 14rem))`);
+    // No other measure in characters is left in the stylesheet.
+    expect([...source.matchAll(/\b(\d+)ch\b/g)].map((m) => m[1]).filter((n) => n !== measure)).toEqual([]);
+  });
 });
 
 describe('the reading surface', () => {
   it('compiles the sign rules and the container query that moves them to the margin', async () => {
     const css = await compile(['block']);
-    // Room for a sign with notes, four dots and discussions (~7rem) on each side of the 68ch column.
-    expect(css).toMatch(/@container\s+vlx-frame\s*\(min-width:\s*calc\(68ch \+ 14rem\)\)/);
+    // Room for a sign with notes, four dots and discussions (~7rem) on each side of the column at the reading measure.
+    expect(css).toMatch(/@container\s+vlx-frame\s*\(min-width:\s*calc\(70ch \+ 14rem\)\)/);
     expect(css).toContain('.vlx-sign-dot[data-color="yellow"]');
     expect(css).toContain('.vlx-sign-threads');
     expect(css).toContain('.vlx-thread-focus');
@@ -137,7 +198,8 @@ describe('the Inchiostro palette', () => {
       return (hi + 0.05) / (lo + 0.05);
     };
     const white = [1, 1, 1];
-    expect(ratio(rgb('ink-900'), rgb('ink-50'))).toBeGreaterThanOrEqual(15);
+    // 15 was Inchiostro's own figure; Pietra's text #2b2a28 on ground #f1eee8 is 12.4:1 by D-156, and AAA asks for 7.
+    expect(ratio(rgb('ink-900'), rgb('ink-50'))).toBeGreaterThanOrEqual(12);
     expect(ratio(rgb('ink-600'), rgb('ink-50'))).toBeGreaterThanOrEqual(6.5);
     expect(ratio(rgb('ink-500'), rgb('ink-50'))).toBeGreaterThanOrEqual(4.5);
     expect(ratio(rgb('toga-600'), rgb('ink-50'))).toBeGreaterThanOrEqual(6);
@@ -147,6 +209,84 @@ describe('the Inchiostro palette', () => {
     // A mission done (S2, `.vlx-mission-done`): ink 600 on the white tile, ink 300 on the dark one (ink 900).
     expect(ratio(rgb('ink-600'), white)).toBeGreaterThanOrEqual(4.5);
     expect(ratio(rgb('ink-300'), rgb('ink-900'))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('tints the selection with one stone over every paper, the text kept at AA and the tint seen (LC4)', () => {
+    // One rule for every paper: Study Mode's own papers hold islands of the app's theme (the note cards), so no ancestor
+    // can say which paper a selection is on. A translucent mid-tone, no text colour: a highlight under it keeps its hue.
+    // Browsers composite in gamma sRGB.
+    const source = readFileSync(CSS_PATH, 'utf8');
+    const linear = (name: string): number[] => {
+      const m = source.match(new RegExp(`--color-${name}:\\s*oklch\\(([\\d.]+)%\\s+([\\d.]+)\\s+([\\d.]+)\\)`));
+      if (!m) throw new Error(`--color-${name} not found`);
+      const [L, C, H] = [Number(m[1]) / 100, Number(m[2]), (Number(m[3]) * Math.PI) / 180];
+      const a = C * Math.cos(H), b = C * Math.sin(H);
+      const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+      const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+      const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+      return [
+        4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s,
+      ].map((v) => Math.min(1, Math.max(0, v)));
+    };
+    const gamma = (v: number) => (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055);
+    const unGamma = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    const over = (fg: number[], alpha: number, bg: number[]) => fg.map((c, i) => unGamma(alpha * gamma(c) + (1 - alpha) * gamma(bg[i])));
+    const hex = (h: string) => [1, 3, 5].map((i) => unGamma(parseInt(h.slice(i, i + 2), 16) / 255));
+    const hsl = (h: number, s: number, l: number): number[] => {
+      const [S, L] = [s / 100, l / 100];
+      const k = (n: number) => (n + h / 30) % 12;
+      const a = S * Math.min(L, 1 - L);
+      return [0, 8, 4].map((n) => unGamma(L - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
+    };
+    const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const ratio = (x: number[], y: number[]) => {
+      const [hi, lo] = [lum(x), lum(y)].sort((p, q) => q - p);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    // One `::selection`, at the top level (nothing before it on its line: no `.dark`, no Study Mode), no `color`.
+    const rules = [...source.matchAll(/^([^\n{}]*)::selection\s*\{([^}]*)\}/gm)];
+    expect(rules).toHaveLength(1);
+    const [, prefix, body] = rules[0];
+    expect(prefix.trim()).toBe('');
+    expect(body).not.toMatch(/(?:^|[\s;])color:/);
+    const m = body.match(/background-color:\s*rgb\((\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)\);/);
+    if (!m) throw new Error('::selection background-color not found');
+    const stone = [m[1], m[2], m[3]].map((v) => unGamma(Number(v) / 255));
+    const alpha = Number(m[4]);
+    const white = [1, 1, 1];
+    // [where, paper, its body text]
+    const papers: [string, number[], number[]][] = [
+      ['Pietra light background', linear('ink-50'), linear('ink-800')],
+      ['Pietra light surface #faf8f4', hex('#faf8f4'), linear('ink-800')],
+      ['Study Mode light (white)', white, linear('ink-900')],
+      ['Study Mode sepia', hex('#f4ecd8'), hex('#5c4b37')],
+      ['Pietra dark surface', linear('ink-900'), linear('ink-200')],
+      ['Pietra dark background', linear('ink-950'), linear('ink-200')],
+      ['Study Mode dark (slate 900)', linear('ink-900'), linear('ink-100')],
+      // The note cards and the «Nuova nota» field (MarginCards, NoteEditBox): the app's theme, inside Study Mode too.
+      ['note card, light app', white, linear('ink-800')],
+      ['note field, light app', white, linear('ink-900')],
+      ['note card, dark app', linear('ink-900'), linear('ink-200')],
+      ['note field, dark app', linear('ink-900'), linear('ink-100')],
+    ];
+    for (const [where, paper, text] of papers) {
+      const ground = over(stone, alpha, paper);
+      expect(ratio(text, ground), `${where}: text`).toBeGreaterThanOrEqual(4.5);
+      // Seen: the browser's own blue is about 1.5:1 from white.
+      expect(ratio(ground, paper), `${where}: tint`).toBeGreaterThanOrEqual(1.3);
+    }
+    // A selected highlight: its own text on its ground under the tint, light block then dark block (not touched).
+    const hl = (kind: 'bg' | 'fg') => [...source.matchAll(new RegExp(`--hl-(?:yellow|green|red|blue)-${kind}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%;`, 'g'))]
+      .map((h) => hsl(Number(h[1]), Number(h[2]), Number(h[3])));
+    const [grounds, texts] = [hl('bg'), hl('fg')];
+    expect(grounds).toHaveLength(8);
+    expect(texts).toHaveLength(8);
+    grounds.forEach((ground, i) => expect(ratio(texts[i], over(stone, alpha, ground)), `highlight ${i}`).toBeGreaterThanOrEqual(4.5));
+    // The native checkboxes, radios and ranges: the action's ink (toga, light in the dark table), not the browser's blue.
+    expect(source).toMatch(/:root\s*\{\s*accent-color:\s*var\(--color-toga-600\);/);
+    expect(source).toMatch(/\.dark\s*\{\s*accent-color:\s*var\(--color-toga-400\);/);
   });
 
   it('keeps the sidebar\'s 11 px texts at AA on its glass, over the page and over the phone\'s backdrop', () => {
@@ -354,26 +494,6 @@ describe('the Inchiostro palette', () => {
   });
 });
 
-describe('the tours (driver.js)', () => {
-  it('make every button of the popover a 44 px target with a focus ring', () => {
-    const css = readFileSync(CSS_PATH, 'utf8');
-    const rule = (selector: string) => {
-      const at = css.indexOf(`${selector} {`);
-      expect(at, selector).toBeGreaterThan(-1);
-      return css.slice(at, css.indexOf('}', at));
-    };
-    const footer = rule('.driver-popover.visualex-tour-popover .driver-popover-footer button');
-    expect(footer).toMatch(/min-height:\s*44px/);
-    // driver.js sets `display` inline on these buttons: the label is centred by its line height.
-    expect(footer).toMatch(/font:\s*500 13px\/42px/);
-    expect(footer).not.toMatch(/display:/);
-    const close = rule('.driver-popover.visualex-tour-popover .driver-popover-close-btn');
-    expect(close).toMatch(/width:\s*44px/);
-    expect(close).toMatch(/height:\s*44px/);
-    expect(css).toMatch(/\.driver-popover-close-btn:focus-visible:not\(\[data-pointer-focus\]\)\s*\{\s*outline:\s*2px solid/);
-  });
-});
-
 describe('the entrance utilities', () => {
   it('turn animate-in, fade-in, zoom-in-N and slide-in-from-* into real rules', async () => {
     const css = await compile(['animate-in', 'fade-in', 'fade-in-0', 'zoom-in-95', 'slide-in-from-bottom', 'slide-in-from-top-2', 'slide-in-from-right-10', 'slide-in-from-left-2']);
@@ -449,8 +569,39 @@ describe('the interaction constants', () => {
     const css = await compile([ACTIVE, HOVER_LIFT, ...FOCUS_RING.split(' ')]);
     expect(css).toMatch(/\.active\\:scale-\\\[0\\\.97\\\][^{]*\{\s*&:active\s*\{\s*scale:\s*0\.97/);
     expect(css).toMatch(/pointer\\:fine\\\)\\\]\\:hover\\:-translate-y-px\s*\{\s*@media \(hover:hover\) and \(pointer:fine\)/);
-    expect(css).toContain('.focus-visible\\:ring-toga-500');
-    expect(css).toContain('.focus-visible\\:ring-offset-background');
+    // LC146: the shared focus token draws no ring any more (the rules at the end of index.css draw the focus).
+    expect(FOCUS_RING).not.toMatch(/ring/);
+  }, 30000);
+
+  it('draws no ring or halo on a field, a quiet border instead; a thin outline on the keyboard for the rest (LC146)', async () => {
+    const css = await compile(['focus-visible:ring-2', 'focus:ring-2', 'ring-offset-2']);
+    const at = css.lastIndexOf(':root', css.indexOf('--focus-line: var(--color-ink-500)'));
+    expect(at).toBeGreaterThan(-1);
+    const tail = css.slice(at);
+    const rule = (head: string) => tail.slice(tail.indexOf(head), tail.indexOf('}', tail.indexOf(head)));
+    expect(rule(':root')).toMatch(/--focus-line:\s*var\(--color-ink-500\)/);
+    expect(rule('.dark')).toMatch(/--focus-line:\s*var\(--color-ink-400\)/);
+    // Every focused element has its ring variables cleared: no `ring-*` utility shows.
+    expect(rule(':focus,')).toMatch(/--tw-ring-shadow:\s*0 0 #0000[^}]*--tw-ring-offset-shadow:\s*0 0 #0000/);
+    // Not a field: 1.5 px, offset 1 px, only for :focus-visible.
+    expect(rule(':focus-visible:not(input')).toMatch(/outline:\s*1\.5px solid var\(--focus-line\)[^}]*outline-offset:\s*1px/);
+    // A field: no outline, no shadow, the border one step darker, for :focus and :focus-visible alike.
+    const field = rule(':is(input, textarea, select):is(:focus, :focus-visible)');
+    expect(field).toMatch(/outline:\s*none/);
+    expect(field).toMatch(/box-shadow:\s*none/);
+    expect(field).toMatch(/border-color:\s*var\(--focus-line\)/);
+    // Outside every layer, so it wins over the utilities.
+    for (const layer of css.matchAll(/@layer [\w-]+\s*\{/g)) {
+      let depth = 0;
+      let end = layer.index! + layer[0].length - 1;
+      for (; end < css.length; end += 1) {
+        if (css[end] === '{') depth += 1;
+        else if (css[end] === '}' && (depth -= 1) === 0) break;
+      }
+      expect(at < layer.index! || at > end, layer[0]).toBe(true);
+    }
+    // The old base rule that drew a 2 px ring on every control is gone.
+    expect(css).not.toMatch(/button:focus-visible,\s*a:focus-visible/);
   }, 30000);
 });
 
@@ -487,18 +638,62 @@ describe('Gymnasium\'s small motions (S2)', () => {
     }
   });
 
-  it('compiles the lesson bar\'s spring, its delay and the head', async () => {
-    const css = await compile([
-      'motion-safe:ease-(--ease-catch)',
-      'motion-safe:delay-[70ms]',
-      'motion-safe:duration-150',
-      'motion-safe:duration-300',
-      'vlx-lesson-head',
-    ]);
-    expect(css).toMatch(/transition-timing-function:\s*var\(--ease-catch\)/);
-    expect(css).toMatch(/--ease-catch:\s*linear\(0,/);
-    expect(css).toMatch(/transition-delay:\s*70ms/);
-    expect(css).toMatch(/\.vlx-lesson-head\s*\{\s*background:\s*var\(--vlx-gymnasium-wash\)/);
+  it('gives the four sections one tile, Work\'s, in Pietra, in the light theme and in the dark one (LC16)', () => {
+    // The hues were VisuaLex's (Learn blue, Labs ochre, Forum teal): every section now reads Work's value, and the
+    // switcher's mark is one rule, not one per section.
+    const source = readFileSync(CSS_PATH, 'utf8');
+    for (const scope of [/:root\s*\{([^}]*--vlx-section-opus[^}]*)\}/, /\.dark\s*\{([^}]*--vlx-section-opus[^}]*)\}/]) {
+      const block = source.match(scope)![1];
+      const value = (name: string) => block.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1].trim();
+      const work = value('--vlx-section-opus');
+      expect(work).toMatch(/^var\(--color-toga-\d+\)$/);
+      for (const id of ['gymnasium', 'academia', 'forum']) expect(value(`--vlx-section-${id}`), id).toBe(work);
+    }
+    expect(source).not.toMatch(/\.vlx-section-mark\[data-section=/);
+  });
+
+  it('keeps the lesson bar\'s ink over 3:1 on its track, and the wash in Pietra\'s stone', () => {
+    const source = readFileSync(CSS_PATH, 'utf8');
+    expect(source).toMatch(/:root\s*\{[^}]*--vlx-gymnasium-bar:\s*var\(--color-toga-600\)/);
+    expect(source).toMatch(/\.dark\s*\{[^}]*--vlx-gymnasium-bar:\s*var\(--color-toga-500\)/);
+    for (const scope of [/:root\s*\{([^}]*--vlx-gymnasium-wash[^}]*)\}/, /\.dark\s*\{([^}]*--vlx-gymnasium-wash[^}]*)\}/]) {
+      expect(source.match(scope)![1]).toMatch(/--vlx-gymnasium-wash:\s*var\(--vlx-pietra\)/);
+    }
+  });
+
+  it('keeps every mark\'s icon at AA on its paper ground in the dark theme (the switcher writes `text-white`)', () => {
+    const source = readFileSync(CSS_PATH, 'utf8');
+    // The icon's colour is the one the dark rule declares; with no rule it is the switcher's white.
+    const declared = source.match(/\.dark \.vlx-section-mark\s*\{\s*color:\s*var\(--color-([\w-]+)\)/)?.[1];
+    const ground = source.match(/\.dark\s*\{[^}]*--vlx-section-opus:\s*var\(--color-([\w-]+)\)/)![1];
+    // The last declaration of a token is its dark value (the dark table follows the light one).
+    const rgb = (name: string): number[] => {
+      const m = [...source.matchAll(new RegExp(`--color-${name}:\\s*oklch\\(([\\d.]+)%\\s+([\\d.]+)\\s+([\\d.]+)\\)`, 'g'))].at(-1);
+      if (!m) throw new Error(`--color-${name} not found`);
+      const [L, C, H] = [Number(m[1]) / 100, Number(m[2]), (Number(m[3]) * Math.PI) / 180];
+      const a = C * Math.cos(H), b = C * Math.sin(H);
+      const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+      const mm = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+      const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+      return [
+        4.0767416621 * l - 3.3077115913 * mm + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * mm - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * mm + 1.707614701 * s,
+      ].map((v) => Math.min(1, Math.max(0, v)));
+    };
+    const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const ratio = (x: number[], y: number[]) => {
+      const [hi, lo] = [lum(x), lum(y)].sort((p, q) => q - p);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const icon = declared ? rgb(declared) : [1, 1, 1];
+    expect(ratio(icon, rgb(ground))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('compiles the lesson bar\'s one ink, with no spring left (LC129)', async () => {
+    const css = await compile(['vlx-lesson-ink']);
+    expect(css).toMatch(/\.vlx-lesson-ink\s*\{\s*background:\s*var\(--vlx-gymnasium-bar\)/);
+    expect(css).not.toMatch(/--ease-catch/);
   }, 30000);
 
   it('draws the inked mission and the landing digit, and stills them under reduced motion', async () => {
@@ -509,6 +704,68 @@ describe('Gymnasium\'s small motions (S2)', () => {
   }, 30000);
 });
 
+describe('the practice in two views (U2)', () => {
+  it('the overview\'s grid, the decisions\' strip and its open row, and the index\'s entries all generate CSS', async () => {
+    const strip = ['border-emerald-200/70', 'bg-emerald-50/40', 'dark:border-emerald-900/50', 'dark:bg-emerald-950/20'];
+    const css = await compile([
+      ...OVERVIEW_GRID.split(' '), ...strip, 'grid-cols-[repeat(auto-fill,minmax(min(26rem,100%),1fr))]',
+      '[&>[data-row-open]]:col-span-full', 'min-h-9', 'md:flex-initial',
+    ]);
+    expect(css).toMatch(/grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(min\(38\.75rem,\s*100%\),\s*1fr\)\)/);
+    expect(css).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(26rem,\s*100%\),\s*1fr\)\)/);
+    expect(css).toMatch(/>\s*\[data-row-open\][^{]*\{\s*grid-column:\s*1\s*\/\s*-1/);
+    expect(css).toMatch(/\.min-h-9\s*\{\s*min-height:/);
+    for (const name of strip) {
+      // The class as CSS writes it in a selector: every character it escapes, the backslash first among them.
+      const selector = `.${name.replace(/[\\/:.]/g, '\\$&')}`;
+      expect(css, name).toContain(selector);
+    }
+  }, 30000);
+});
+
+describe('the passage between the practice\'s two views (U2, L-62)', () => {
+  it('names its pieces only while it plays, lasts `PLACE_CHANGE` (180 ms) on the ease-out curve, and brings the windows in from the right', async () => {
+    const css = await compile([]);
+    // Named only under the root's class: at rest a piece is no stacking context (gotcha 22).
+    expect(css).toMatch(/\.vlx-practice-switching \.vlx-vt\s*\{\s*view-transition-name:\s*var\(--vlx-vt\)/);
+    expect(css).not.toMatch(/(^|\})\s*\.vlx-vt\s*\{/);
+    // A change of place (LC133): `--dur-pop`, the 180 ms of `PLACE_CHANGE`, for the group and both pictures.
+    const duration = css.match(/\.vlx-practice-switching::view-transition-group\(\*\)\s*\{\s*animation-duration:\s*var\(--dur-(\w+)\);\s*animation-timing-function:\s*var\(--ease-out\)/);
+    expect(duration).not.toBeNull();
+    expect(dur[duration![1] as keyof typeof dur] * 1000).toBe(PLACE_CHANGE.duration);
+    expect(css).toMatch(/::view-transition-new\(\*\)\s*\{[^}]*animation-duration:\s*var\(--dur-pop\)/);
+    // The pictures keep their size: the text does not stretch while a box changes size.
+    expect(css).toMatch(/::view-transition-new\(\*\)\s*\{[^}]*object-fit:\s*none/);
+    // Clipped by its box, or the old panel's picture would paint at its full size over the incoming window.
+    expect(css).toMatch(/::view-transition-new\(\*\)\s*\{[^}]*overflow:\s*clip/);
+    for (const n of [0, 1]) {
+      expect(css).toContain(`::view-transition-new(vlx-practice-window-${n}):only-child`);
+      expect(css).toContain(`::view-transition-old(vlx-practice-window-${n}):only-child`);
+    }
+    expect(css).toMatch(/@keyframes vlx-practice-window-in\s*\{\s*from\s*\{\s*opacity:\s*0;\s*translate:\s*24px 0/);
+    // Its own rules set no `animation` shorthand: the root keeps the section change's `animation: none`.
+    const own = css.split('.vlx-practice-switching').slice(1).map((rule) => rule.slice(0, rule.indexOf('}')));
+    for (const rule of own) expect(rule).not.toMatch(/animation:\s/);
+  }, 30000);
+});
+
+describe('the motion tokens for CSS (LC98)', () => {
+  it('are `lib/motion.ts`\'s `dur`, in milliseconds', async () => {
+    const css = await compile([]);
+    for (const [name, seconds] of Object.entries(dur)) {
+      expect(css, `--dur-${name}`).toMatch(new RegExp(`--dur-${name}:\\s*${Math.round(seconds * 1000)}ms`));
+    }
+  }, 30000);
+
+  it('compile in the sidebar\'s classes: durations from `--dur-*`, the drawer on its own curve', async () => {
+    const css = await compile(['duration-(--dur-press)', 'duration-(--dur-pop)', 'duration-(--dur-scene)', 'ease-drawer']);
+    for (const name of ['press', 'pop', 'scene']) {
+      expect(css).toMatch(new RegExp(`\\.duration-\\\\\\(--dur-${name}\\\\\\)\\s*\\{[^}]*transition-duration:\\s*var\\(--dur-${name}\\)`));
+    }
+    expect(css).toMatch(/\.ease-drawer\s*\{[^}]*transition-timing-function:\s*var\(--ease-drawer\)/);
+  }, 30000);
+});
+
 describe('the section change (T1)', () => {
   const ms = (css: string, rule: RegExp) => {
     const match = css.match(rule);
@@ -516,12 +773,15 @@ describe('the section change (T1)', () => {
     return match!.slice(1).map(Number);
   };
 
-  it('fades the page out, then in rising by a few pixels, in under 250 ms, with no overlap and nothing else moving', async () => {
+  it('lets the old page go at once and fades the new one in rising by a few pixels in `dur.pop`, as `PageFade` (LC132)', async () => {
     const css = await compile([]);
-    const [out] = ms(css, /::view-transition-old\(vlx-page\)\s*\{\s*animation:\s*vlx-page-out\s+(\d+)ms/);
-    const [into, delay] = ms(css, /::view-transition-new\(vlx-page\)\s*\{\s*animation:\s*vlx-page-in\s+(\d+)ms\s+var\(--ease-out\)\s+(\d+)ms/);
-    expect(delay).toBeGreaterThanOrEqual(out);
-    expect(delay + into).toBeLessThan(250);
+    // Its time is `lib/motion.ts`'s `dur`, as `--dur-*` (LC98): `PageFade`'s 180 ms, with no delay.
+    const token = (name: string) => ms(css, new RegExp(`--dur-${name}:\\s*(\\d+)ms`))[0];
+    expect(css).toMatch(/::view-transition-old\(vlx-page\)\s*\{\s*animation:\s*none;\s*opacity:\s*0/);
+    const names = css.match(/::view-transition-new\(vlx-page\)\s*\{\s*animation:\s*vlx-page-in\s+var\(--dur-(\w+)\)\s+var\(--ease-out\)\s+both/);
+    expect(names).not.toBeNull();
+    expect(names![1]).toBe('pop');
+    expect(token(names![1])).toBe(dur.pop * 1000);
     const [rise] = ms(css, /@keyframes vlx-page-in\s*\{\s*from\s*\{\s*opacity:\s*0;\s*translate:\s*0\s+(\d+)px/);
     expect(rise).toBeGreaterThanOrEqual(4);
     expect(rise).toBeLessThanOrEqual(6);
@@ -534,23 +794,35 @@ describe('the section change (T1)', () => {
     expect(css).not.toMatch(/(^|\})\s*\.vlx-page\s*\{/);
     // A tap goes through to the page; from the sign-in page, with no old page, the new one does not wait.
     expect(css).toMatch(/::view-transition\s*\{\s*pointer-events:\s*none/);
-    expect(css).toMatch(/::view-transition-new\(vlx-page\):only-child\s*\{\s*animation-delay:\s*0ms/);
     const reduced = css.split('@media (prefers-reduced-motion: reduce)').slice(1).join(' ');
     expect(reduced).toMatch(/::view-transition-new\(\*\)\s*\{\s*animation:\s*none\s*!important/);
   }, 30000);
-
-  it('draws the tour\'s focus ring only for a focus not given with no key pressed (Y1)', () => {
-    const css = readFileSync(CSS_PATH, 'utf8');
-    const rule = css.match(/([^{}]*)\{\s*outline:\s*2px solid var\(--color-toga-500\);\s*outline-offset:\s*2px;\s*\}/)![1];
-    for (const selector of rule.replace(/\/\*[\s\S]*?\*\//g, '').split(',').map((part) => part.trim())) {
-      expect(selector).toMatch(/:focus-visible:not\(\[data-pointer-focus\]\)$/);
-    }
-  });
 
   it('gives a menu or a popover a hairline and a drop in the dark, as the floating surfaces (Y1)', async () => {
     const css = await compile(['shadow-md', 'shadow-lg']);
     expect(css).toMatch(/\.dark \.shadow-md\s*\{\s*--tw-shadow:\s*0 0 0 1px var\(--color-ink-700\)/);
     expect(css).toMatch(/\.dark :is\(\.shadow-lg, \.shadow-xl, \.shadow-2xl\)\s*\{\s*--tw-shadow:/);
+  }, 30000);
+
+  it('gives a thing on the page a light top edge and a short drop, and a field a slight inset (LC30, the owner on 15 Nov: «un po\' più di tridimensionalità, una cosa leggera»)', async () => {
+    const css = await compile(['shadow-sm', 'hover:shadow-md', 'inset-shadow-xs', 'focus-visible:ring-2']);
+    expect(css).toMatch(/\.shadow-sm\s*\{[^}]*--tw-shadow:\s*inset 0 1px 0/);
+    // The dark redraws the raised surfaces, and the hover's growth after them, or the unlayered rule would win.
+    expect(css).toMatch(/\.dark :is\(\.shadow-xs, \.shadow-sm, \.shadow\)\s*\{\s*--tw-shadow:\s*inset 0 1px 0 rgb\(255 250 240/);
+    expect(css).toMatch(/\.dark \.hover\\:shadow-md:hover\s*\{\s*--tw-shadow:/);
+    // The field's inset is Tailwind's own `--tw-inset-shadow`, composed with the rings: the focus ring still shows.
+    expect(css).toMatch(/\.inset-shadow-xs\s*\{[^}]*--tw-inset-shadow:\s*inset 0 1px 2px/);
+    expect(css).toMatch(/\.inset-shadow-xs\s*\{[^}]*box-shadow:[^;]*var\(--tw-ring-shadow\)/);
+  }, 30000);
+
+  it('brings a lifted dossier card back down on the press: the press comes after the lift (LC30)', async () => {
+    const wrap = 'motion-safe:[@media(hover:hover)_and_(pointer:fine)]:';
+    const css = await compile([`${wrap}hover:-translate-y-px`, `${wrap}active:translate-y-0`]);
+    // Under the same wrapper, or the arbitrary variant sorts last and the lift wins while pressed.
+    const lift = css.indexOf('hover\\:-translate-y-px {');
+    const press = css.indexOf('active\\:translate-y-0 {');
+    expect(lift).toBeGreaterThan(-1);
+    expect(press).toBeGreaterThan(lift);
   }, 30000);
 
   it('keeps a focus ring over a shadow in the dark: the dark rules set `--tw-shadow`, never `box-shadow` (Y1)', async () => {
@@ -561,20 +833,26 @@ describe('the section change (T1)', () => {
     expect(css).toMatch(/\.shadow-md\s*\{[^}]*box-shadow:[^;]*var\(--tw-ring-shadow\)[^;]*var\(--tw-shadow\)/);
   }, 30000);
 
-  it('draws no ring on a title focused after a choice made with a pointer, over the utilities\' ring', async () => {
+  it('draws no ring on what the script focuses but no one operates, and keeps it on the controls (LC143)', async () => {
     const css = await compile(FOCUS_RING.split(' '));
-    expect(css).toMatch(/\[data-pointer-focus\]:focus\s*\{\s*outline:\s*none;\s*box-shadow:\s*none/);
-    // Outside every layer, so it wins over `focus-visible:ring-2` (in the utilities layer) whatever the order.
-    const rule = css.indexOf('[data-pointer-focus]:focus');
-    const layers = [...css.matchAll(/@layer [\w-]+\s*\{/g)];
-    for (const layer of layers) {
+    const at = css.indexOf('[tabindex="-1"]:not(');
+    expect(at).toBeGreaterThan(-1);
+    const rule = css.slice(at, css.indexOf('}', at));
+    // Not on a control the script focuses (a menu's entries, a button): those keep the ring.
+    // Roving-tabindex lists with these roles keep the keyboard ring too (LC145).
+    for (const control of ['button', 'a', '[role="menuitem"]', '[role="option"]', '[role="tab"]', '[role="button"]', '[role="link"]', '[role="row"]', '[role="combobox"]']) expect(rule).toContain(control);
+    expect(rule).toMatch(/outline:\s*none/);
+    expect(rule).toMatch(/--tw-ring-shadow:\s*0 0 #0000/);
+    expect(rule).toMatch(/--tw-ring-offset-shadow:\s*0 0 #0000/);
+    // Outside every layer, so it wins over `focus-visible:ring-2` (in the utilities layer).
+    for (const layer of css.matchAll(/@layer [\w-]+\s*\{/g)) {
       let depth = 0;
-      let at = layer.index! + layer[0].length - 1;
-      for (; at < css.length; at += 1) {
-        if (css[at] === '{') depth += 1;
-        else if (css[at] === '}' && (depth -= 1) === 0) break;
+      let end = layer.index! + layer[0].length - 1;
+      for (; end < css.length; end += 1) {
+        if (css[end] === '{') depth += 1;
+        else if (css[end] === '}' && (depth -= 1) === 0) break;
       }
-      expect(rule < layer.index! || rule > at, layer[0]).toBe(true);
+      expect(at < layer.index! || at > end, layer[0]).toBe(true);
     }
   }, 30000);
 
@@ -582,5 +860,39 @@ describe('the section change (T1)', () => {
     const css = await compile(['transition-colors', 'duration-200', 'ease-out', 'motion-reduce:transition-none']);
     expect(css).toMatch(/\.duration-200\s*\{[^}]*transition-duration:\s*200ms/);
     expect(css).toMatch(/\.motion-reduce\\:transition-none\s*\{\s*@media \(prefers-reduced-motion: reduce\)\s*\{\s*transition-property:\s*none/);
+  }, 30000);
+});
+
+describe('the ground under the pointer, one source for rows of commands (LC72)', () => {
+  /** The rules `.vlx-hover-tile` compiles to, with the tabs' own utility beside them for the same colour. */
+  async function tile() {
+    const css = await compile(['bg-ink-200/70', 'dark:bg-ink-800/60']);
+    const start = css.indexOf('.vlx-hover-tile {');
+    return { css, block: css.slice(start, css.indexOf('@media print', start)) };
+  }
+
+  it('is the tabs\' ground: ink 200 at 70 %, ink 800 at 60 % in the dark, in 100 ms on the strong ease-out', async () => {
+    const { css, block } = await tile();
+    const light = /\.bg-ink-200\\\/70\s*\{\s*background-color:\s*([^;]+);/.exec(css)?.[1];
+    expect(light).toBeTruthy();
+    expect(block).toContain(`background-color: ${light};`);
+    expect(block).toContain('var(--color-ink-800) 60%');
+    expect(block).toMatch(/transition-duration:\s*100ms/);
+    expect(block).toMatch(/transition-timing-function:\s*var\(--ease-out\)/);
+  }, 30000);
+
+  it('answers neither a disabled button nor a pressed or open one, and the pointer only where there is one', async () => {
+    const { block } = await tile();
+    const guard = ':not(:disabled, [aria-pressed="true"], [aria-expanded="true"])';
+    expect(block).toContain(`.vlx-hover-tile${guard}:focus-visible`);
+    expect(block).toMatch(/@media \(hover: hover\)\s*\{\s*\.vlx-hover-tile:not\(:disabled, \[aria-pressed="true"\], \[aria-expanded="true"\]\):hover/);
+    // No `:hover` outside the media query: a tap on a phone leaves nothing behind.
+    expect(block.split('@media (hover: hover)')[0]).not.toContain(':hover');
+  }, 30000);
+
+  it('moves colour only, so with reduced motion the ground appears and nothing slides', async () => {
+    const { block } = await tile();
+    expect(block).toMatch(/transition-property:\s*color, background-color;/);
+    expect(block).not.toMatch(/transform|translate|scale|box-shadow/);
   }, 30000);
 });

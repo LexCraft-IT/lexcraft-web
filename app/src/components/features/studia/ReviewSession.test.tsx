@@ -4,7 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 vi.mock('../../../services/studiaService', () => ({
-  studiaService: { session: vi.fn(), review: vi.fn(), progress: vi.fn(), percorso: vi.fn() },
+  studiaService: { session: vi.fn(), courseSession: vi.fn(), review: vi.fn(), progress: vi.fn(), percorso: vi.fn() },
+}));
+
+// The courses' switch, when the gate asks: off.
+vi.mock('../../../services/assistantService', () => ({
+  assistantService: { features: vi.fn(async () => ({ assistantPassages: false, lingoCourses: false })) },
 }));
 
 // The reader is tested with the dossier; here it is a stand-in that shows which article it was given.
@@ -23,8 +28,12 @@ import { Z_INDEX } from '../../../constants/zIndex';
 import type { Progressi, SchedaDiRipasso } from '../../../types/studia';
 import { SESSION_NOTICE_MS } from './progress/Celebration';
 import { GRADE_NOTE_MS } from './useGradeNote';
-import { LESSON_PRIMARY } from './lessonStyles';
+import { buttonClassName } from '../../ui/buttonStyles';
+
+// The lesson's one primary action (LC112): the common `Button`, large.
+const LESSON_PRIMARY = buttonClassName('primary', 'lg');
 import { ReviewSession } from './ReviewSession';
+import { coursesSwitchStore } from './corsi/coursesSwitch';
 import { xpFields } from './__fixtures__/xp';
 
 const session = vi.mocked(studiaService.session);
@@ -69,14 +78,14 @@ function Where() {
   return <p data-testid="where">{pathname + search}</p>;
 }
 
-function renderSession(cards: SchedaDiRipasso[], path = '/studia/ripasso/sessione') {
+function renderSession(cards: SchedaDiRipasso[], path = '/learn/ripasso/sessione') {
   session.mockResolvedValue({ conteggi: { dovute: cards.length, nuove: 0 }, cards });
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/" element={<Where />} />
-        <Route path="/studia/ripasso" element={<><p>Landing</p><Where /></>} />
-        <Route path="/studia/ripasso/sessione" element={<ReviewSession />} />
+        <Route path="/learn/ripasso" element={<><p>Landing</p><Where /></>} />
+        <Route path="/learn/ripasso/sessione" element={<ReviewSession />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -93,6 +102,7 @@ const gradeFirst = async (next: string) => {
 beforeEach(() => {
   setDesktop(true);
   session.mockReset();
+  vi.mocked(studiaService.courseSession).mockReset();
   review.mockReset();
   review.mockResolvedValue({ registrata: true, prossimoRipasso: '2026-10-12', scheduledDays: 1 });
   progress.mockReset();
@@ -103,30 +113,63 @@ beforeEach(() => {
   appStore.setState({ searchTrigger: null });
 });
 
-afterEach(() => setDesktop(false));
+afterEach(() => {
+  setDesktop(false);
+  coursesSwitchStore.setState({ state: 'unknown' });
+});
 
 describe('the review session', () => {
   it('asks for the session of the subject in the address', async () => {
-    renderSession([card('a')], '/studia/ripasso/sessione?materia=DIRITTO_PENALE');
+    renderSession([card('a')], '/learn/ripasso/sessione?materia=DIRITTO_PENALE');
     await screen.findByText('Domanda a?');
     expect(session).toHaveBeenCalledWith('DIRITTO_PENALE');
   });
 
   it('asks for the session of one institute of the subject, spelt as the road gave it (G5)', async () => {
     const istituto = 'Risoluzione per inadempimento (art. 1453 c.c.) & 50% «diffida»';
-    renderSession([card('a')], `/studia/ripasso/sessione?${new URLSearchParams({ materia: 'DIRITTO_CIVILE', istituto })}`);
+    renderSession([card('a')], `/learn/ripasso/sessione?${new URLSearchParams({ materia: 'DIRITTO_CIVILE', istituto })}`);
     await screen.findByText('Domanda a?');
     expect(session).toHaveBeenCalledWith('DIRITTO_CIVILE', istituto);
   });
 
+  it('asks for one course\'s session from «Oggi»\'s row, and ends on «Torna a Oggi» alone (courses spec §10.5)', async () => {
+    coursesSwitchStore.setState({ state: 'on' });
+    const courseSession = vi.mocked(studiaService.courseSession);
+    courseSession.mockResolvedValue({ conteggi: { dovute: 1, nuove: 0 }, cards: [card('a')] });
+    renderSession([], '/learn/ripasso/sessione?corso=corso-1');
+    await screen.findByText('Domanda a?');
+    expect(courseSession).toHaveBeenCalledWith('corso-1');
+    expect(session).not.toHaveBeenCalled();
+    await show();
+    await userEvent.setup().click(screen.getByRole('button', { name: /Bene/ }));
+    const end = await screen.findByTestId('lesson-end');
+    expect(within(end).getByRole('button', { name: 'Torna a Oggi' })).toBeInTheDocument();
+    expect(within(end).queryByRole('button', { name: 'Continua' })).toBeNull();
+  });
+
+  it('reads no course while the courses\' switch is off, and goes back to Oggi', async () => {
+    coursesSwitchStore.setState({ state: 'off' });
+    renderSession([card('a')], '/learn/ripasso/sessione?corso=corso-1');
+    expect(await screen.findByText('Landing')).toBeInTheDocument();
+    expect(studiaService.courseSession).not.toHaveBeenCalled();
+    expect(session).not.toHaveBeenCalled();
+  });
+
+  it('never reads a course together with a subject', async () => {
+    renderSession([card('a')], '/learn/ripasso/sessione?materia=DIRITTO_PENALE&corso=corso-1');
+    await screen.findByText('Domanda a?');
+    expect(session).toHaveBeenCalledWith('DIRITTO_PENALE');
+    expect(studiaService.courseSession).not.toHaveBeenCalled();
+  });
+
   it('ignores an institute without its subject, which the server would refuse', async () => {
-    renderSession([card('a')], '/studia/ripasso/sessione?istituto=Mora');
+    renderSession([card('a')], '/learn/ripasso/sessione?istituto=Mora');
     await screen.findByText('Domanda a?');
     expect(session).toHaveBeenCalledWith(undefined);
   });
 
   it('ignores a subject it does not know', async () => {
-    renderSession([card('a')], '/studia/ripasso/sessione?materia=toString');
+    renderSession([card('a')], '/learn/ripasso/sessione?materia=toString');
     await screen.findByText('Domanda a?');
     expect(session).toHaveBeenCalledWith(undefined);
   });
@@ -143,7 +186,7 @@ describe('the review session', () => {
     renderSession([card('a', { spiegazione: 'Perché sì.' })]);
     const question = await screen.findByRole('heading', { name: 'Domanda a?' });
     expect(question).toHaveClass('font-serif');
-    expect(question).toHaveClass('max-w-[60ch]');
+    expect(question).toHaveClass('max-w-measure');
     expect(screen.getByText('art. 1453 c.c.')).toBeInTheDocument();
     expect(screen.queryByText('Risposta a.')).not.toBeInTheDocument();
 
@@ -184,7 +227,9 @@ describe('the review session', () => {
     // The last of the lesson's rows, in the flow of its frame: never fixed, never put back in the page from md up.
     expect(bar).toHaveClass('shrink-0', 'pb-[max(0.75rem,env(safe-area-inset-bottom))]', Z_INDEX.pinnedBar);
     expect(bar.className).not.toMatch(/\bfixed\b|md:static/);
-    expect(reveal).toHaveClass('min-h-[48px]');
+    // The common large `Button` (LC112): 44 px at every width.
+    expect(reveal).toHaveClass('min-h-11');
+    expect(reveal.className).not.toMatch(/\bmd:min-h-/);
     expect(within(reveal).getByText('Spazio')).toBeInTheDocument();
     await show();
     expect(bar).toContainElement(screen.getByRole('group', { name: 'Come è andata?' }));
@@ -506,7 +551,7 @@ describe('the review session', () => {
       renderSession([card('a'), card('b'), card('c')]);
       // a «Di nuovo», b «Bene», c «Bene», then a again «Bene» (not sent).
       await gradeAll([1, 3, 3, 3]);
-      expect(await screen.findByText('Hai ripassato 3 schede, 1 da rifare. Le prossime: domani.')).toBeInTheDocument();
+      expect(await screen.findByText('3 schede ripassate, 1 da rifare. Le prossime domani.')).toBeInTheDocument();
       expect(review).toHaveBeenCalledTimes(3);
       await userEvent.setup().click(screen.getByRole('button', { name: 'Torna a Oggi' }));
       expect(await screen.findByText('Landing')).toBeInTheDocument();
@@ -515,14 +560,14 @@ describe('the review session', () => {
     it('uses the singular for one card', async () => {
       renderSession([card('a')]);
       await gradeAll([1, 3]);
-      expect(await screen.findByText('Hai ripassato 1 scheda, 1 da rifare. Le prossime: domani.')).toBeInTheDocument();
+      expect(await screen.findByText('1 scheda ripassata, 1 da rifare. Le prossime domani.')).toBeInTheDocument();
     });
 
     it('says «nessuna da rifare» when every card went well', async () => {
       review.mockResolvedValue({ registrata: true, prossimoRipasso: '2026-10-19', scheduledDays: 8 });
       renderSession([card('a'), card('b')]);
       await gradeAll([3, 3]);
-      expect(await screen.findByText('Hai ripassato 2 schede, nessuna da rifare. Le prossime: 8 giorni.')).toBeInTheDocument();
+      expect(await screen.findByText('2 schede ripassate, nessuna da rifare. Le prossime 8 giorni.')).toBeInTheDocument();
     });
 
     it('shows today’s goal and the streak as they now stand', async () => {
@@ -530,7 +575,7 @@ describe('the review session', () => {
       renderSession([card('a')]);
       await gradeAll([3]);
       expect(await screen.findByRole('img', { name: 'Obiettivo di oggi: 11 di 10 ripassi, raggiunto' })).toBeInTheDocument();
-      expect(screen.getByRole('group', { name: 'Serie: 6 giorni di fila, record 9' })).toBeInTheDocument();
+      expect(screen.getByRole('img', { name: 'Serie: 6 giorni di fila, record 9' })).toBeInTheDocument();
     });
 
     it('does not claim a review when the session was empty', async () => {
@@ -542,8 +587,8 @@ describe('the review session', () => {
   it('offers a retry when the session cannot be read', async () => {
     session.mockRejectedValueOnce(new Error('down'));
     render(
-      <MemoryRouter initialEntries={['/studia/ripasso/sessione']}>
-        <Routes><Route path="/studia/ripasso/sessione" element={<ReviewSession />} /></Routes>
+      <MemoryRouter initialEntries={['/learn/ripasso/sessione']}>
+        <Routes><Route path="/learn/ripasso/sessione" element={<ReviewSession />} /></Routes>
       </MemoryRouter>,
     );
     expect(await screen.findByRole('alert')).toHaveTextContent('Non riesco a leggere le schede da ripassare.');
@@ -643,7 +688,7 @@ describe('the goal of the day in the session (Studia progress spec §6.4)', () =
     await show();
     await userEvent.setup().click(screen.getByRole('button', { name: /Bene/ }));
     const notice = await screen.findByTestId('session-celebration');
-    expect(within(notice).getByTestId('goal-mark')).toBeInTheDocument();
+    expect(notice.querySelector('[data-illustration="learn-giorno-chiuso"]')).not.toBeNull();
     expect(localStorage.getItem(CELEBRATED_KEY)).toBe('2026-10-19');
   });
 
@@ -660,7 +705,7 @@ describe('the goal of the day in the session (Studia progress spec §6.4)', () =
     await userEvent.setup().click(screen.getByRole('button', { name: /Bene/ }));
     const notice = await screen.findByTestId('session-celebration');
     expect(within(notice).getByText('Serie di 3 giorni')).toBeInTheDocument();
-    expect(within(notice).queryByTestId('goal-mark')).toBeNull();
+    expect(notice.querySelector('[data-illustration="learn-giorno-chiuso"]')).toBeNull();
     // Not celebrated for this browser: «Oggi» writes the mark, the first time, once the mission is done.
     expect(localStorage.getItem(CELEBRATED_KEY)).toBeNull();
   });
@@ -687,7 +732,7 @@ describe('the goal of the day in the session (Studia progress spec §6.4)', () =
     await userEvent.setup().click(screen.getByRole('button', { name: /Bene/ }));
     const notice = await screen.findByTestId('session-celebration');
     // The goal's mark, small, beside the words (G9): the red stamp is gone.
-    expect(within(notice).getByTestId('goal-mark')).toBeInTheDocument();
+    expect(notice.querySelector('[data-illustration="learn-giorno-chiuso"]')).not.toBeNull();
     expect(within(notice).queryByTestId('goal-stamp')).toBeNull();
     expect(notice.className).toContain('absolute');
     expect(notice.className).not.toContain('fixed');
@@ -716,7 +761,7 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
       expect(bar()).toHaveAttribute('aria-valuenow', '0');
       expect(bar()).toHaveAttribute('aria-valuemax', '4');
       expect(screen.getByTestId('lesson-progress-fill')).toHaveStyle({ width: '0%' });
-      // The section's hue, not the ink's near-grey (G8).
+      // The section's ink, `vlx-lesson-ink` (G8; Pietra since LC16).
       expect(screen.getByTestId('lesson-progress-fill')).toHaveClass('vlx-lesson-ink');
 
       await show();
@@ -742,28 +787,25 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
       expect([...fill.classList].filter((c) => /^(transition|duration|ease|animate|delay)/.test(c))).toEqual([]);
     });
 
-    it('runs its head ahead in the section’s hue and lets the ink catch up on a spring, under 400 ms (S2)', async () => {
+    it('widens one ink in one transition, `dur.pop`: no second layer on a spring, no tremble (LC129)', async () => {
       const user = userEvent.setup();
       renderSession([card('a'), card('b')]);
       await screen.findByText('Domanda a?');
       const fill = screen.getByTestId('lesson-progress-fill');
-      const head = bar().querySelector('.vlx-lesson-head')!;
-      expect(head).toHaveClass('motion-safe:transition-[width]', 'motion-safe:duration-150');
-      expect(fill).toHaveClass('motion-safe:delay-[70ms]', 'motion-safe:duration-300', 'motion-safe:ease-(--ease-catch)');
-      // The ink is drawn over the head: it comes after it.
-      expect(head.compareDocumentPosition(fill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(fill).toHaveClass('motion-safe:transition-[width]', 'motion-safe:duration-(--dur-pop)', 'motion-safe:ease-out');
+      expect([...fill.classList].some((c) => /delay|ease-catch/.test(c))).toBe(false);
+      expect(bar().querySelector('.vlx-lesson-head')).toBeNull();
       await show();
       await user.click(screen.getByRole('button', { name: /Bene/ }));
       await screen.findByText('Domanda b?');
-      expect(head).toHaveStyle({ width: '50%' });
       expect(fill).toHaveStyle({ width: '50%' });
     });
 
     it('is full at the end, and an empty track before the queue is read', async () => {
       session.mockReturnValueOnce(new Promise(() => {}));
       const { unmount } = render(
-        <MemoryRouter initialEntries={['/studia/ripasso/sessione']}>
-          <Routes><Route path="/studia/ripasso/sessione" element={<ReviewSession />} /></Routes>
+        <MemoryRouter initialEntries={['/learn/ripasso/sessione']}>
+          <Routes><Route path="/learn/ripasso/sessione" element={<ReviewSession />} /></Routes>
         </MemoryRouter>,
       );
       expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
@@ -773,7 +815,7 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
       renderSession([card('a')]);
       await show();
       await userEvent.setup().click(screen.getByRole('button', { name: /Bene/ }));
-      await screen.findByText(/Hai ripassato 1 scheda/);
+      await screen.findByText(/1 scheda ripassata/);
       expect(bar()).toHaveAttribute('aria-valuenow', '1');
       expect(screen.getByTestId('lesson-progress-fill')).toHaveStyle({ width: '100%' });
     });
@@ -815,7 +857,7 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
       expect(screen.getByTestId('grade-note')).toHaveTextContent('Torna tra 21 giorni');
       await show();
       await user.click(screen.getByRole('button', { name: 'Bene' }));
-      await screen.findByText(/Hai ripassato 2 schede/);
+      await screen.findByText(/2 schede ripassate/);
       expect(screen.queryByTestId('grade-note')).not.toBeInTheDocument();
     });
 
@@ -969,10 +1011,10 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
     it('can be closed while the cards cannot be read', async () => {
       session.mockRejectedValueOnce(new Error('down'));
       render(
-        <MemoryRouter initialEntries={['/studia/ripasso/sessione']}>
+        <MemoryRouter initialEntries={['/learn/ripasso/sessione']}>
           <Routes>
-            <Route path="/studia/ripasso" element={<p>Landing</p>} />
-            <Route path="/studia/ripasso/sessione" element={<ReviewSession />} />
+            <Route path="/learn/ripasso" element={<p>Landing</p>} />
+            <Route path="/learn/ripasso/sessione" element={<ReviewSession />} />
           </Routes>
         </MemoryRouter>,
       );
@@ -987,7 +1029,7 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
       renderSession([card('a')]);
       await show();
       await userEvent.setup().click(screen.getByRole('button', { name: /Bene/ }));
-      const sentence = await screen.findByText('Hai ripassato 1 scheda, nessuna da rifare. Le prossime: domani.');
+      const sentence = await screen.findByText('1 scheda ripassata, nessuna da rifare. Le prossime domani.');
       await screen.findByRole('img', { name: /Obiettivo di oggi/ });
       expect(screen.queryByRole('button', { name: 'Continua' })).not.toBeInTheDocument();
       // One card, centred, holds the sentence, the ring, the streak (with its strip of the last seven days, the week: no
@@ -995,8 +1037,9 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
       const end = screen.getByTestId('lesson-end');
       expect(end).toContainElement(sentence);
       expect(end).toContainElement(screen.getByRole('img', { name: /Obiettivo di oggi/ }));
-      expect(end).toContainElement(screen.getByRole('group', { name: /^Serie:/ }));
-      expect(within(end).getByRole('list', { name: 'Ultimi sette giorni' })).toBeInTheDocument();
+      expect(end).toContainElement(screen.getByRole('img', { name: /^Serie:/ }));
+      // LC39: no week of boxes at the end.
+      expect(within(end).queryByRole('list', { name: 'Ultimi sette giorni' })).toBeNull();
       expect(within(end).queryByRole('list', { name: 'Questa settimana' })).toBeNull();
       expect(within(end).getByRole('button', { name: 'Torna a Oggi' })).toHaveClass(...LESSON_PRIMARY.split(' '));
       expect(screen.getAllByRole('button', { name: 'Torna a Oggi' })).toHaveLength(1);
@@ -1024,7 +1067,7 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
     });
 
     it('counts what is left in the institute of a session narrowed to one, not in its whole subject (G5)', async () => {
-      const path = `/studia/ripasso/sessione?${new URLSearchParams({ materia: 'DIRITTO_CIVILE', istituto: 'Mora' })}`;
+      const path = `/learn/ripasso/sessione?${new URLSearchParams({ materia: 'DIRITTO_CIVILE', istituto: 'Mora' })}`;
       // The subject still has cards, in another institute; «Mora» has none.
       progress.mockResolvedValue({ ...progressAnswer(3, false, 2), oggi: { ...progressAnswer(3, false, 2).oggi, dovute: 6, nuove: 2 } });
       percorso.mockResolvedValue([
@@ -1040,7 +1083,7 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
     });
 
     it('offers «Continua» when the institute itself still has cards due, and reads its session again', async () => {
-      const path = `/studia/ripasso/sessione?${new URLSearchParams({ materia: 'DIRITTO_CIVILE', istituto: 'Mora' })}`;
+      const path = `/learn/ripasso/sessione?${new URLSearchParams({ materia: 'DIRITTO_CIVILE', istituto: 'Mora' })}`;
       percorso.mockResolvedValue([{ materia: 'DIRITTO_CIVILE', istituto: 'Mora', nuove: 0, apprendimento: 3, consolidate: 0, dovute: 3 }]);
       renderSession([card('a')], path);
       await show();
@@ -1054,7 +1097,7 @@ describe('the lesson (Gymnasium spec §5.4)', () => {
       progress.mockImplementation(async (materia) =>
         materia === 'DIRITTO_PENALE' ? progressAnswer(3, false, 2) : { ...progressAnswer(3, false, 2), oggi: { ...progressAnswer(3, false, 2).oggi, nuove: 5 } },
       );
-      renderSession([card('a', { materia: 'DIRITTO_PENALE' })], '/studia/ripasso/sessione?materia=DIRITTO_PENALE');
+      renderSession([card('a', { materia: 'DIRITTO_PENALE' })], '/learn/ripasso/sessione?materia=DIRITTO_PENALE');
       await show();
       await userEvent.setup().click(screen.getByRole('button', { name: /Bene/ }));
       await screen.findByRole('img', { name: /Obiettivo di oggi/ });

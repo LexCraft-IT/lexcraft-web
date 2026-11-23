@@ -1,34 +1,84 @@
 /**
- * «Analizza documento»: the norms a document cites, found in the browser (brief D2). The file is read
- * here and never sent anywhere — the promise of the page; each citation opens the reader as a search
- * would (`openCitation`, gotcha 15). The document is drawn as it is, its citations marked in it, and
- * listed beside it by act.
+ * «Analizza documento»: the norms a document cites (brief D2; design 2026-10-29-document-analysis). The file — or the
+ * text pasted in the box — is read here and never sent anywhere; its citations are found in the browser
+ * (`documentCandidates.ts`) and read as the search reads them — the client parser first, then `/parse_query_batch` for
+ * the query strings it cannot settle, never the text around them (`documentServer.ts`, §6.1); with «Riconosci solo
+ * nel browser» on, nothing at all. Each citation opens the reader as a search would (`openCitation`, gotcha 15). The
+ * document is drawn as it is, its citations marked in it, and listed beside it by act.
+ *
+ * PR 3 of #376 and L5 of #391: the user completes by hand what the page could not settle (`CompletionPicker`,
+ * `documentReview.ts`), dismisses what is no norm, and — asking `/fetch_norm_links` only on «Prepara i link», with
+ * the norms alone — copies the text with its links or downloads a copy of the Word file with them (`LinksPanel`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { FileText, RotateCcw, ShieldCheck } from 'lucide-react';
-import { extractCitations, type CitationMatch } from '../../../utils/citationMatcher';
+import { CloudOff, FileText, RotateCcw } from 'lucide-react';
+import { formatCitationLabel, type CitationMatch } from '../../../utils/citationMatcher';
 import { useAppStore } from '../../../store/useAppStore';
 import { Button } from '../../ui/Button';
+import { Switch } from '../../ui/Switch';
 import { FOCUS_RING } from '../../../constants/interactions';
 import { dur, ease } from '../../../lib/motion';
 import { cn } from '../../../lib/utils';
 import { citationCountLabel, groupCitationsByAct } from './citationGroups';
 import { CitationList } from './CitationList';
 import { DOCUMENT_ACCEPT, readDocumentFile } from './documentFile';
-import { DocumentText } from './DocumentText';
+import { DocumentText, type TextMark } from './DocumentText';
 import { DropZone, type DropPhase } from './DropZone';
-import { DocumentRow, SheetFlight } from './DocumentRow';
+import { DocumentRow } from './DocumentRow';
 import { documentKind, type DocumentJob } from './documentJob';
+import { analyseDocument, type DocumentAnalysis } from './documentCandidates';
+import { fetchActNames, readOnServer } from './documentServer';
+import type { ServerNormReading } from '../../../utils/normQuery';
 import { PageFrame } from '../../layout/PageFrame';
+import { PasteBox } from './PasteBox';
+import { CompletionPicker, type CompletionScope } from './CompletionPicker';
+import { LinksPanel, type DownloadReport, type UnlinkedRow } from './LinksPanel';
+import {
+  DOCX_SKIP_WORDS, NO_LINK_WORDS, applyAct, articleLabel, asMatch, clearAct, hasChoices, linkInputs, listedRows,
+  confirmRow, restore, reviewRows, rowsToConfirm, setChoice, snapshot, toCompleteRows,
+  type DocumentAct, type ReviewedRow, type RowChoice,
+} from './documentReview';
+import {
+  buildLinkedPaste, copyLinkedPaste, documentLinks, prepareLinks, settleLinks, summarizeLinks,
+  type LinkAnswer, type NoLinkReason,
+} from './documentLinks';
+import { fetchNormLinks } from './documentLinkServer';
+import { writeDocxLinksFile } from './docx/docxWriterClient';
+import { DocxError } from './docx/docxErrors';
+import { showUndoToast } from '../../../hooks/useUndoableAction';
+import { notify, UNDO_MS } from '../../ui/notifications/notifications';
 
 interface LoadedDocument {
   fileName: string;
   text: string;
+  /** The file chosen (a DOCX gets a copy with the links), or the text pasted in the box. */
+  file: File | null;
   /** Found while the row said «Cerco le citazioni…». */
-  citations: CitationMatch[];
+  analysis: DocumentAnalysis;
+  /** The server's answers for this document: «Riprova» asks only for the rest. */
+  answers: Map<string, ServerNormReading>;
 }
+
+/** The names of the acts, asked once when the page opens (§4.2); null when the server did not answer. */
+const askActNames = (signal?: AbortSignal) => fetchActNames(signal).catch((error: unknown) => {
+  if (signal?.aborted) return null;
+  // Never swallowed (gotcha 18): the page falls back on the client's own names and says so above the list.
+  console.error('«Analizza documento»: the catalog of act names did not come', (error as Error)?.message);
+  return null;
+});
+
+/** «The list's first row», for the focus after a row leaves the list. */
+const FIRST_ROW = -1;
+/** The title of a text pasted in the box (#391 §5.1). */
+const PASTED_TITLE = 'Testo incollato';
+
+/** «art. 2043 c.c.», or «art. 46» for a row with no act. */
+const rowLabel = (text: string, row: ReviewedRow) => (row.act ? formatCitationLabel(asMatch(text, row).parsed) : articleLabel(row));
+
+/** «parere.docx» → «parere (con link).docx». */
+const copyName = (fileName: string) => `${fileName.replace(/\.docx$/i, '')} (con link).docx`;
 
 /** How long the check stays on the row before the text comes (D6): the time to see it. */
 const DONE_MS = 450;
@@ -76,47 +126,178 @@ function pulse(mark: HTMLElement) {
       { boxShadow: `0 0 0 7px color-mix(in oklch, ${colour} 0%, transparent)` },
     ],
     // After the smooth scroll has brought it into view.
-    { duration: 700, delay: 280, easing: `cubic-bezier(${ease.out.join(', ')})` },
+    { duration: dur.scene * 2000, delay: 280, easing: `cubic-bezier(${ease.out.join(', ')})` },
   );
 }
 
 // Each column scrolls on its own: a document of 300 pages never makes the page scroll.
-const PANEL = 'flex min-h-0 flex-col overflow-hidden rounded-[10px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900';
+const PANEL = 'flex min-h-0 flex-col overflow-hidden rounded-[8px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900';
 const PANEL_HEAD = 'flex min-h-11 shrink-0 items-center border-b border-slate-200 px-4 text-sm font-medium text-slate-700 dark:border-slate-800 dark:text-slate-300';
 // Contained on a computer only: on a phone the stacked panels hand a swipe on to the page at their ends.
 const PANEL_BODY = 'relative min-h-0 flex-1 overflow-y-auto lg:overscroll-contain';
-// The window less what stands above the columns (15rem) and the page's foot (`--page-foot`: 2rem, more under the
-// feedback button, G8c), so the page itself does not scroll beside the columns.
-const COLUMN_HEIGHT = 'lg:h-[calc(100dvh-15rem-var(--page-foot,2rem))] lg:min-h-[24rem]';
+// The window less what stands above the columns (15rem) and the page's foot (2rem), so the page itself does not
+// scroll beside the columns.
+const COLUMN_HEIGHT = 'lg:h-[calc(100dvh-17rem)] lg:min-h-[24rem]';
 
 export function DocumentReviewPage() {
   const triggerSearch = useAppStore(s => s.triggerSearch);
+  const customAliases = useAppStore(s => s.customAliases);
   const navigate = useNavigate();
+  // An act of a dossier sent here by its page («Analizza l'atto», Luca 15-11): its text is analysed at once, and the way
+  // back leads to it.
+  const fromAtto = (useLocation().state as { atto?: { id: string; titolo: string; testo: string } } | null)?.atto ?? null;
+  // The page shows that act until another document is chosen: its text is on the server already, so the page does not
+  // say it stays on the computer (LC29, QA).
+  const [onAtto, setOnAtto] = useState(fromAtto !== null);
   const reduceMotion = useReducedMotion();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const zoneRef = useRef<HTMLButtonElement | null>(null);
-  const sheetRef = useRef<HTMLDivElement>(null);
-  const markRef = useRef<HTMLSpanElement>(null);
   const textBodyRef = useRef<HTMLDivElement>(null);
   const listBodyRef = useRef<HTMLDivElement>(null);
   // The reading in flight: a file chosen while another is read wins, the older answer is dropped.
   const readingRef = useRef(0);
   const focusAfterRef = useRef<'result' | 'zone' | null>(null);
+  // The names of the acts, asked when the page opens, so a file waits on nothing (§4.2).
+  const actNamesRef = useRef<Promise<string[] | null> | null>(null);
+  // Aborted when the page goes: an answer then has nowhere to land.
+  const pageAbortRef = useRef<AbortController | null>(null);
+  // The analysis in flight (a file, or «Riprova»): aborted by the next one, by «Scegli un altro documento» and when the
+  // page goes, so a superseded document sends no more chunks.
+  const analysisAbortRef = useRef<AbortController | null>(null);
 
   const [loaded, setLoaded] = useState<LoadedDocument | null>(null);
   // The file being read, or refused: its row under the box.
   const [job, setJob] = useState<DocumentJob | null>(null);
   const [phase, setPhase] = useState<DropPhase>('idle');
-  const [lean, setLean] = useState({ x: 0, y: 0 });
   const [landings, setLandings] = useState(0);
-  // The ink sheet thrown to the row, from where it stood.
-  const [flight, setFlight] = useState<DOMRect | null>(null);
   const [touch] = useState(isTouch);
   const [selected, setSelected] = useState<number | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  // «Riconosci solo nel browser» (#376 §6.3, Q3): off by default, for the page's life only.
+  const [localOnly, setLocalOnly] = useState(false);
+  // Read when the analysis starts, not when the file was chosen: the switch can change while a long DOCX is read.
+  const localOnlyRef = useRef(localOnly);
+  useEffect(() => {
+    localOnlyRef.current = localOnly;
+  }, [localOnly]);
+  // What the user said of the rows, by the row's span: in memory, for this document only (§5.5, Q4).
+  const [choices, setChoices] = useState<Map<string, RowChoice>>(() => new Map());
+  const [picker, setPicker] = useState<{ index: number; mode: 'complete' | 'change'; anchor: HTMLElement | null } | null>(null);
+  // The links (#391 L5): asked only on «Prepara i link», each distinct norm once.
+  const [linksPhase, setLinksPhase] = useState<'idle' | 'preparing' | 'ready'>('idle');
+  const [linkAnswers, setLinkAnswers] = useState<Map<string, LinkAnswer>>(() => new Map());
+  // The first «Prepara i link» has answered: the rows show their links from now on.
+  const [prepared, setPrepared] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [report, setReport] = useState<DownloadReport | null>(null);
+  const linksAbortRef = useRef<AbortController | null>(null);
+  // A row to give the focus once it is drawn in its new place (after «Applica», «Non è una norma», «Ripristina»).
+  const focusRowRef = useRef<number | null>(null);
 
-  const citations = useMemo(() => loaded?.citations ?? [], [loaded]);
-  const groups = useMemo(() => (loaded ? groupCitationsByAct(loaded.text, citations) : []), [loaded, citations]);
-  const countLabel = citations.length === 0 ? 'Nessuna citazione' : citationCountLabel(citations.length, groups.length);
+  useEffect(() => {
+    const controller = new AbortController();
+    pageAbortRef.current = controller;
+    actNamesRef.current = askActNames(controller.signal);
+    return () => {
+      controller.abort();
+      analysisAbortRef.current?.abort();
+      linksAbortRef.current?.abort();
+    };
+  }, []);
+
+  // The choices live in memory: the browser asks before a reload or a closed tab takes them (Q4).
+  const unsaved = hasChoices(choices);
+  useEffect(() => {
+    if (!unsaved) return;
+    const ask = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', ask);
+    return () => window.removeEventListener('beforeunload', ask);
+  }, [unsaved]);
+
+  /** A new analysis: the one before it is aborted. */
+  const startAnalysis = useCallback(() => {
+    analysisAbortRef.current?.abort();
+    const controller = new AbortController();
+    analysisAbortRef.current = controller;
+    return controller.signal;
+  }, []);
+
+  const rows = useMemo(() => (loaded ? reviewRows(loaded.analysis.citations, choices) : []), [loaded, choices]);
+  const listed = useMemo(() => listedRows(rows), [rows]);
+  const toComplete = useMemo(() => toCompleteRows(rows).length, [rows]);
+  const groups = useMemo(
+    () => (loaded ? groupCitationsByAct(loaded.text, listed.map((row) => asMatch(loaded.text, row)), listed.map((row) => row.index)) : []),
+    [loaded, listed],
+  );
+  const countLabel = citationCountLabel(listed.length, groups.length, toComplete);
+  const marks = useMemo<TextMark[]>(() => rows
+    .filter((row) => !row.dismissed)
+    .map((row) => ({ start: row.start, end: row.end, index: row.index, kind: row.origin === 'context' ? 'context' : row.origin === 'incomplete' ? 'incomplete' : 'own' })),
+  [rows]);
+  // The links, laid over the rows once «Prepara i link» has answered; a new choice needs no request to be drawn.
+  const linkIn = useMemo(() => linkInputs(rows, choices), [rows, choices]);
+  const links = useMemo(() => (prepared ? settleLinks(linkIn.rows, linkIn.choices, linkAnswers) : null), [prepared, linkIn, linkAnswers]);
+  const live = useMemo(() => rows.filter((row) => !row.dismissed), [rows]);
+  // The batch's notices (G-577: «art. 10 TUIR» and the testo unico it names from 2027), each once, in the API's words.
+  const notices = useMemo(
+    () => [...new Set([...(loaded?.answers.values() ?? [])].flatMap((answer) => (answer.recognized && answer.notice ? [answer.notice] : [])))],
+    [loaded],
+  );
+  const summary = useMemo(() => (links ? summarizeLinks(live.map((row) => links[row.index])) : null), [links, live]);
+  const unlinked = useMemo(() => {
+    if (!links || !loaded) return [];
+    const byReason = new Map<NoLinkReason, UnlinkedRow[]>();
+    for (const row of live) {
+      const link = links[row.index];
+      if (!link || link.linked) continue;
+      byReason.set(link.reason, [...(byReason.get(link.reason) ?? []), { index: row.index, label: rowLabel(loaded.text, row), reason: NO_LINK_WORDS[link.reason] }]);
+    }
+    return [...byReason.entries()].map(([reason, list]) => ({ reason, rows: list }));
+  }, [links, live, loaded]);
+  const waiting = useMemo(() => rowsToConfirm(rows, choices), [rows, choices]);
+  const only = useMemo(() => (reviewing ? new Set(waiting.map((row) => row.index)) : null), [reviewing, waiting]);
+  const local = loaded ? Boolean(loaded.analysis.local) : localOnly;
+
+  // The row given the focus once it has moved (a completed row joins its act's group).
+  useEffect(() => {
+    const index = focusRowRef.current;
+    if (index === null) return;
+    focusRowRef.current = null;
+    const target = (index === FIRST_ROW ? null : listBodyRef.current?.querySelector<HTMLElement>(`[data-cite-row="${index}"] button`))
+      ?? listBodyRef.current?.querySelector<HTMLElement>('[data-cite-row] button, h3 button');
+    target?.focus({ preventScroll: false });
+  });
+
+  /**
+   * The citations of a text: the names of the acts (asked again if they did not come), then the candidates, the
+   * client's readings, the server's for the rest. Never throws: what the server does not answer falls back on the
+   * browser (§4.7).
+   */
+  const analyse = useCallback(async (text: string, signal: AbortSignal, known?: Map<string, ServerNormReading>, onlyHere = false) => {
+    if (onlyHere) {
+      // Nothing asked, not even the catalog: the client's own names and parser (§6.3).
+      return analyseDocument(text, { serverNames: null, customAliases, localOnly: true, ask: async () => ({ answers: new Map(), unanswered: [] }) });
+    }
+    let names = await (actNamesRef.current ?? askActNames(pageAbortRef.current?.signal));
+    if (names === null && known) {
+      // «Riprova»: the catalog too, if it was what failed.
+      actNamesRef.current = askActNames(pageAbortRef.current?.signal);
+      names = await actNamesRef.current;
+    }
+    // The catalog answers null when the page went while it was asked: nothing more is sent.
+    signal.throwIfAborted();
+    return analyseDocument(text, {
+      serverNames: names,
+      customAliases,
+      known,
+      ask: (queries) => readOnServer(queries, signal),
+    });
+  }, [customAliases]);
 
   // The focus follows the change once its target is mounted: the box and the result take turns
   // (AnimatePresence, `mode="wait"`), so the target appears only after the other has left.
@@ -135,40 +316,112 @@ export function DocumentReviewPage() {
   /**
    * Reads a file in the browser, its row saying each step: «Leggo il documento…», «Cerco le citazioni…» (the search,
    * after a frame, so the words are on screen while it runs), the check, then the text. A refusal stays on the row.
-   * `thrown`: let go on the box, so the sheets land and one flies to the row.
+   * `thrown`: let go on the box, so a wave runs in from its frame.
    */
   const handleFile = async (file: File, thrown = false, others = 0) => {
     const id = ++readingRef.current;
     const base: DocumentJob = { id, name: file.name, bytes: file.size, kind: documentKind(file.name), stage: 'reading', others };
+    setOnAtto(false);
     setJob(base);
-    if (thrown) {
-      setLandings((n) => n + 1);
-      // Read now, as the pulse is: reduced motion throws nothing.
-      if (!prefersReducedMotion() && sheetRef.current) setFlight(sheetRef.current.getBoundingClientRect());
-    }
+    if (thrown) setLandings((n) => n + 1);
     const result = await readDocumentFile(file);
     if (id !== readingRef.current) return;
     if (!result.ok) {
       setJob({ ...base, stage: 'error', error: result.error });
       return;
     }
+    await findAndShow(base, result.text, file);
+  };
+
+  /** A text pasted in the box (#391 §5.1): read as a TXT file is, its row named «Testo incollato». */
+  const handleText = async (text: string, name = PASTED_TITLE) => {
+    const id = ++readingRef.current;
+    const base: DocumentJob = { id, name, bytes: new TextEncoder().encode(text).length, kind: 'txt', stage: 'searching', others: 0 };
+    // A text pasted is the user's own, not the act's.
+    if (name === PASTED_TITLE) setOnAtto(false);
+    setJob(base);
+    await findAndShow(base, text, null);
+  };
+
+  /** The citations of a text read, then the result: the row says «Cerco le citazioni…», the check, then the text. */
+  const findAndShow = async (base: DocumentJob, text: string, file: File | null) => {
+    const { id } = base;
     setJob({ ...base, stage: 'searching' });
     await nextPaint();
     if (id !== readingRef.current) return;
-    const found = extractCitations(result.text);
+    const signal = startAnalysis();
+    let run: Awaited<ReturnType<typeof analyse>>;
+    try {
+      run = await analyse(text, signal, undefined, localOnlyRef.current);
+    } catch (error) {
+      // An abort: another file, or the page has gone. Anything else is a fault, said on the row and in the console.
+      if (signal.aborted || id !== readingRef.current) return;
+      console.error('«Analizza documento»: the citations could not be found', error);
+      setJob({ ...base, stage: 'error', error: 'Non è stato possibile cercare le citazioni in questo documento.' });
+      return;
+    }
+    if (id !== readingRef.current) return;
     setJob({ ...base, stage: 'done' });
     await new Promise((resolve) => setTimeout(resolve, DONE_MS));
     if (id !== readingRef.current) return;
     focusAfterRef.current = 'result';
     setJob(null);
-    setLoaded({ fileName: file.name, text: result.text, citations: found });
+    setLoaded({ fileName: file?.name ?? base.name, text, file, analysis: run.analysis, answers: run.answers });
+    resetReview();
+  };
+
+  /** A new document: no choice, no link, no report of the one before. */
+  const resetReview = () => {
     setSelected(null);
+    setChoices(new Map());
+    setPicker(null);
+    linksAbortRef.current?.abort();
+    setLinksPhase('idle');
+    setPrepared(false);
+    setLinkAnswers(new Map());
+    setReviewing(false);
+    setReport(null);
+  };
+
+  /**
+   * «Riprova»: asks again for what is still unresolved, keeping what the server already answered. Also «Riconosci con
+   * VisuaLex questo documento»: this document only, the switch stays as it is for the next one (`local` follows the
+   * analysis). The choices stay where the same citation stands.
+   */
+  const retry = async () => {
+    if (!loaded || retrying) return;
+    const id = readingRef.current;
+    setRetrying(true);
+    const signal = startAnalysis();
+    try {
+      const run = await analyse(loaded.text, signal, loaded.answers);
+      if (id !== readingRef.current) return;
+      setLoaded({ ...loaded, analysis: run.analysis, answers: run.answers });
+      setSelected(null);
+      setPicker(null);
+    } catch (error) {
+      // An abort: the page or the document has gone. A fault keeps the result as it was, and is said in the console.
+      if (!signal.aborted) console.error('«Analizza documento»: «Riprova» failed', error);
+    } finally {
+      setRetrying(false);
+    }
   };
   // The window's listeners (below) live once; the file goes to the handler of the latest render.
   const handleFileRef = useRef(handleFile);
   useEffect(() => {
     handleFileRef.current = handleFile;
   });
+  // The act sent by its page, once, as the page opens.
+  const handleTextRef = useRef(handleText);
+  useEffect(() => {
+    handleTextRef.current = handleText;
+  });
+  const attoAnalysed = useRef(false);
+  useEffect(() => {
+    if (!fromAtto || attoAnalysed.current || !fromAtto.testo.trim()) return;
+    attoAnalysed.current = true;
+    void handleTextRef.current(fromAtto.testo, fromAtto.titolo);
+  }, [fromAtto]);
 
   // A file over the window, from `dragover` alone (`dragenter`/`dragleave` fire between children too): over the box or
   // elsewhere, and where on the box; with no event for `DRAG_REST_MS` it has gone. Let go anywhere but on the box, the browser
@@ -182,15 +435,6 @@ export function DocumentReviewPage() {
       const box = onBox(event);
       if (event.dataTransfer) event.dataTransfer.dropEffect = box ? 'copy' : 'none';
       setPhase(box ? 'over' : 'page');
-      const zone = zoneRef.current;
-      if (box && zone) {
-        const r = zone.getBoundingClientRect();
-        const clamp = (v: number, m: number) => Math.max(-m, Math.min(m, v));
-        const x = Math.round(clamp(((event.clientX - (r.left + r.width / 2)) / Math.max(1, r.width)) * 24, 8));
-        const y = Math.round(clamp(((event.clientY - (r.top + r.height / 2)) / Math.max(1, r.height)) * 16, 5));
-        // A pointer held still sends the same place over and over: no new render for it.
-        setLean((was) => (was.x === x && was.y === y ? was : { x, y }));
-      }
       window.clearTimeout(rest);
       rest = window.setTimeout(() => setPhase('idle'), DRAG_REST_MS);
     };
@@ -219,17 +463,172 @@ export function DocumentReviewPage() {
 
   const dismissJob = () => {
     readingRef.current += 1;
+    analysisAbortRef.current?.abort();
     setJob(null);
     zoneRef.current?.focus();
   };
 
   const chooseAnother = () => {
     readingRef.current += 1;
+    analysisAbortRef.current?.abort();
     setJob(null);
     setPhase('idle');
-    setSelected(null);
+    setOnAtto(false);
+    resetReview();
     focusAfterRef.current = 'zone';
     setLoaded(null);
+  };
+
+  // ── The rows: completing, dismissing, confirming (#376 §5; #391 §4.2) ──
+
+  const applyFromPicker = (act: DocumentAct, indices: number[], scope: CompletionScope) => {
+    const target = picker?.index ?? indices[0];
+    const keys = indices.map((index) => rows[index].key);
+    const before = snapshot(choices, keys);
+    const own = rows[target].key;
+    const reading = readingRef.current;
+    setPicker(null);
+    focusRowRef.current = target;
+    // The row in the picker was looked at: it is the user's choice for it. The others were reached in bulk (#391 Q8).
+    const next = (current: Map<string, RowChoice>) => {
+      let out = applyAct(current, [own], act, 'row');
+      if (scope !== 'row') out = applyAct(out, keys.filter((key) => key !== own), act, 'bulk');
+      return out;
+    };
+    void showUndoToast({
+      action: () => setChoices(next),
+      // On another document by now: its rows are not these, nothing to put back.
+      undo: () => { if (readingRef.current === reading) setChoices((current) => restore(current, before)); },
+      message: keys.length === 1 ? 'Atto applicato a 1 citazione' : `Atto applicato a ${keys.length} citazioni`,
+      // «Atto applicato a 4 citazioni» with «Annulla»: the least any «Annulla» stays (#376 §5.4, LC85).
+      duration: UNDO_MS,
+    });
+  };
+
+  const confirm = (index: number) => {
+    focusRowRef.current = index;
+    setChoices((current) => confirmRow(current, rows[index]));
+  };
+  const changeRow = (index: number, change: Partial<RowChoice>, focus: number | null = index) => {
+    focusRowRef.current = focus;
+    setChoices((current) => setChoice(current, rows[index].key, change));
+  };
+  const dismissRow = (index: number) => {
+    const pending = toCompleteRows(rows);
+    const at = pending.findIndex((row) => row.index === index);
+    const next = pending[at + 1] ?? pending[at - 1];
+    // The last one to complete gone: the focus goes to the list's first row, never to the page's body.
+    changeRow(index, { dismissed: true }, next ? next.index : FIRST_ROW);
+  };
+  const uncomplete = (index: number) => {
+    focusRowRef.current = index;
+    setChoices((current) => clearAct(current, rows[index].key));
+  };
+  const confirmAll = () => setChoices((current) => {
+    let out = current;
+    for (const row of waiting) out = confirmRow(out, row);
+    return out;
+  });
+  // Nothing left to review: the list shows all its rows again.
+  useEffect(() => {
+    if (reviewing && waiting.length === 0) setReviewing(false);
+  }, [reviewing, waiting.length]);
+
+  // ── The links (#391 L5) ──
+
+  /** «Prepara i link», and «Riprova»: asks only for the distinct norms with no answer, or one the source left silent. */
+  const prepare = async () => {
+    if (!loaded || local || linksPhase === 'preparing') return;
+    linksAbortRef.current?.abort();
+    const controller = new AbortController();
+    linksAbortRef.current = controller;
+    const was = linksPhase;
+    setLinksPhase('preparing');
+    try {
+      const ready = await prepareLinks(linkIn.rows, {
+        choices: linkIn.choices,
+        known: linkAnswers,
+        retry: true,
+        ask: (norms) => fetchNormLinks(norms, controller.signal),
+      });
+      if (controller.signal.aborted) return;
+      setLinkAnswers(ready.answers);
+      setPrepared(true);
+      setLinksPhase('ready');
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      console.error('«Analizza documento»: the links could not be prepared', (error as Error)?.message);
+      setLinksPhase(was === 'ready' ? 'ready' : 'idle');
+      notify({ type: 'error', message: 'Non è stato possibile preparare i link: riprova.', duration: 6000 });
+    }
+  };
+
+  /** What goes into the copy and the download: exactly the rows «con link» (§4.2). */
+  const currentLinks = () => (loaded && links ? documentLinks(loaded.text, linkIn.rows, links) : []);
+
+  const copyWithLinks = async () => {
+    if (!loaded || copying) return;
+    setCopying(true);
+    try {
+      const paste = buildLinkedPaste(loaded.text, currentLinks());
+      const how = await copyLinkedPaste(paste);
+      notify({
+        type: 'success',
+        message: how === 'rich'
+          ? `Testo con ${paste.links} ${paste.links === 1 ? 'link' : 'link'} copiato`
+          : 'Testo copiato: i link sono tra parentesi, dopo ogni citazione',
+        duration: 4000,
+      });
+    } catch (error) {
+      console.error('«Analizza documento»: the clipboard refused the copy', (error as Error)?.message);
+      notify({ type: 'error', message: 'Il browser non mi lascia scrivere negli appunti.', duration: 6000 });
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  const downloadCopy = async () => {
+    if (!loaded?.file || downloading) return;
+    setDownloading(true);
+    setReport(null);
+    const wanted = currentLinks();
+    try {
+      const copy = await writeDocxLinksFile({
+        file: loaded.file,
+        requests: wanted.map(({ start, end, href }) => ({ start, end, href })),
+        expectedText: loaded.text,
+      });
+      const name = copyName(loaded.fileName);
+      const blob = new Blob([copy.bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      // The report: every citation left without a link in the copy, and why — the page's reasons and the writer's.
+      const skipped: UnlinkedRow[] = unlinked.flatMap((group) => group.rows);
+      copy.outcomes.forEach((outcome, at) => {
+        if (outcome.linked) return;
+        const row = rows[wanted[at].row];
+        skipped.push({ index: row.index, label: rowLabel(loaded.text, row), reason: DOCX_SKIP_WORDS[outcome.reason] });
+      });
+      skipped.sort((a, b) => rows[a.index].start - rows[b.index].start);
+      const inNotes = copy.outcomes.filter((outcome) => outcome.linked && outcome.part !== 'word/document.xml').length;
+      setReport({ ok: true, fileName: name, linked: copy.linked, inNotes, skipped });
+    } catch (error) {
+      console.error('«Analizza documento»: the copy with the links could not be written', (error as Error)?.message);
+      setReport({
+        ok: false,
+        error: error instanceof DocxError && error.code === 'signed'
+          ? 'Il documento è firmato digitalmente: una copia con i link perderebbe la firma.'
+          : 'Non è stato possibile scrivere la copia con i link. Il file originale non è stato toccato.',
+      });
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const selectFromList = useCallback((index: number) => {
@@ -264,6 +663,7 @@ export function DocumentReviewPage() {
       act_number: citation.parsed.act_number ?? '',
       date: citation.parsed.date ?? '',
       article: citation.parsed.article,
+      ...(citation.parsed.annex ? { annex: citation.parsed.annex } : {}),
       version: 'vigente',
       version_date: '',
     });
@@ -271,16 +671,24 @@ export function DocumentReviewPage() {
 
   return (
     <PageFrame
-      title="Analizza documento"
-      line="Trova le norme citate in un atto: il file resta nel tuo browser."
-      action={
-        <p className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-          <ShieldCheck aria-hidden="true" size={14} />
-          Resta nel tuo browser<span className="sr-only">: il documento non viene inviato al server né salvato.</span>
-        </p>
-      }
+      // «in sviluppo», as its entry in Work says (LC47).
+      title={<>Analizza documento <span className="ml-1 align-middle font-sans text-xs font-medium tracking-normal text-slate-600 dark:text-slate-400">in sviluppo</span></>}
+      // Where the document goes, said once (#376 §6.4, G-401; Luca, LC29: «è duplicato 2 volte, dai, su»).
+      line={<>{onAtto
+        ? 'Trova le norme citate nell’atto: le citazioni si riconoscono come in una ricerca, e l’atto resta tra i tuoi atti.'
+        : local
+          ? 'Trova le norme citate in un atto, solo nel browser: LexCraft non riceve nulla.'
+          : 'Trova le norme citate in un atto. Il documento resta sul tuo computer: a LexCraft arrivano solo le citazioni trovate, come in una ricerca.'}
+        <span className="mt-1 block text-sm">Funziona già, ma è ancora in sviluppo: i risultati vanno controllati. Con l’app da scrivania arriverà una lettura più completa, con un modello di IA che gira sul tuo computer.</span>
+      </>}
     >
+      {fromAtto && (
+        <Link to={`/work/atti/${encodeURIComponent(fromAtto.id)}`} className={cn('-mt-2 w-fit rounded-sm text-sm text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline dark:text-slate-400 dark:hover:text-slate-100', FOCUS_RING)}>
+          ← Torna all’atto «{fromAtto.titolo}»
+        </Link>
+      )}
 
+      {/* bare-input: the hidden file picker the drop zone and «Scegli un altro documento» open. */}
       <input
         ref={fileInputRef}
         type="file"
@@ -310,17 +718,19 @@ export function DocumentReviewPage() {
           >
             {/* Positioned: a row that leaves while another comes is laid over it (`popLayout`). */}
             <div className="relative flex flex-col gap-3 pb-1">
+              {/* The box and the paste side by side on a computer, the paste under the box on a phone (#391 §5.1). */}
+              <div className="grid gap-3 lg:grid-cols-2">
               <DropZone
                 ref={zoneElement}
                 phase={phase}
-                lean={lean}
                 landings={landings}
                 touch={touch}
                 busy={job !== null && job.stage !== 'error'}
                 onChoose={() => fileInputRef.current?.click()}
-                sheetRef={sheetRef}
-                flying={flight !== null}
               />
+              <PasteBox busy={job !== null && job.stage !== 'error'} onAnalyse={(text) => void handleText(text)} />
+              </div>
+              <LocalSwitch on={localOnly} onChange={setLocalOnly} disabled={job !== null && job.stage !== 'error'} />
               {/* The document's row; a refusal slides away with its ✕. A new row takes the old one's place at once
                   (`popLayout`), so the sheet thrown to it lands where it stays. */}
               <AnimatePresence initial={false} mode="popLayout">
@@ -332,7 +742,7 @@ export function DocumentReviewPage() {
                     exit={reduceMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, x: 48 }}
                     transition={{ duration: dur.pop, ease: ease.out }}
                   >
-                    <DocumentRow job={job} onDismiss={dismissJob} markRef={markRef} hidden={flight !== null} />
+                    <DocumentRow job={job} onDismiss={dismissJob} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -361,13 +771,66 @@ export function DocumentReviewPage() {
               {/* 44 px at every width, as the box it brings back. */}
               <Button variant="secondary" icon={<RotateCcw size={15} />} onClick={chooseAnother} className="md:min-h-11">Scegli un altro documento</Button>
             </div>
+            <LinksPanel
+              localOnly={local}
+              onLeaveLocal={() => void retry()}
+              phase={prepared ? 'ready' : linksPhase === 'preparing' ? 'preparing' : 'idle'}
+              refreshing={prepared && linksPhase === 'preparing'}
+              summary={summary}
+              unlinked={unlinked}
+              toConfirm={waiting.length}
+              reviewing={reviewing}
+              onReview={setReviewing}
+              onConfirmAll={confirmAll}
+              onPrepare={() => void prepare()}
+              onCopy={() => void copyWithLinks()}
+              copying={copying}
+              docx={Boolean(loaded.file && /\.docx$/i.test(loaded.fileName))}
+              onDownload={() => void downloadCopy()}
+              downloading={downloading}
+              report={report}
+              onSelect={selectFromList}
+            />
             {/* Citations first in the order of reading (a phone shows them above the text); on a computer
                 the text takes the left column. */}
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-6 xl:grid-cols-[minmax(0,1fr)_25rem]">
               <aside aria-labelledby="doc-citations" className={cn(PANEL, COLUMN_HEIGHT, 'max-h-[55dvh] lg:col-start-2 lg:row-start-1 lg:max-h-none')}>
                 <h2 id="doc-citations" className={PANEL_HEAD}>Citazioni</h2>
+                {loaded.analysis.degraded && (
+                  <div role="status" className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+                    <CloudOff aria-hidden="true" size={16} className="shrink-0 text-slate-500 dark:text-slate-400" />
+                    <p className="min-w-0 flex-1 basis-48">LexCraft non risponde: ho riconosciuto solo le forme che conosco nel browser.</p>
+                    <Button variant="secondary" size="sm" loading={retrying} onClick={() => void retry()} className="md:min-h-11">Riprova</Button>
+                  </div>
+                )}
+                {notices.map((notice) => (
+                  <p key={notice} className="shrink-0 border-b border-slate-200 px-4 py-2 text-sm text-slate-700 dark:border-slate-800 dark:text-slate-300">{notice}</p>
+                ))}
+                {reviewing && (
+                  <p role="status" className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+                    Mostro le citazioni da confermare.{' '}
+                    <Button variant="link" size="sm" onClick={() => setReviewing(false)}>Mostra tutte</Button>
+                  </p>
+                )}
                 <div ref={listBodyRef} className={PANEL_BODY}>
-                  <CitationList groups={groups} selected={selected} onSelect={selectFromList} onOpen={openCitation} />
+                  <CitationList
+                    text={loaded.text}
+                    rows={rows}
+                    groups={groups}
+                    selected={selected}
+                    choices={choices}
+                    links={links}
+                    linksOn={prepared}
+                    only={only}
+                    onSelect={selectFromList}
+                    onOpen={openCitation}
+                    onPick={(index, mode, anchor) => setPicker({ index, mode, anchor })}
+                    onDismiss={dismissRow}
+                    onRestore={(index) => changeRow(index, { dismissed: false })}
+                    onUncomplete={uncomplete}
+                    onConfirm={confirm}
+                    onLeaveOut={(index, leftOut) => changeRow(index, { leftOut })}
+                  />
                 </div>
               </aside>
               <section aria-labelledby="doc-text" className={cn(PANEL, COLUMN_HEIGHT, 'max-h-[80dvh] min-w-0 lg:col-start-1 lg:row-start-1 lg:max-h-none')}>
@@ -378,16 +841,52 @@ export function DocumentReviewPage() {
                   tabIndex={0}
                   role="group"
                   aria-labelledby="doc-text"
-                  className={cn(PANEL_BODY, 'px-5 py-6 md:px-8', FOCUS_RING, 'focus-visible:ring-inset focus-visible:ring-offset-0')}
+                  className={cn(PANEL_BODY, 'px-5 py-6 md:px-8', FOCUS_RING, '')}
                 >
-                  <DocumentText text={loaded.text} citations={citations} selected={selected} onSelect={selectFromText} />
+                  <DocumentText text={loaded.text} marks={marks} selected={selected} onSelect={selectFromText} />
                 </div>
               </section>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-      {flight && <SheetFlight key={landings} from={flight} target={markRef} onDone={() => setFlight(null)} />}
+      {loaded && picker && rows[picker.index] && (
+        <CompletionPicker
+          text={loaded.text}
+          row={rows[picker.index]}
+          rows={rows}
+          analysis={loaded.analysis}
+          mode={picker.mode}
+          localOnly={local}
+          customAliases={customAliases}
+          anchor={picker.anchor}
+          onApply={applyFromPicker}
+          onClose={() => setPicker(null)}
+        />
+      )}
     </PageFrame>
+  );
+}
+
+/**
+ * «Riconosci solo nel browser» (#376 §6.3, Q3): off by default. On, nothing about the document leaves the computer —
+ * not even the citations — the recognition is the browser's own, and no link can be asked (#391 §8).
+ */
+function LocalSwitch({ on, onChange, disabled }: { on: boolean; onChange: (on: boolean) => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+      {/* The words are the switch's `<label>`: a press on them turns it too, as on the hand-made one before (LC117). */}
+      <span className="inline-flex min-h-11 items-center gap-2.5">
+        <Switch id="doc-local" checked={on} onCheckedChange={onChange} disabled={disabled} aria-describedby="doc-local-hint" className="disabled:cursor-wait" />
+        <label htmlFor="doc-local" className={cn('text-sm font-medium text-slate-800 dark:text-slate-200', disabled ? 'cursor-wait opacity-60' : 'cursor-pointer')}>
+          Riconosci solo nel browser
+        </label>
+      </span>
+      <p id="doc-local-hint" className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-slate-600 dark:text-slate-400">
+        {on
+          ? 'Il riconoscimento è più limitato, e i link non si possono inserire.'
+          : 'Per un documento riservato: nemmeno le citazioni escono dal computer.'}
+      </p>
+    </div>
   );
 }

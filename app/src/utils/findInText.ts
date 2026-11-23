@@ -1,3 +1,4 @@
+import { READER_SLOT_ATTR } from './selectionOffset';
 /**
  * Find in the text: a pure matcher that ignores case and accents, and the
  * helpers that map its offsets back onto the displayed text nodes. Nothing
@@ -205,8 +206,8 @@ const BLOCK_TAGS = new Set([
   'DIV', 'P', 'LI', 'UL', 'OL', 'PRE', 'TABLE', 'TR', 'TD', 'TH', 'SECTION', 'ARTICLE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
 ]);
 
-/** Block-like: the tags above, the article's blocks (`vlx-b`) and the decision's lines. */
-function isBlockLike(el: Element): boolean {
+/** Block-like: the tags above, the article's blocks (`vlx-b`) and the decision's lines; the highlighter's words stop at one too. */
+export function isBlockLike(el: Element): boolean {
   return BLOCK_TAGS.has(el.tagName) || el.classList.contains('vlx-b') || el.classList.contains('vlx-dec-line');
 }
 
@@ -230,7 +231,8 @@ export function collectSearchableText(root: Node): { nodes: TextSegment[]; text:
     acceptNode(n) {
       if (n.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
       const el = n as Element;
-      if (getComputedStyle(el).display === 'none') {
+      // A space open in the text (`BlockSpace`) is not the article's text.
+      if (el.hasAttribute(READER_SLOT_ATTR) || getComputedStyle(el).display === 'none') {
         separate = true;
         return NodeFilter.FILTER_REJECT;
       }

@@ -1,4 +1,4 @@
-import { Briefcase, GraduationCap, Landmark, Users, type LucideIcon } from 'lucide-react';
+import { Briefcase, FlaskConical, GraduationCap, Users, type LucideIcon } from 'lucide-react';
 import { PAGE_CODE } from '../../pageCode';
 
 /** The four sections over the common core, Corpus (D-076; spec 2026-10-18-sections-switcher). */
@@ -6,7 +6,7 @@ export type SectionId = 'opus' | 'gymnasium' | 'academia' | 'forum';
 
 export interface Section {
   id: SectionId;
-  /** The short name, «Gymnasium»; the full one is «VisuaLex Gymnasium» (S11). */
+  /** The visible name, «Learn» (D-137, D-157). */
   name: string;
   /** The line under the name in the switcher (S3). */
   line: string;
@@ -18,16 +18,16 @@ export interface Section {
 }
 
 export const SECTIONS: readonly Section[] = [
-  { id: 'opus', name: 'Opus', line: 'Dossier di lavoro e strumenti per la professione', icon: Briefcase, home: '/opus/oggi', homeName: 'Oggi' },
-  { id: 'gymnasium', name: 'Gymnasium', line: 'Schede, ripasso, esami e concorsi', icon: GraduationCap, home: '/studia/ripasso', homeName: 'Oggi' },
-  { id: 'academia', name: 'Academia', line: 'Grafo, feedback e validazione', icon: Landmark, home: '/merlt', homeName: 'Assistente' },
+  { id: 'opus', name: 'Work', line: 'Pratiche di lavoro e strumenti per la professione', icon: Briefcase, home: '/work/scadenziario', homeName: 'Attività' },
+  { id: 'gymnasium', name: 'Learn', line: 'Schede, ripasso, esami e concorsi', icon: GraduationCap, home: '/learn/ripasso', homeName: 'Oggi' },
+  { id: 'academia', name: 'Labs', line: 'Grafo, feedback e validazione', icon: FlaskConical, home: '/labs', homeName: 'Assistente' },
   { id: 'forum', name: 'Forum', line: 'Dossier pubblici e community', icon: Users, home: '/forum', homeName: 'Dossier pubblici' },
 ];
 
 /**
  * The sections' phrases (the owner's, 19 October 2026); the one place to change them. Since L-37 (the owner, 22 October
- * 2026) a section page's title is the page's name — «Oggi», «Progressi», «Community» — and the phrase goes over it, small,
- * after the section's name: «Gymnasium · la tua palestra giuridica» (`sectionKicker`, drawn by `PageFrame`'s `kicker`).
+ * 2026) a section page's title is the page's name — «Oggi», «Progressi», «Community» — with the section's name over it,
+ * small (`sectionKicker`, drawn by `PageFrame`'s `kicker`). Until 15 November 2026 the phrase followed the name there.
  */
 export const SECTION_PHRASES = {
   gymnasium: 'la tua palestra giuridica',
@@ -40,10 +40,13 @@ export const SECTION_PHRASES = {
 /** A section with a phrase. */
 export type PhrasedSection = keyof typeof SECTION_PHRASES;
 
-/** The line over a section page's title (L-37): «Opus · la tua officina giuridica». */
+/**
+ * The line over a section page's title (L-37): the section's name, «Work». On a phone, where the switcher sits in the
+ * drawer, it says where the reader is. The phrase no longer follows it (anti-slop review, 15 November 2026: a motto over
+ * every title of a working tool, R-09 and R-37); the phrases stay above, for the pages that present the sections.
+ */
 export function sectionKicker(id: PhrasedSection): string {
-  const name = SECTIONS.find((section) => section.id === id)?.name ?? id;
-  return `${name} · ${SECTION_PHRASES[id]}`;
+  return SECTIONS.find((section) => section.id === id)?.name ?? id;
 }
 
 /**
@@ -62,20 +65,20 @@ export function kickerOf(id: SectionId): string | null {
 export const SECTION_HOME_CODE: Partial<Record<SectionId, () => Promise<unknown>>> = {
   opus: PAGE_CODE.opus,
   forum: PAGE_CODE.forum,
-  gymnasium: () => Promise.all([import('../../components/features/studia/StudiaPage'), import('../../components/features/studia/ReviewHome')]),
+  gymnasium: PAGE_CODE.learn,
   academia: () => import('../../pages/MerltHubPage'),
 };
 
-/** The split button's left part (S6): «Vai a Gymnasium: Oggi», «Vai ad Academia: Assistente». */
-export const goToLabel = (section: Section) => `Vai ${section.name.startsWith('A') ? 'ad' : 'a'} ${section.name}: ${section.homeName}`;
+/** The split button's left part (S6): «Vai a Learn: Oggi», «Vai a Labs: Assistente». */
+export const goToLabel = (section: Section) => `Vai a ${section.name}: ${section.homeName}`;
 
 const under = (pathname: string, root: string) => pathname === root || pathname.startsWith(`${root}/`);
 
 /** The section a page belongs to, or null for a Corpus page, which keeps the last section (S1). */
 export function sectionForPath(pathname: string): SectionId | null {
-  if (under(pathname, '/opus')) return 'opus';
-  if (under(pathname, '/studia')) return 'gymnasium';
+  if (under(pathname, '/work')) return 'opus';
+  if (under(pathname, '/learn')) return 'gymnasium';
   if (under(pathname, '/forum')) return 'forum';
-  if (under(pathname, '/merlt') || under(pathname, '/grafo')) return 'academia';
+  if (under(pathname, '/labs')) return 'academia';
   return null;
 }
