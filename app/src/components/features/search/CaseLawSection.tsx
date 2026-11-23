@@ -13,6 +13,7 @@ import { useIsDesktop } from '../../../hooks/useIsDesktop';
 import { useAppStore } from '../../../store/useAppStore';
 import { DecisionResultList } from '../decisions/DecisionResultList';
 import { EuCaseLawBlock } from '../decisions/EuCaseLawBlock';
+import { CorteCostMassimeBlock } from '../decisions/CorteCostMassimeBlock';
 import { RassegnePanel } from '../rassegne/RassegnePanel';
 import { CaseLawControls } from './caseLaw/CaseLawControls';
 import { CaseLawFiltersContext } from './caseLaw/caseLawFiltersContext';
@@ -56,7 +57,9 @@ function writeOpen(tabId: string | undefined, open: boolean): void {
 
 /**
  * «Giurisprudenza» under the article text: the Massimario's reviews (`RassegnePanel`, read from the
- * Python API's own store, with MERL-T on or off), on request the decisions of the Cassazione that mention the article, and
+ * Python API's own store, with MERL-T on or off), the Corte costituzionale's massime from its open
+ * data (`CorteCostMassimeBlock`, loaded when the section opens), on request the decisions of the
+ * Cassazione that mention the article, and
  * a topic search of the Cassazione by the article's rubric (it took the place of the Brocardi
  * glossary's «Sentenze su questo tema», D-078). Closed by default; its state is kept
  * per host for the session. An act of the Union gets the Court of Justice's block (`EuCaseLawBlock`, loaded
@@ -171,6 +174,21 @@ export function CaseLawSection({ norma, topic, articleUrn, tabId, backEntry }: C
             <div>
               <RassegnePanel articleUrn={articleUrn} besideId={tabId} backEntry={backEntry} />
             </div>
+
+            {/* The Court's own massime, a separate collection with its licence line (G-281); a State act's article only */}
+            {offersCassazione && articleUrn && (
+              <section aria-labelledby={`${panelId}-corte-cost`} className="space-y-3">
+                <h4 id={`${panelId}-corte-cost`} className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Corte costituzionale: massime
+                </h4>
+                <CorteCostMassimeBlock
+                  articleUrn={articleUrn}
+                  constitution={norma.tipo_atto?.trim().toLowerCase() === 'costituzione'}
+                  besideId={tabId}
+                  backEntry={backEntry}
+                />
+              </section>
+            )}
 
             {offersCassazione && <section aria-labelledby={`${panelId}-cassazione`} className="space-y-3">
               <h4 id={`${panelId}-cassazione`} className="text-sm font-semibold text-slate-700 dark:text-slate-200">

@@ -113,6 +113,7 @@ export default defineConfig({
       '/fetch_decision_pdf': PYTHON_API,
       '/search_decisions': PYTHON_API,
       '/search_eu_case_law': PYTHON_API,
+      '/search_corte_cost_massime': PYTHON_API,
       // the Massimario's reviews, from the API's own store (POST for a keyword search)
       '/fetch_rassegne': PYTHON_API,
       // a word in every volume, for the page «Rassegne» (POST only)
