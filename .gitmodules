@@ -1,0 +1,4 @@
+[submodule "conventions"]
+	path = conventions
+	url = https://github.com/LexCraft-IT/lexcraft-contracts.git
+	branch = develop
