@@ -1,0 +1,5 @@
+.DS_Store
+
+# Local-only real decision texts for the find tests (personal data): never committed. The rule
+# lived in the monorepo's .gitignore as apps/web/src/utils/__fixtures__/private/.
+app/src/utils/__fixtures__/private/

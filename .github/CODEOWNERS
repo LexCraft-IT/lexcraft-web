@@ -1,0 +1,7 @@
+# Review requested, never required: GitHub asks the other owner to review a pull request that
+# touches these paths; the ruleset does not wait for it. The author of a pull request is never asked.
+/.github/          @capazme @LP-legal
+/.claude/          @capazme @LP-legal
+/conventions       @capazme @LP-legal
+/LICENSE           @capazme @LP-legal
+/landing/          @capazme @LP-legal
