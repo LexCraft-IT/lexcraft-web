@@ -1,7 +1,8 @@
 /**
  * «Scrivania»: the search page when no practice is open (spec 2026-10-18-redesign-inchiostro §5.3.2).
  * A greeting with the day, the ways to start (the field above, ⌘K, three examples, the two Corpus tools), then «Riprendi»
- * — the dossiers touched last — and the frequent searches, as typographic lists, not cards.
+ * — the dossiers touched last —, the saved norms that changed (L-83), «Letto di recente» (L-82) and the frequent searches,
+ * as typographic lists, not cards.
  * `#tour-main-content` and `#tour-quick-norms` are the tours' targets (config/tourConfig.ts).
  */
 import { Link, useNavigate } from 'react-router-dom';
@@ -17,6 +18,8 @@ import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import { buttonClassName } from '../../ui/buttonStyles';
 import { useOpenSettings } from '../settings/settingsRoute';
+import { NormaChangesSection } from '../history/NormaChangesSection';
+import { RecentHistory } from '../history/RecentHistory';
 
 const EXAMPLES = ['Art. 2043 c.c.', 'Art. 5 GDPR', 'Art. 1 Costituzione'];
 
@@ -133,6 +136,13 @@ export function Scrivania() {
             </ul>
           </section>
         )}
+
+        <NormaChangesSection
+          onOpen={(params) => triggerSearch(params)}
+          className="mt-14 max-md:mt-10"
+        />
+
+        <RecentHistory rowClassName={ROW} />
 
         <section id="tour-quick-norms" className="mt-14 max-md:mt-10" aria-labelledby="scrivania-frequenti">
           <div className="mb-3 flex items-baseline justify-between gap-4">

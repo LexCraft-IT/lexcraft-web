@@ -1,10 +1,14 @@
 // The Scrivania against the worst realistic data (break-ui): titles at the server's limits (a dossier's
 // name 200 characters, a quick norm's label 300), a one-letter title, a dossier with one entry, a
 // thousand dossiers, and the empty account. Kept as the regression test for the page.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { appStore } from '../../../store/useAppStore';
+// The desk's blocks read the server: none here, but where a test gives rows.
+const getHistory = vi.fn();
+vi.mock('../../../services/historyService', () => ({ getHistory: (...a: unknown[]) => getHistory(...a) }));
+vi.mock('../../../services/notificationService', () => ({ notificationService: { getNormaChanges: () => Promise.resolve([]), markNormaChangesRead: vi.fn() } }));
 import { Scrivania } from './Scrivania';
 import type { Dossier, DossierItem, QuickNorm } from '../../../types';
 
@@ -24,6 +28,7 @@ function renderPage() {
 
 describe('the Scrivania with the worst realistic data', () => {
   beforeEach(() => {
+    getHistory.mockReset().mockResolvedValue([]);
     const many = Array.from({ length: 1000 }, (_, i) => dossier(`d${i}`, `Pratica ${i}`, `2025-01-01T00:00:00Z`));
     appStore.setState({
       dossiers: [

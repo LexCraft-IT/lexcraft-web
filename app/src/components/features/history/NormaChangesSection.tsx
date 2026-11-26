@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, BellRing, Check } from 'lucide-react';
+import { ArrowRight, Check } from 'lucide-react';
 import { Button } from '../../ui/Button';
 import { formatDistanceToNow } from 'date-fns';
 import { it } from 'date-fns/locale';
@@ -12,16 +12,17 @@ import type { SearchParams } from '../../../types';
 interface NormaChangesSectionProps {
   /** Reopens the norm on the reading surface: the caller navigates and triggers the search. */
   onOpen: (params: SearchParams) => void;
+  /** Its place among the Scrivania's blocks. */
+  className?: string;
 }
 
 /**
- * "Norme salvate aggiornate": the unread change notifications, listed where
- * the user already comes to find what they consulted. The badge on the
- * Cronologia entry counts these rows; "Segna come lette" clears them
+ * "Norme salvate aggiornate": the unread change notifications, on the
+ * Scrivania (L-83). The avatar's badge and its menu entry count these rows; "Segna come lette" clears them
  * server-side and tells the badge's poller through a window event.
  * Renders nothing while loading and when there is nothing unread.
  */
-export function NormaChangesSection({ onOpen }: NormaChangesSectionProps) {
+export function NormaChangesSection({ onOpen, className }: NormaChangesSectionProps) {
   const [notifications, setNotifications] = useState<NormaChangeNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [marking, setMarking] = useState(false);
@@ -58,39 +59,27 @@ export function NormaChangesSection({ onOpen }: NormaChangesSectionProps) {
   if (!error && notifications.length === 0) return null;
 
   return (
-    <section
-      aria-labelledby="norma-changes-title"
-      className="rounded-[8px] border border-amber-200 bg-amber-50/60 shadow-sm dark:border-amber-900/40 dark:bg-amber-950/20"
-    >
-      <div className="flex items-center justify-between gap-3 border-b border-amber-200/70 px-4 py-3 dark:border-amber-900/40">
-        <h2 id="norma-changes-title" className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-          <BellRing size={18} className="text-amber-500" /> Norme salvate aggiornate
-          {notifications.length > 0 && (
-            <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">{notifications.length}</span>
-          )}
+    <section aria-labelledby="norma-changes-title" className={className}>
+      <div className="mb-3 flex items-baseline justify-between gap-4 max-md:mb-2">
+        <h2 id="norma-changes-title" className="font-serif text-2xl font-medium text-slate-900 max-md:text-xl dark:text-slate-50">
+          Norme salvate aggiornate
         </h2>
         {notifications.length > 0 && (
-          <Button
-            variant="quiet"
-            onClick={() => void markAllRead()}
-            loading={marking}
-            icon={<Check size={16} aria-hidden />}
-            className="text-amber-800 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200 dark:hover:bg-amber-900/40 dark:hover:text-amber-100"
-          >
+          <Button variant="quiet" onClick={() => void markAllRead()} loading={marking} icon={<Check size={14} aria-hidden />} className="gap-1.5 px-2 text-sm">
             Segna come lette
           </Button>
         )}
       </div>
-      {error && <p role="alert" className="px-4 py-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {error && <p role="alert" className="border-t border-slate-200 pt-4 text-sm text-red-600 dark:border-slate-800 dark:text-red-400">{error}</p>}
       {notifications.length > 0 && (
-        <ul className="divide-y divide-amber-200/60 dark:divide-amber-900/40">
+        <ul className="border-b border-slate-200 dark:border-slate-800">
           {notifications.map(item => {
             const norma = normaFromChangeNotification(item);
             return (
-              <li key={item.id} className="flex items-center justify-between gap-3 px-4 py-3">
+              <li key={item.id} className="flex min-h-[44px] items-center justify-between gap-4 border-t border-slate-200 py-3.5 max-md:py-2.5 dark:border-slate-800">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-slate-900 dark:text-white">{normaChangeLabel(item)}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                  <p className="truncate font-serif text-[19px] text-slate-900 max-md:text-[17px] dark:text-slate-50">{normaChangeLabel(item)}</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     Il testo è cambiato · {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true, locale: it })}
                   </p>
                 </div>

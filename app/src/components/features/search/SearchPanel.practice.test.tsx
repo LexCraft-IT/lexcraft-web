@@ -54,7 +54,7 @@ vi.mock('../decisions/DecisionSearchTabView', async () => {
     ),
   };
 });
-vi.mock('../../../services/historyService', () => ({ addToHistory: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../../services/historyService', () => ({ addToHistory: vi.fn().mockResolvedValue(undefined), getHistory: vi.fn().mockResolvedValue([]) }));
 vi.mock('../../../services/legalFetch', () => ({
   legalFetch: async (path: string, init?: RequestInit) => {
     if (path === '/fetch_tree') return env.tree ? new Response(JSON.stringify(env.tree)) : new Response('', { status: 500 });

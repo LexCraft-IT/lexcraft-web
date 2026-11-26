@@ -1,576 +1,409 @@
-import { useEffect, useState, useMemo, useRef } from 'react';
-import { Search, ArrowRight, Trash2, Zap, FolderPlus, MoreVertical, Plus, X } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
-import { it } from 'date-fns/locale';
+/**
+ * «Cronologia» (`/history`): the norms and decisions the user opened, a typographic list by day in the Scrivania's style
+ * (L-82, the proposal of 18 Nov 2026). A row reopens its search, or its decision, at once; «⋯» adds it to a practice or
+ * the frequent searches, or takes it off. Every removal — a row, a day, everything — is behind «Annulla», with no
+ * question before (L-74, L-84). «Norme salvate aggiornate» lives on the Scrivania (L-83).
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FolderPlus, MoreVertical, Plus, Search, Trash2, Zap } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '../../../lib/utils';
 import { MenuButton, type MenuItem } from '../../ui/MenuButton';
-import { EmptyState } from '../../ui/EmptyState';
-import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { useAppStore } from '../../../store/useAppStore';
-import { useNavigate } from 'react-router-dom';
-import type { NormaVisitata, SearchParams } from '../../../types';
-import { useTour } from '../../../hooks/useTour';
-import { getHistory, deleteHistoryItem, clearHistory, type SearchHistoryItem } from '../../../services/historyService';
-import { NormaChangesSection } from './NormaChangesSection';
-import { actHeading, labelFromParams } from '../../../utils/sources';
-import { DecisionHistoryRow } from './DecisionHistoryRow';
+import { getHistory, type SearchHistoryItem } from '../../../services/historyService';
+import { identityFromKey } from '../../../utils/decisionLinks';
+import { labelFromParams } from '../../../utils/sources';
+import type { NormaVisitata } from '../../../types';
 import { PageFrame } from '../../layout/PageFrame';
-import { decisionHistoryLabel, identityFromKey } from '../../../utils/decisionLinks';
 import { Button } from '../../ui/Button';
-import { IconButton } from '../../ui/IconButton';
 import { Input } from '../../ui/Input';
+import { SegmentedTabs } from '../../ui/SegmentedTabs';
 import { Toast } from '../../ui/Toast';
 import { Arrive } from '../../ui/Arrive';
 import { HistoryListSkeleton } from '../../ui/Skeleton';
+import {
+  actHeadingOf, clearAllWithUndo, HISTORY_PUT_BACK_EVENT, historyLabel, isRowShown, kindOf, removeRowsWithUndo, searchParamsOf, timeOf,
+} from './historyRows';
 
-// Humanized group label: today/yesterday/weekday-this-week/full-date.
-// Group key stays YYYY-MM-DD (ISO) for stable insertion order; only the
-// rendered label is humanized.
-function groupLabel(d: Date): string {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const target = new Date(d); target.setHours(0, 0, 0, 0);
-    const diffDays = Math.round((today.getTime() - target.getTime()) / 86_400_000);
-    if (diffDays === 0) return 'Oggi';
-    if (diffDays === 1) return 'Ieri';
-    if (diffDays > 1 && diffDays < 7) {
-        const weekday = d.toLocaleDateString('it-IT', { weekday: 'long' });
-        return weekday.charAt(0).toUpperCase() + weekday.slice(1);
-    }
-    return d.toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
+/** What the server sends at once (`GET /history`'s default); «Mostra i giorni precedenti» reads the next as many. */
+const PAGE = 100;
+
+type Kind = 'all' | 'norms' | 'decisions';
+const KINDS = [
+  { id: 'all', label: 'Tutto' },
+  { id: 'norms', label: 'Norme' },
+  { id: 'decisions', label: 'Sentenze' },
+] as const;
+
+/** «Oggi», «Ieri», «lunedì 16 novembre», «3 ottobre 2025». */
+function dayLabel(d: Date): string {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const target = new Date(d); target.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((today.getTime() - target.getTime()) / 86_400_000);
+  if (diffDays === 0) return 'Oggi';
+  if (diffDays === 1) return 'Ieri';
+  const sameYear = d.getFullYear() === today.getFullYear();
+  return d.toLocaleDateString('it-IT', sameYear ? { weekday: 'long', day: 'numeric', month: 'long' } : { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-// Converte un history item in NormaVisitata
-function historyToNormaVisitata(item: SearchHistoryItem): NormaVisitata {
-    return {
-        tipo_atto: item.act_type || '',
-        data: item.date || '',
-        numero_atto: item.act_number || undefined,
-        numero_articolo: item.article?.toString() || '',
-        versione: 'vigente',
-    };
-}
+const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-// Converte un history item in SearchParams
-function historyToSearchParams(item: SearchHistoryItem): SearchParams {
-    return {
-        act_type: item.act_type || '',
-        act_number: item.act_number || '',
-        date: item.date || '',
-        article: item.article?.toString() || '',
-        version: 'vigente',
-    };
-}
+const byNewest = (a: SearchHistoryItem, b: SearchHistoryItem) => (b.created_at ?? '').localeCompare(a.created_at ?? '');
 
-// «2056,2057,2058» as the server keeps it, read as «2056, 2057, 2058» (B8).
-const articlesOf = (item: SearchHistoryItem) => item.article?.toString().split(',').map((a) => a.trim()).filter(Boolean).join(', ') ?? '';
-
-// The row's title: the norm as it is cited, «art. 2043 c.c.», «artt. 2056, 2057 c.c.» (B8).
-function historyLabel(item: SearchHistoryItem): string {
-    const articles = articlesOf(item);
-    const label = labelFromParams({ act_type: item.act_type ?? '', act_number: item.act_number, date: item.date, article: articles });
-    return articles.includes(',') ? label.replace(/^art\. /, 'artt. ') : label;
-}
-
-// The row's second line: the act by its name («Codice civile») or its citation.
-const actHeadingOf = (item: SearchHistoryItem) => actHeading({ tipo_atto: item.act_type ?? '', numero_atto: item.act_number, data: item.date });
-
-// A quick norm is suggested with the norm's short label, the act's with no article (source convention).
-function generateQuickNormLabel(item: SearchHistoryItem): string {
-    return labelFromParams({ act_type: item.act_type ?? '', act_number: item.act_number, date: item.date, article: item.article?.toString() });
+function toNorma(item: SearchHistoryItem): NormaVisitata {
+  const params = searchParamsOf(item);
+  return { tipo_atto: params.act_type, data: params.date, numero_atto: params.act_number || undefined, numero_articolo: params.article, versione: params.version };
 }
 
 export function HistoryView() {
-    const [history, setHistory] = useState<SearchHistoryItem[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [clearing, setClearing] = useState(false);
-    const [searchTerm, setSearchTerm] = useState('');
-    const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-    const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-    const [clearFrom, setClearFrom] = useState<HTMLElement | null>(null);
-    const [createDossierFor, setCreateDossierFor] = useState<SearchHistoryItem | null>(null);
-    const [newDossierTitle, setNewDossierTitle] = useState('');
-    const searchInputRef = useRef<HTMLInputElement>(null);
+  const [history, setHistory] = useState<SearchHistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [more, setMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [kind, setKind] = useState<Kind>('all');
+  const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  // The row whose «Nuova pratica…» asks its title, under it (it was a window over the page, L-73).
+  const [newDossierFor, setNewDossierFor] = useState<string | null>(null);
+  const [newDossierTitle, setNewDossierTitle] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-    const {
-        triggerSearch,
-        addQuickNorm,
-        dossiers,
-        addToDossier,
-        createDossier
-    } = useAppStore();
-    const navigate = useNavigate();
-    const { tryStartTour } = useTour();
+  const { triggerSearch, addQuickNorm, dossiers, addToDossier, createDossier, openDecision } = useAppStore();
+  const navigate = useNavigate();
 
-    // Start history tour on first visit
-    useEffect(() => {
-        tryStartTour('history');
-    }, [tryStartTour]);
+  const showFeedback = (message: string, type: 'success' | 'error' = 'success') => setFeedback({ message, type });
 
-    // Page-scoped shortcuts: "/" focuses search, Escape clears search when
-    // focused. Skipped while any overlay is open or the user is typing in
-    // a different input/textarea (mirrors DossierListView pattern).
-    useEffect(() => {
-        const hasOverlay = clearConfirmOpen || createDossierFor !== null;
-        const handler = (e: KeyboardEvent) => {
-            if (e.metaKey || e.ctrlKey || e.altKey) return;
-            const target = e.target as HTMLElement | null;
-            const inSearchInput = target === searchInputRef.current;
-            const inOtherField = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') && !inSearchInput;
-            if (e.key === '/' && !inOtherField && !inSearchInput && !hasOverlay) {
-                e.preventDefault();
-                searchInputRef.current?.focus();
-            } else if (e.key === 'Escape' && inSearchInput && searchTerm) {
-                e.preventDefault();
-                setSearchTerm('');
-            }
-        };
-        window.addEventListener('keydown', handler);
-        return () => window.removeEventListener('keydown', handler);
-    }, [clearConfirmOpen, createDossierFor, searchTerm]);
+  const read = useCallback((rows: SearchHistoryItem[]) => {
+    // Once per row here, not in the row.
+    rows.forEach((item) => {
+      if (item.decision_key && !identityFromKey(item.decision_key)) {
+        console.error('history: unreadable decision key', { id: item.id, decision_key: item.decision_key });
+      }
+    });
+    return rows.filter(isRowShown);
+  }, []);
 
-    const showFeedback = (message: string, type: 'success' | 'error' = 'success') => {
-        setFeedback({ message, type });
+  useEffect(() => {
+    getHistory(PAGE, 0)
+      .then((rows) => {
+        setHistory(read(rows));
+        setMore(rows.length === PAGE);
+      })
+      .catch((err) => console.error('history: reading failed', err))
+      .finally(() => setLoading(false));
+  }, [read]);
+
+  // «Annulla»: the rows come back where they were, here or on a page mounted since.
+  useEffect(() => {
+    const onPutBack = (event: Event) => {
+      const back = (event as CustomEvent<SearchHistoryItem[]>).detail;
+      setHistory((prev) => [...prev, ...back.filter((b) => !prev.some((p) => p.id === b.id))].sort(byNewest));
     };
+    window.addEventListener(HISTORY_PUT_BACK_EVENT, onPutBack);
+    return () => window.removeEventListener(HISTORY_PUT_BACK_EVENT, onPutBack);
+  }, []);
 
-    const handleAddQuickNorm = (e: React.MouseEvent, item: SearchHistoryItem) => {
-        e.stopPropagation();
-        const searchParams = historyToSearchParams(item);
-        const label = generateQuickNormLabel(item);
-        addQuickNorm(label, searchParams);
-        showFeedback('Aggiunto alle norme rapide');
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      // shortcut: an offset counted on the rows kept, so a removal behind «Annulla» meanwhile may skip one row; a cursor on `created_at` if it matters.
+      const rows = await getHistory(PAGE, history.length);
+      setHistory((prev) => [...prev, ...read(rows).filter((r) => !prev.some((p) => p.id === r.id))]);
+      setMore(rows.length === PAGE);
+    } catch (err) {
+      console.error('history: reading more failed', err);
+      showFeedback('Non riesco a leggere i giorni precedenti. Riprova.', 'error');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const remove = (rows: SearchHistoryItem[], message: string) => {
+    const ids = new Set(rows.map((r) => r.id));
+    setHistory((prev) => prev.filter((item) => !ids.has(item.id)));
+    removeRowsWithUndo(rows, message, () => showFeedback('Non riesco a togliere la voce dalla cronologia: è tornata al suo posto.', 'error'));
+  };
+
+  const clearAll = () => {
+    const all = history;
+    setHistory([]);
+    setMore(false);
+    clearAllWithUndo(all, () => showFeedback('Non riesco a svuotare la cronologia: le voci sono tornate.', 'error'));
+  };
+
+  // Page-scoped shortcuts: «/» focuses the filter, Escape empties it.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const inFilter = target === searchInputRef.current;
+      const inOtherField = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') && !inFilter;
+      if (e.key === '/' && !inOtherField && !inFilter) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === 'Escape' && inFilter && searchTerm) {
+        e.preventDefault();
+        setSearchTerm('');
+      }
     };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [searchTerm]);
 
-    const handleAddToDossier = (e: React.MouseEvent, item: SearchHistoryItem, dossierId: string) => {
-        e.stopPropagation();
-        const norma = historyToNormaVisitata(item);
-        addToDossier(dossierId, norma, 'norma');
-        showFeedback('Aggiunto alla pratica');
-    };
+  const open = (item: SearchHistoryItem) => {
+    if (item.decision_key) {
+      const identity = identityFromKey(item.decision_key);
+      if (!identity) return;
+      openDecision(identity, { fromLink: true });
+      navigate('/');
+      return;
+    }
+    navigate('/');
+    triggerSearch(searchParamsOf(item));
+  };
 
-    const handleCreateDossierAndAdd = (e: React.MouseEvent, item: SearchHistoryItem) => {
-        e.stopPropagation();
-        setCreateDossierFor(item);
-        setNewDossierTitle('');
-    };
+  const addTo = (item: SearchHistoryItem, dossierId: string) => {
+    const identity = item.decision_key ? identityFromKey(item.decision_key) : null;
+    if (identity) addToDossier(dossierId, { ...identity, etichetta: historyLabel(item) }, 'sentenza');
+    else addToDossier(dossierId, toNorma(item), 'norma');
+    showFeedback('Aggiunto alla pratica');
+  };
 
-    const handleConfirmCreateDossier = async () => {
-        const title = newDossierTitle.trim();
-        if (!title || !createDossierFor) return;
-        const norma = historyToNormaVisitata(createDossierFor);
-        setCreateDossierFor(null);
-        setNewDossierTitle('');
-        const id = await createDossier(title);
-        if (id) {
-            addToDossier(id, norma, 'norma');
-            showFeedback(`Creato "${title}" e aggiunta norma`);
-        } else {
-            showFeedback('Errore nella creazione della pratica', 'error');
-        }
-    };
+  const createAndAdd = async (item: SearchHistoryItem) => {
+    const title = newDossierTitle.trim();
+    if (!title) return;
+    setNewDossierFor(null);
+    setNewDossierTitle('');
+    const id = await createDossier(title);
+    if (id) {
+      addTo(item, id);
+      showFeedback(`Creata «${title}» con la voce`);
+    } else {
+      showFeedback('Non riesco a creare la pratica. Riprova.', 'error');
+    }
+  };
 
-    const handleClearHistory = (event: { currentTarget: HTMLElement }) => {
-        setClearFrom(event.currentTarget);
-        setClearConfirmOpen(true);
-    };
-
-    const handleConfirmClear = async () => {
-        setClearConfirmOpen(false);
-        setClearing(true);
-        try {
-            await clearHistory();
-            setHistory([]);
-        } catch (err) {
-            console.error(err);
-        } finally {
-            setClearing(false);
-        }
-    };
-
-    const handleDeleteItem = async (e: React.MouseEvent, id: string) => {
-        e.stopPropagation();
-        const previous = history;
-        setHistory(prev => prev.filter(item => item.id !== id));
-        try {
-            await deleteHistoryItem(id);
-        } catch (err) {
-            console.error(err);
-            setHistory(previous);
-            showFeedback('Impossibile eliminare la voce dalla cronologia', 'error');
-        }
-    };
-
-    // A norm's «⋯»: the pratiche listed in it under their heading, as one menu (LC103: a `MenuButton`, as every other).
-    const historyMenuItems = (item: SearchHistoryItem): MenuItem[] => [
-        { label: 'Aggiungi a norme rapide', icon: Zap, iconClassName: 'text-amber-500', onSelect: (e) => handleAddQuickNorm(e, item) },
-        ...dossiers.map((dossier, i) => ({
-            label: dossier.title,
-            ariaLabel: `Aggiungi a ${dossier.title}`,
-            icon: FolderPlus,
-            iconClassName: 'text-primary-500',
-            separatorBefore: i === 0,
-            sectionHeading: i === 0 ? 'Aggiungi a una pratica' : undefined,
-            onSelect: (e: React.MouseEvent) => handleAddToDossier(e, item, dossier.id),
-        })),
-        {
-            label: 'Nuova pratica…',
-            ariaLabel: 'Aggiungi a una nuova pratica…',
-            icon: Plus,
-            separatorBefore: dossiers.length === 0,
-            sectionHeading: dossiers.length === 0 ? 'Aggiungi a una pratica' : undefined,
-            onSelect: (e) => handleCreateDossierAndAdd(e, item),
+  const menuItems = (item: SearchHistoryItem): MenuItem[] => {
+    const canAdd = !item.decision_key || !!identityFromKey(item.decision_key);
+    return [
+      ...(item.decision_key ? [] : [{
+        label: 'Aggiungi alle ricerche frequenti',
+        icon: Zap,
+        onSelect: () => {
+          addQuickNorm(labelFromParams({ act_type: item.act_type ?? '', act_number: item.act_number, date: item.date, article: item.article?.toString() }), searchParamsOf(item));
+          showFeedback('Aggiunta alle ricerche frequenti');
         },
-        { label: 'Rimuovi dalla cronologia', icon: Trash2, danger: true, separatorBefore: true, onSelect: (e) => handleDeleteItem(e, item.id) },
+      }]),
+      ...(canAdd ? dossiers.map((dossier, i): MenuItem => ({
+        label: dossier.title,
+        ariaLabel: `Aggiungi a ${dossier.title}`,
+        icon: FolderPlus,
+        separatorBefore: i === 0 && !item.decision_key,
+        sectionHeading: i === 0 ? 'Aggiungi a una pratica' : undefined,
+        onSelect: () => addTo(item, dossier.id),
+      })) : []),
+      ...(canAdd ? [{
+        label: 'Nuova pratica…',
+        ariaLabel: 'Aggiungi a una nuova pratica…',
+        icon: Plus,
+        separatorBefore: dossiers.length === 0 && !item.decision_key,
+        sectionHeading: dossiers.length === 0 ? 'Aggiungi a una pratica' : undefined,
+        onSelect: () => { setNewDossierFor(item.id); setNewDossierTitle(''); },
+      }] : []),
+      { label: 'Togli dalla cronologia', icon: Trash2, danger: true, separatorBefore: canAdd, onSelect: () => remove([item], 'Tolta dalla cronologia') },
     ];
+  };
 
-    const handleOpenNorma = (params: SearchParams) => {
-        navigate('/');
-        triggerSearch(params);
-    };
+  const filtered = useMemo(() => {
+    const tokens = searchTerm.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    return history.filter((item) => {
+      if (kind === 'norms' && item.decision_key) return false;
+      if (kind === 'decisions' && !item.decision_key) return false;
+      if (tokens.length === 0) return true;
+      const haystack = [item.act_type ?? '', item.act_number ?? '', item.article?.toString() ?? '', item.date ?? '', historyLabel(item), actHeadingOf(item)].join(' ').toLowerCase();
+      return tokens.every((t) => haystack.includes(t));
+    });
+  }, [history, searchTerm, kind]);
 
-    const handleItemClick = (item: SearchHistoryItem) => {
-        // Navigate to search page and trigger search
-        navigate('/');
-        triggerSearch({
-            act_type: item.act_type ?? '',
-            act_number: item.act_number || '',
-            date: item.date || '',
-            article: item.article?.toString() || '',
-            version: 'vigente',
-            version_date: '',
-        });
-    };
+  const days = useMemo(() => {
+    const buckets = new Map<string, { label: string; items: SearchHistoryItem[] }>();
+    for (const item of filtered) {
+      const d = item.created_at ? new Date(item.created_at) : null;
+      const key = d ? dayKey(d) : '__nodate__';
+      const bucket = buckets.get(key) ?? { label: d ? dayLabel(d) : 'Senza data', items: [] };
+      bucket.items.push(item);
+      buckets.set(key, bucket);
+    }
+    return Array.from(buckets.entries()).map(([key, value]) => ({ key, ...value }));
+  }, [filtered]);
 
-    useEffect(() => {
-        getHistory()
-            .then(data => {
-                // once per row here, not in the row: the mobile and desktop lists both mount it
-                data.forEach((item) => {
-                    if (item.decision_key && !identityFromKey(item.decision_key)) {
-                        console.error('history: unreadable decision key', { id: item.id, decision_key: item.decision_key });
-                    }
-                });
-                setHistory(data);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error(err);
-                setLoading(false);
-            });
-    }, []);
+  const filtering = searchTerm.trim() !== '' || kind !== 'all';
 
-    // Build a searchable haystack per item — combines all metadata + the
-    // abbreviation label (CC/CP/Cost. ecc.) so "art. 2043 cc" matches.
-    // SearchHistory has no article body, so this is the closest to "ricerca
-    // nel testo" we can do without fetching+caching norma content.
-    const filteredHistory = useMemo(() => {
-        const tokens = searchTerm.toLowerCase().trim().split(/\s+/).filter(Boolean);
-        if (tokens.length === 0) return history;
-        return history.filter(item => {
-            const haystack = [
-                item.act_type ?? '',
-                item.act_number ?? '',
-                item.article?.toString() ?? '',
-                item.date ?? '',
-                item.version ?? '',
-                item.decision_key ? decisionHistoryLabel(item.decision_key) : generateQuickNormLabel(item),
-            ].join(' ').toLowerCase();
-            return tokens.every(t => haystack.includes(t));
-        });
-    }, [history, searchTerm]);
-
-    // Group by ISO date (stable insertion order) and derive a humanized
-    // label per group. Items without created_at fall into a "Senza data"
-    // bucket at the end.
-    const groupedByDate = useMemo(() => {
-        const buckets = new Map<string, { label: string; items: SearchHistoryItem[] }>();
-        filteredHistory.forEach(item => {
-            if (!item.created_at) {
-                const bucket = buckets.get('__nodate__') ?? { label: 'Senza data', items: [] };
-                bucket.items.push(item);
-                buckets.set('__nodate__', bucket);
-                return;
-            }
-            const d = new Date(item.created_at);
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            const bucket = buckets.get(key) ?? { label: groupLabel(d), items: [] };
-            bucket.items.push(item);
-            buckets.set(key, bucket);
-        });
-        return Array.from(buckets.entries()).map(([key, value]) => ({ key, ...value }));
-    }, [filteredHistory]);
-
-    return (
-        <PageFrame
-            title="Cronologia"
-            action={
-                <>
-                    <div id="tour-history-search" className="min-w-0 flex-1 md:w-64 md:flex-none">
-                        <Input
-                            ref={searchInputRef}
-                            type="text"
-                            placeholder="Cerca nella cronologia…"
-                            aria-label="Cerca nella cronologia"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            aria-keyshortcuts="/"
-                            title="Cerca (premi /)"
-                            icon={<Search size={16} aria-hidden />}
-                        />
-                    </div>
-                    {/* Its place held while the history is read, so the field does not move when it comes (LC120). */}
-                    {(loading || history.length > 0) && (
-                        <IconButton
-                            onClick={handleClearHistory}
-                            loading={clearing}
-                            title="Svuota cronologia"
-                            aria-label="Svuota cronologia"
-                            icon={<Trash2 aria-hidden />}
-                            className={cn("shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/20 dark:hover:text-red-300", loading && 'invisible')}
-                        />
-                    )}
-                </>
-            }
-        >
-            <NormaChangesSection onOpen={handleOpenNorma} />
-            {/* No overflow at all: `hidden` made this card the date labels' scroll container (M1), and `clip` cut the
-                «⋯» menus at its edge (LC103); its padding keeps everything inside the rounded corners. */}
-            <div className="bg-white dark:bg-slate-800 rounded-[8px] shadow-sm border border-slate-200 dark:border-slate-700">
-                {/* Timeline with grouped dates. No inner scroll: the page is the
-                    scroll context so the action dropdown isn't clipped. Sticky date
-                    headers attach to the page's scroller, under the phone's bar. */}
-                <div className="p-3 md:p-6">
-                    {/* The rows' place held while they are read, and their entrance (LC98, LC120). */}
-                    <Arrive loading={loading} placeholder={<><p role="status" className="sr-only">Apro la cronologia…</p><HistoryListSkeleton /></>}>
-                    {filteredHistory.length === 0 && history.length > 0 ? (
-                        <EmptyState
-                            variant="search"
-                            title="Nessuna corrispondenza"
-                            description={`Nessuna voce trovata per "${searchTerm}".`}
-                            action={
-                                <Button variant="secondary" onClick={() => setSearchTerm('')}>
-                                    Azzera filtro
-                                </Button>
-                            }
-                        />
-                    ) : filteredHistory.length === 0 ? (
-                        <EmptyState
-                            variant="history"
-                            title="Nessuna ricerca recente"
-                            description="Le tue ricerche appariranno qui. Inizia cercando una norma per vedere la cronologia."
-                            action={
-                                <Button onClick={() => navigate('/')} icon={<Search size={16} aria-hidden />}>
-                                    Inizia una ricerca
-                                </Button>
-                            }
-                        />
-                    ) : (
-                        <div className="space-y-6 md:space-y-8">
-                            {groupedByDate.map(({ key, label, items }) => (
-                                <div key={key} className="relative">
-                                    {/* Date label with timeline line */}
-                                    {/* Mobile: smaller, simpler date label */}
-                                    <div className="md:hidden flex items-center gap-2 mb-3 sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-(--dur-pop) ease-out motion-reduce:transition-none bg-slate-50 dark:bg-slate-950 py-1 z-10">
-                                        <h2 className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-600 dark:text-slate-400">{label}</h2>
-                                    </div>
-
-                                    {/* Desktop: full date label */}
-                                    <div className="hidden md:flex items-center gap-3 mb-4 sticky top-[var(--phone-bar-offset,0px)] transition-[top] duration-(--dur-pop) ease-out motion-reduce:transition-none bg-slate-50 dark:bg-slate-950 py-2 z-10">
-                                        <h2 className="text-xs font-semibold uppercase tracking-[0.06em] text-slate-600 dark:text-slate-400">{label}</h2>
-                                    </div>
-
-                                    {/* Timeline items */}
-                                    {/* Mobile: simpler timeline */}
-                                    <div className="md:hidden space-y-2">
-                                        {items.map((item) => item.decision_key ? (
-                                            <DecisionHistoryRow key={item.id} item={item} variant="mobile" onDelete={handleDeleteItem} />
-                                        ) : (
-                                            <div key={item.id} className="relative">
-                                                {/* Mobile Item card - compact, tap-friendly; a button, so Tab reaches it and Enter opens it (A6) */}
-                                                {/* bare-button: the card is a whole entry of the list. */}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleItemClick(item)}
-                                                    className={cn(
-                                                        "relative block w-full text-left bg-white dark:bg-slate-800 p-3 pr-12 rounded-[8px] border transition-[color,background-color,border-color,scale] cursor-pointer min-h-[44px]",
-                                                        "border-slate-200 dark:border-slate-700",
-                                                        "active:scale-[0.98] active:border-primary-400",
-                                                        "focus-visible:outline-none "
-                                                    )}
-                                                >
-                                                    <span className="flex items-start justify-between gap-2">
-                                                        <span className="block flex-1 min-w-0">
-                                                            <span className="flex items-center gap-1.5 mb-1">
-                                                                <span className="font-serif text-base text-slate-900 dark:text-slate-50">{historyLabel(item)}</span>
-                                                            </span>
-                                                            <span className="block text-[13px] text-slate-600 dark:text-slate-400 truncate">
-                                                                {actHeadingOf(item)}
-                                                            </span>
-                                                            {item.created_at && (
-                                                                <span
-                                                                    className="block text-[11px] text-slate-600 dark:text-slate-400 mt-0.5"
-                                                                    title={new Date(item.created_at).toLocaleString('it-IT')}
-                                                                >
-                                                                    {formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: it })}
-                                                                </span>
-                                                            )}
-                                                        </span>
-                                                        <ArrowRight size={18} aria-hidden className="text-primary-500 flex-shrink-0 mt-1" />
-                                                    </span>
-                                                </button>
-                                                {/* Beside the card, over its right edge: a button cannot hold another (LC103, 44 px to the touch). */}
-                                                <MenuButton
-                                                    label={`Altre azioni su ${historyLabel(item)}`}
-                                                    title="Altre azioni"
-                                                    items={historyMenuItems(item)}
-                                                    placement="auto"
-                                                    menuClassName="max-h-80"
-                                                    className="absolute right-1 top-1"
-                                                    triggerClassName="min-h-[44px] min-w-[44px] justify-center text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
-                                                >
-                                                    <MoreVertical size={18} aria-hidden />
-                                                </MenuButton>
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    {/* Desktop: full timeline with dots */}
-                                    <div className="hidden md:block border-t border-slate-200 dark:border-slate-800">
-                                        {items.map((item, idx) => item.decision_key ? (
-                                            <DecisionHistoryRow key={item.id} item={item} variant="desktop" onDelete={handleDeleteItem}
-                                                id={idx === 0 ? 'tour-history-item' : undefined} />
-                                        ) : (
-                                            <div key={item.id} id={idx === 0 ? 'tour-history-item' : undefined} className="relative group">
-
-                                                {/* Item card: the title is a button stretched over the card (A6), so the card still opens
-                                                    on a click anywhere and Tab and Enter reach it; the menu sits beside it, above the stretch. */}
-                                                <div
-                                                    className={cn(
-                                                        // LC21: a row of the list, as the prototype's: a rule under it, the hover a tint, no card.
-                                                        "relative border-b border-slate-200 px-2 py-3 transition-colors cursor-pointer dark:border-slate-800",
-                                                        "hover:bg-slate-100 dark:hover:bg-slate-900",
-                                                        "has-[[data-history-open]:focus-visible]:ring-2 has-[[data-history-open]:focus-visible]:ring-primary-500"
-                                                    )}
-                                                >
-                                                    <div className="flex justify-between items-start gap-4">
-                                                        {/* bare-button: the row's title, stretched over the row (A6). */}
-                                                        <button
-                                                            type="button"
-                                                            data-history-open
-                                                            onClick={() => handleItemClick(item)}
-                                                            className="flex-1 block text-left focus-visible:outline-none after:absolute after:inset-0 after:content-['']"
-                                                        >
-                                                            {/* The norm as it is cited («art. 2043 c.c.»), then the act's name and when it was read (B8). */}
-                                                            <span className="block font-serif text-lg leading-snug text-slate-900 dark:text-slate-50">
-                                                                {historyLabel(item)}
-                                                            </span>
-                                                            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[13px] text-slate-600 dark:text-slate-400">
-                                                                <span>{actHeadingOf(item)}</span>
-                                                                {item.created_at && (
-                                                                    <span
-                                                                        className="text-xs text-slate-500 dark:text-slate-400"
-                                                                        title={new Date(item.created_at).toLocaleString('it-IT')}
-                                                                    >
-                                                                        {formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: it })}
-                                                                    </span>
-                                                                )}
-                                                            </span>
-                                                        </button>
-
-                                                        <div className="relative z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-[color,background-color,border-color,opacity]">
-                                                            {/* Menu azioni */}
-                                                            <div id={idx === 0 ? 'tour-history-actions' : undefined}>
-                                                                <MenuButton
-                                                                    label={`Altre azioni su ${historyLabel(item)}`}
-                                                                    title="Altre azioni"
-                                                                    items={historyMenuItems(item)}
-                                                                    placement="auto"
-                                                                    menuClassName="max-h-80"
-                                                                    triggerClassName="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700"
-                                                                >
-                                                                    <MoreVertical size={16} aria-hidden />
-                                                                </MenuButton>
-                                                            </div>
-
-                                                            <div className="p-2 bg-primary-50 dark:bg-primary-900/20 rounded-md text-primary-500 pointer-events-none">
-                                                                <ArrowRight size={18} />
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                    </Arrive>
+  return (
+    <PageFrame
+      title="Cronologia"
+      action={
+        <div className="min-w-0 flex-1 md:w-64 md:flex-none">
+          <Input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Filtra…"
+            aria-label="Cerca nella cronologia"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            aria-keyshortcuts="/"
+            title="Filtra (premi /)"
+            icon={<Search size={16} aria-hidden />}
+          />
+        </div>
+      }
+    >
+      <SegmentedTabs tabs={KINDS} value={kind} onChange={setKind} label="Mostra" size="sm" className="mb-6 self-start" />
+      <Arrive loading={loading} placeholder={<><p role="status" className="sr-only">Apro la cronologia…</p><HistoryListSkeleton /></>}>
+        {history.length === 0 ? (
+          <p className="border-t border-slate-200 pt-4 text-[15px] text-slate-600 dark:border-slate-800 dark:text-slate-400">
+            Le norme e le sentenze che apri compaiono qui.
+          </p>
+        ) : filtered.length === 0 ? (
+          <p className="border-t border-slate-200 pt-4 text-[15px] text-slate-600 dark:border-slate-800 dark:text-slate-400">
+            Nessuna voce corrisponde{more ? ' tra quelle caricate' : ''}.{' '}
+            <Button variant="link" onClick={() => { setSearchTerm(''); setKind('all'); }}>Azzera il filtro</Button>
+          </p>
+        ) : (
+          <div className="space-y-8">
+            {more && filtering && (
+              <p className="text-sm text-slate-600 dark:text-slate-400">Il filtro guarda le voci caricate: per i giorni precedenti, «Mostra i giorni precedenti» in fondo.</p>
+            )}
+            {days.map(({ key, label, items }) => (
+              <section key={key} aria-label={label} className="group/day">
+                <div className="sticky top-[var(--phone-bar-offset,0px)] z-10 flex items-baseline justify-between gap-4 bg-slate-50 py-2 dark:bg-slate-950">
+                  <h2 className="font-serif text-xl font-medium text-slate-900 first-letter:uppercase dark:text-slate-50">{label}</h2>
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    onClick={() => remove(items, items.length === 1 ? `Tolta 1 voce di ${label.toLowerCase()}` : `Tolte ${items.length} voci di ${label.toLowerCase()}`)}
+                    aria-label={`Togli il giorno: ${label}`}
+                    className="text-sm md:opacity-0 md:focus-visible:opacity-100 md:group-hover/day:opacity-100"
+                  >
+                    Togli il giorno
+                  </Button>
                 </div>
-            </div>
-
-            {/* Feedback: the app's notifications (K1a). */}
-            <Toast
-                message={feedback?.message ?? ''}
-                type={feedback?.type ?? 'success'}
-                isVisible={feedback !== null}
-                onClose={() => setFeedback(null)}
-                duration={2000}
-            />
-
-            {/* Clear-all confirmation */}
-            <ConfirmDialog
-                open={clearConfirmOpen}
-                origin={clearFrom}
-                variant="danger"
-                title="Svuotare la cronologia?"
-                message="Tutte le ricerche salvate verranno rimosse. Le pratiche e i segnalibri non saranno toccati."
-                confirmLabel="Svuota"
-                focusCancel
-                onConfirm={handleConfirmClear}
-                onCancel={() => setClearConfirmOpen(false)}
-            />
-
-            {/* New-dossier inline modal */}
-            {createDossierFor && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-slate-900 rounded-[8px] shadow-lg w-full max-w-md p-5">
-                        <div className="flex items-start justify-between mb-3">
-                            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                                Crea nuova pratica
-                            </h2>
-                            <IconButton
-                                onClick={() => { setCreateDossierFor(null); setNewDossierTitle(''); }}
-                                aria-label="Chiudi"
-                                icon={<X aria-hidden />}
-                            />
-                        </div>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-                            La norma verrà aggiunta automaticamente alla nuova pratica.
-                        </p>
-                        <Input
+                <ul className="border-b border-slate-200 dark:border-slate-800">
+                  {items.map((item) => (
+                    <HistoryRow
+                      key={item.id}
+                      item={item}
+                      menuItems={menuItems(item)}
+                      onOpen={() => open(item)}
+                      onRemove={() => remove([item], 'Tolta dalla cronologia')}
+                    >
+                      {newDossierFor === item.id && (
+                        <form
+                          className="flex flex-wrap items-center gap-2 pb-3 pl-0 md:pl-28"
+                          onSubmit={(e) => { e.preventDefault(); void createAndAdd(item); }}
+                        >
+                          <Input
                             type="text"
-                            aria-label="Nome della pratica"
+                            aria-label="Nome della nuova pratica"
+                            placeholder="Nome della nuova pratica"
                             autoFocus
+                            maxLength={120}
                             value={newDossierTitle}
                             onChange={(e) => setNewDossierTitle(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && newDossierTitle.trim()) handleConfirmCreateDossier();
-                                if (e.key === 'Escape') { setCreateDossierFor(null); setNewDossierTitle(''); }
-                            }}
-                            placeholder="Nome della pratica"
-                            maxLength={120}
-                        />
-                        <div className="mt-4 flex justify-end gap-2">
-                            <Button variant="secondary" onClick={() => { setCreateDossierFor(null); setNewDossierTitle(''); }}>
-                                Annulla
-                            </Button>
-                            <Button onClick={handleConfirmCreateDossier} disabled={!newDossierTitle.trim()}>
-                                Crea e aggiungi
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </PageFrame>
-    );
+                            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setNewDossierFor(null); } }}
+                            className="min-w-0 flex-1"
+                          />
+                          <Button type="submit" size="sm" disabled={!newDossierTitle.trim()}>Crea e aggiungi</Button>
+                          <Button type="button" size="sm" variant="quiet" onClick={() => setNewDossierFor(null)}>Annulla</Button>
+                        </form>
+                      )}
+                    </HistoryRow>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
+        {history.length > 0 && (
+          <div className="mt-8 flex flex-wrap items-center justify-between gap-4">
+            {more ? (
+              <Button variant="secondary" onClick={() => void loadMore()} loading={loadingMore}>Mostra i giorni precedenti</Button>
+            ) : <span />}
+            <Button variant="quiet" onClick={clearAll} className="text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300">
+              Svuota la cronologia
+            </Button>
+          </div>
+        )}
+      </Arrive>
+
+      {/* Feedback: the app's notifications (K1a). */}
+      <Toast
+        message={feedback?.message ?? ''}
+        type={feedback?.type ?? 'success'}
+        isVisible={feedback !== null}
+        onClose={() => setFeedback(null)}
+        duration={2000}
+      />
+    </PageFrame>
+  );
+}
+
+/**
+ * One row: the kind in words, the citation in serif with the act under it, the time, «⋯». The whole row is a button
+ * that reopens it; Delete on it takes it off (behind «Annulla»). A decision key that no longer reads is «Sentenza»,
+ * not clickable: there is nothing to open.
+ */
+function HistoryRow({ item, menuItems, onOpen, onRemove, children }: {
+  item: SearchHistoryItem;
+  menuItems: MenuItem[];
+  onOpen: () => void;
+  onRemove: () => void;
+  children?: React.ReactNode;
+}) {
+  const label = historyLabel(item);
+  const heading = actHeadingOf(item);
+  const readable = !item.decision_key || !!identityFromKey(item.decision_key);
+  const body = (
+    <>
+      <span className="text-sm text-slate-600 md:w-24 md:shrink-0 dark:text-slate-400">{kindOf(item)}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-serif text-[19px] text-slate-900 max-md:text-[17px] dark:text-slate-50">{label}</span>
+        {heading && <span className="block truncate text-sm text-slate-600 dark:text-slate-400">{heading}</span>}
+      </span>
+      <span className="shrink-0 text-sm tabular-nums text-slate-600 dark:text-slate-400" title={item.created_at ? new Date(item.created_at).toLocaleString('it-IT') : undefined}>
+        {timeOf(item)}
+      </span>
+    </>
+  );
+  const rowLook = 'flex min-h-[44px] min-w-0 flex-1 gap-x-4 py-3 text-left max-md:flex-col max-md:py-2.5 md:items-center';
+  return (
+    <li data-history-row className="border-t border-slate-200 dark:border-slate-800">
+      <div className="flex items-center gap-2 transition-colors hover:bg-slate-100/60 dark:hover:bg-slate-900/60">
+        {readable ? (
+          // bare-button: a row of the list that is a whole entry, as the Scrivania's.
+          <button
+            type="button"
+            onClick={onOpen}
+            onKeyDown={(e) => { if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); onRemove(); } }}
+            className={cn(rowLook, 'focus-visible:outline-none')}
+          >
+            {body}
+          </button>
+        ) : (
+          <div className={rowLook}>{body}</div>
+        )}
+        <MenuButton
+          label={`Altre azioni su ${label}`}
+          title="Altre azioni"
+          items={menuItems}
+          placement="auto"
+          menuClassName="max-h-80"
+          triggerClassName="min-h-[44px] min-w-[44px] justify-center text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <MoreVertical size={18} aria-hidden />
+        </MenuButton>
+      </div>
+      {children}
+    </li>
+  );
 }
