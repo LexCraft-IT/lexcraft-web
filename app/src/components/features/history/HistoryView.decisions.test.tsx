@@ -11,6 +11,8 @@ vi.mock('../../../services/historyService', () => ({
   clearHistory: (...a: unknown[]) => clearHistory(...a),
 }));
 
+vi.mock('./NormaChangesSection', () => ({ NormaChangesSection: () => null }));
+
 import { appStore } from '../../../store/useAppStore';
 import { registerUndoToastListener, type UndoToast } from '../../../hooks/useUndoableAction';
 import { HistoryView } from './HistoryView';
@@ -42,7 +44,7 @@ afterEach(() => {
   stopListening();
 });
 
-describe('HistoryView (L-82, L-84)', () => {
+describe('HistoryView (L-87, L-84)', () => {
   it('opens a decision at once in the workspace, with no preview', async () => {
     getHistory.mockResolvedValue([decision]);
     mount();

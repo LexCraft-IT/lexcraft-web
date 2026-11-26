@@ -48,7 +48,7 @@ interface CommandPaletteProps {
   onShowSearch?: () => void;
   /** Open the page «Rassegne» on the search just remembered (`rememberSearch`), with the passage chosen, if any, by id. */
   onOpenRassegne?: (passo?: string) => void;
-  /** Open the page «Cronologia» (L-82). */
+  /** Open the page «Cronologia» (L-87). */
   onOpenHistory?: () => void;
 }
 
@@ -308,7 +308,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
     : [];
   // The door to the manager, found by typing «alias» too.
   const showAliasDoor = !typed || queryMatches(inputValue, 'alias gestisci crea scorciatoie');
-  // The way to the Cronologia (L-82), found by typing «cronologia» too.
+  // The way to the Cronologia (L-87), found by typing «cronologia» too.
   const showHistoryDoor = !!onOpenHistory && (!typed || queryMatches(inputValue, 'cronologia letto di recente'));
 
   // Reset on close
@@ -1094,7 +1094,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
   // «A portata di mano» has rows: something saved at rest, or a match while typing.
   const atHandHasRows = typed
     ? visibleQuickNorms.length > 0 || visibleAliases.length > 0 || showAliasDoor || showHistoryDoor || visiblePresets.length > 0
-    : quickNorms.length > 0 || hasAliases || showHistoryDoor;
+    : quickNorms.length > 0 || hasAliases;
   const selectBody = (
     <Command.List
       // `min-h-0`: in a panel as tall as its content, up to its maximum, the list may shrink below its rows — the

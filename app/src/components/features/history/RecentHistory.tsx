@@ -1,5 +1,5 @@
 /**
- * «Letto di recente» on the Scrivania (L-82): the last five rows of the Cronologia, as the desk's lists, and the way to
+ * «Letto di recente» on the Scrivania (L-87): the last five rows of the Cronologia, as the desk's lists, and the way to
  * the whole page. Nothing is drawn while it is read, when it is empty or when it cannot be read (logged: the history is
  * a convenience).
  */
@@ -9,6 +9,7 @@ import { ArrowUpRight } from 'lucide-react';
 import { useAppStore } from '../../../store/useAppStore';
 import { getHistory, type SearchHistoryItem } from '../../../services/historyService';
 import { identityFromKey } from '../../../utils/decisionLinks';
+import { isAuthenticated } from '../../../services/authService';
 import { buttonClassName } from '../../ui/buttonStyles';
 import { actHeadingOf, HISTORY_PUT_BACK_EVENT, historyLabel, isRowShown, kindOf, searchParamsOf } from './historyRows';
 
@@ -21,6 +22,8 @@ export function RecentHistory({ rowClassName }: { rowClassName: string }) {
   const openDecision = useAppStore((s) => s.openDecision);
 
   useEffect(() => {
+    // The history is per user: nothing to read without a login.
+    if (!isAuthenticated()) return;
     let live = true;
     // A few more than shown: rows removed behind an «Annulla» still on screen are left out.
     const read = () => getHistory(SHOWN * 2, 0)

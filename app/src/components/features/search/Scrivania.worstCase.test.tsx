@@ -8,6 +8,7 @@ import { appStore } from '../../../store/useAppStore';
 // The desk's blocks read the server: none here, but where a test gives rows.
 const getHistory = vi.fn();
 vi.mock('../../../services/historyService', () => ({ getHistory: (...a: unknown[]) => getHistory(...a) }));
+vi.mock('../../../services/authService', () => ({ isAuthenticated: () => true }));
 vi.mock('../../../services/notificationService', () => ({ notificationService: { getNormaChanges: () => Promise.resolve([]), markNormaChangesRead: vi.fn() } }));
 import { Scrivania } from './Scrivania';
 import type { Dossier, DossierItem, QuickNorm } from '../../../types';

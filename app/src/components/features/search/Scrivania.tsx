@@ -1,7 +1,7 @@
 /**
  * «Scrivania»: the search page when no practice is open (spec 2026-10-18-redesign-inchiostro §5.3.2).
  * A greeting with the day, the ways to start (the field above, ⌘K, three examples, the two Corpus tools), then «Riprendi»
- * — the dossiers touched last —, the saved norms that changed (L-83), «Letto di recente» (L-82) and the frequent searches,
+ * — the dossiers touched last —, the saved norms that changed (L-88), «Letto di recente» (L-87) and the frequent searches,
  * as typographic lists, not cards.
  * `#tour-main-content` and `#tour-quick-norms` are the tours' targets (config/tourConfig.ts).
  */
@@ -20,6 +20,7 @@ import { buttonClassName } from '../../ui/buttonStyles';
 import { useOpenSettings } from '../settings/settingsRoute';
 import { NormaChangesSection } from '../history/NormaChangesSection';
 import { RecentHistory } from '../history/RecentHistory';
+import { isAuthenticated } from '../../../services/authService';
 
 const EXAMPLES = ['Art. 2043 c.c.', 'Art. 5 GDPR', 'Art. 1 Costituzione'];
 
@@ -137,10 +138,10 @@ export function Scrivania() {
           </section>
         )}
 
-        <NormaChangesSection
-          onOpen={(params) => triggerSearch(params)}
-          className="mt-14 max-md:mt-10"
-        />
+        {/* Per user, as the history below: nothing to read without a login. */}
+        {isAuthenticated() && (
+          <NormaChangesSection onOpen={(params) => triggerSearch(params)} className="mt-14 max-md:mt-10" />
+        )}
 
         <RecentHistory rowClassName={ROW} />
 

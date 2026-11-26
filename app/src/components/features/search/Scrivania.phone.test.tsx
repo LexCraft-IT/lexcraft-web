@@ -8,6 +8,7 @@ import { HIDDEN_SCROLLBAR } from '../../../constants/interactions';
 // The desk's blocks read the server: none here, but where a test gives rows.
 const getHistory = vi.fn();
 vi.mock('../../../services/historyService', () => ({ getHistory: (...a: unknown[]) => getHistory(...a) }));
+vi.mock('../../../services/authService', () => ({ isAuthenticated: () => true }));
 vi.mock('../../../services/notificationService', () => ({ notificationService: { getNormaChanges: () => Promise.resolve([]), markNormaChangesRead: vi.fn() } }));
 import { Scrivania } from './Scrivania';
 
@@ -76,7 +77,7 @@ describe('Scrivania — «Gestisci» of the frequent searches (LC84)', () => {
   });
 });
 
-// L-82: the last five rows of the Cronologia, and the way to the whole page.
+// L-87: the last five rows of the Cronologia, and the way to the whole page.
 describe('«Letto di recente» on the Scrivania', () => {
   const row = (i: number) => ({ id: `n${i}`, act_type: 'codice civile', decision_key: null, article: String(2040 + i), created_at: '2026-11-26T10:00:00.000Z' });
 

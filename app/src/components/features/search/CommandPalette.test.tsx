@@ -989,7 +989,7 @@ describe('CommandPalette — «Gestisci» of the frequent searches (LC84)', () =
   });
 });
 
-// L-82: a way to the Cronologia from ⌘K, at rest and when «cronologia» is typed.
+// L-87: a way to the Cronologia from ⌘K, at rest and when «cronologia» is typed.
 describe('CommandPalette — Cronologia', () => {
   it('offers the Cronologia and opens it', () => {
     const onOpenHistory = vi.fn();

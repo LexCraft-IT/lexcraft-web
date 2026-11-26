@@ -1,8 +1,9 @@
 /**
  * «Cronologia» (`/history`): the norms and decisions the user opened, a typographic list by day in the Scrivania's style
- * (L-82, the proposal of 18 Nov 2026). A row reopens its search, or its decision, at once; «⋯» adds it to a practice or
+ * (L-87, the proposal of 18 Nov 2026). A row reopens its search, or its decision, at once; «⋯» adds it to a practice or
  * the frequent searches, or takes it off. Every removal — a row, a day, everything — is behind «Annulla», with no
- * question before (L-74, L-84). «Norme salvate aggiornate» lives on the Scrivania (L-83).
+ * question before (L-74, L-84). «Norme salvate aggiornate» lives on the Scrivania (L-88), and here too: with a practice
+ * open the desk is not shown, and the avatar's count leads here (L-89).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FolderPlus, MoreVertical, Plus, Search, Trash2, Zap } from 'lucide-react';
@@ -21,6 +22,7 @@ import { SegmentedTabs } from '../../ui/SegmentedTabs';
 import { Toast } from '../../ui/Toast';
 import { Arrive } from '../../ui/Arrive';
 import { HistoryListSkeleton } from '../../ui/Skeleton';
+import { NormaChangesSection } from './NormaChangesSection';
 import {
   actHeadingOf, clearAllWithUndo, HISTORY_PUT_BACK_EVENT, historyLabel, isRowShown, kindOf, removeRowsWithUndo, searchParamsOf, timeOf,
 } from './historyRows';
@@ -258,6 +260,7 @@ export function HistoryView() {
         </div>
       }
     >
+      <NormaChangesSection onOpen={(params) => { navigate('/'); triggerSearch(params); }} className="mb-10" />
       <SegmentedTabs tabs={KINDS} value={kind} onChange={setKind} label="Mostra" size="sm" className="mb-6 self-start" />
       <Arrive loading={loading} placeholder={<><p role="status" className="sr-only">Apro la cronologia…</p><HistoryListSkeleton /></>}>
         {history.length === 0 ? (

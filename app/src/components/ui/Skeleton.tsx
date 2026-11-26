@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
 import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/utils';
-import { CARD_RADIUS, CONTROL_RADIUS } from './controlStyles';
+import { CONTROL_RADIUS } from './controlStyles';
 import { Card } from './Card';
 import { CARD_GRID_COLUMNS } from '../layout/frame';
 
@@ -137,24 +137,15 @@ export function DossierListSkeleton({ count = 6 }: { count?: number }) {
  * phone and rows with a rule under them (71 px) from md.
  */
 export function HistoryListSkeleton({ count = 5 }: { count?: number }) {
-  const rows = Array.from({ length: count });
+  // The Cronologia's shape (L-87): a day's serif heading, then ruled rows — one list on a phone as on a computer.
   return (
     <div aria-hidden>
-      <div className="mb-3 flex h-6 items-center bg-slate-50 md:mb-4 md:h-8 dark:bg-slate-950"><Skeleton variant="text" className="h-3 w-16" /></div>
-      <div className="space-y-2 md:hidden">
-        {rows.map((_, i) => (
-          <div key={i} data-skeleton-row className={cn('border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800', CARD_RADIUS)}>
-            <div className="flex h-6 items-center"><Skeleton variant="text" className="w-2/5" /></div>
-            <div className="mt-1 flex h-5 items-center"><Skeleton variant="text" className="h-3 w-3/5" /></div>
-            <div className="mt-0.5 flex h-4 items-center"><Skeleton variant="text" className="h-2.5 w-1/4" /></div>
-          </div>
-        ))}
-      </div>
-      <div className="hidden border-t border-slate-200 md:block dark:border-slate-800">
-        {rows.map((_, i) => (
-          <div key={i} data-skeleton-row className="border-b border-slate-200 px-2 py-3 dark:border-slate-800">
-            <div className="flex h-6 items-center"><Skeleton variant="text" className="w-40" /></div>
-            <div className="mt-0.5 flex h-5 items-center"><Skeleton variant="text" className="h-3 w-72 max-w-full" /></div>
+      <div className="flex h-11 items-center py-2"><Skeleton variant="text" className="h-5 w-24" /></div>
+      <div className="border-b border-slate-200 dark:border-slate-800">
+        {Array.from({ length: count }).map((_, i) => (
+          <div key={i} data-skeleton-row className="border-t border-slate-200 py-3 max-md:py-2.5 dark:border-slate-800">
+            <div className="flex h-7 items-center"><Skeleton variant="text" className="w-48 max-w-full" /></div>
+            <div className="flex h-5 items-center"><Skeleton variant="text" className="h-3 w-64 max-w-full" /></div>
           </div>
         ))}
       </div>

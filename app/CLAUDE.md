@@ -646,7 +646,7 @@ and past release notes. `src/lexcraft.guard.test.ts` refuses «VisuaLex» on a l
   text on the glass over the page and over the phone's backdrop; `theme.test.ts` composites and checks it.
   The narrow/widen control is `SIDEBAR_TOGGLE_TEXT`, the entries' words' colour (slate 700 / dark slate 300). At the bottom only the user menu, whose dropdown holds Impostazioni,
   «Norme salvate aggiornate» while some changed (counted on the avatar and on the entry, which leads to the Scrivania
-  where they are listed, L-83; both names say it in words: «Menu utente, 2 norme salvate cambiate»), Cronologia
+  where they are listed, L-88; both names say it in words: «Menu utente, 2 norme salvate cambiate»), Cronologia
   (moved there by the owner, 13 Oct 2026),
   «Collega un'app AI», «Crediti» (`/crediti`), on a phone «Commenti» (the feedback form, which `Layout` holds and
   the button at the top right opens from `md`, M1, D-253), the services' status, the theme, «Scorciatoie» (no «(?)» since S1: the `?` key still opens it),
@@ -1205,14 +1205,14 @@ server-backed** — see gotcha 17, which is the rule any new slice must follow.
   `bookmarkService`. There is **no bookmarks page or route**; the dedicated UI was
   removed as dead code. Don't document or build against a bookmarks page without
   first deciding to rebuild one.
-- **History** (`/history`) — server-side search history, a typographic list by day (L-82, 26 Nov 2026): each row
+- **History** (`/history`) — server-side search history, a typographic list by day (L-87, 26 Nov 2026): each row
   the kind in words («Norma», «Sentenza»), the citation, the act and the time; a row reopens its norm in the version it
   was read in, or its decision at once (no preview); «⋯» adds it to a practice (a new one asks its title under the
   row) or to the frequent searches, or takes it off. Removing a row, a day or everything has no question before and
   is behind «Annulla» (L-84): the rows leave the screen, the `DELETE`s go when the notification closes or as the page
   goes (`store/deferredRemovals.ts`, `history/historyRows.ts`), and a reading meanwhile leaves them out. No free text
-  is kept: a row is a norm or a decision (L-81). The Scrivania shows the last five («Letto di recente») and ⌘K has a
-  row to the page. `NormaChangesSection` lists the "a saved norm changed" notifications on the Scrivania (L-83); the
+  is kept: a row is a norm or a decision (L-86). The Scrivania shows the last five («Letto di recente») and ⌘K has a
+  row to the page. `NormaChangesSection` lists the "a saved norm changed" notifications on the Scrivania (L-88); the
   avatar of the user menu and its «Norme salvate aggiornate» entry count the unread ones
   (`useForumNotifications().count.normaChanges`, deliberately kept out of the Forum's `total`); the entry leads to
   the Scrivania, which with a practice open is the reader, not the desk. Marking read dispatches

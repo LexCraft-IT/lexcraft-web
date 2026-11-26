@@ -18,7 +18,7 @@ interface NormaChangesSectionProps {
 
 /**
  * "Norme salvate aggiornate": the unread change notifications, on the
- * Scrivania (L-83). The avatar's badge and its menu entry count these rows; "Segna come lette" clears them
+ * Scrivania (L-88). The avatar's badge and its menu entry count these rows; "Segna come lette" clears them
  * server-side and tells the badge's poller through a window event.
  * Renders nothing while loading and when there is nothing unread.
  */
