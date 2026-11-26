@@ -1,19 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 
 const getHistory = vi.fn();
+const deleteHistoryItem = vi.fn();
+const clearHistory = vi.fn();
 vi.mock('../../../services/historyService', () => ({
   getHistory: (...a: unknown[]) => getHistory(...a),
-  deleteHistoryItem: vi.fn(),
-  clearHistory: vi.fn(),
+  deleteHistoryItem: (...a: unknown[]) => deleteHistoryItem(...a),
+  clearHistory: (...a: unknown[]) => clearHistory(...a),
 }));
+
 vi.mock('./NormaChangesSection', () => ({ NormaChangesSection: () => null }));
-const fetchDecisionCached = vi.fn();
-vi.mock('../../../utils/decisionFetchCache', () => ({ fetchDecisionCached: (...a: unknown[]) => fetchDecisionCached(...a) }));
-vi.mock('../../../hooks/useTour', () => ({ useTour: () => ({ tryStartTour: vi.fn() }) }));
 
 import { appStore } from '../../../store/useAppStore';
+import { registerUndoToastListener, type UndoToast } from '../../../hooks/useUndoableAction';
 import { HistoryView } from './HistoryView';
 
 const at = '2026-10-10T10:00:00.000Z';
@@ -25,175 +26,168 @@ function Where() { return <span data-testid="where">{useLocation().pathname}</sp
 function mount() {
   return render(<MemoryRouter initialEntries={['/history']}><HistoryView /><Where /></MemoryRouter>);
 }
+const rowButton = (name: string) => screen.getAllByRole('button', { name: (n) => n.includes(name) && !n.startsWith('Altre azioni') && !n.startsWith('Togli') })[0];
+
+let toast: UndoToast | null = null;
+let stopListening = () => {};
 
 beforeEach(() => {
   getHistory.mockReset();
-  fetchDecisionCached.mockReset();
-  fetchDecisionCached.mockResolvedValue({ esito: 'non_trovata', motivo: 'inesistente' });
+  deleteHistoryItem.mockReset().mockResolvedValue(undefined);
+  clearHistory.mockReset().mockResolvedValue(undefined);
   appStore.setState({ practices: [], activePracticeId: null, phoneReader: null });
+  toast = null;
+  stopListening = registerUndoToastListener((t) => { toast = t; });
+});
+afterEach(() => {
+  act(() => toast?.onDismiss());
+  stopListening();
 });
 
-describe('HistoryView — decisions', () => {
-  it('lists a decision by its short citation, previews it, and reopens it in a practice from the preview', async () => {
+describe('HistoryView (L-87, L-84)', () => {
+  it('opens a decision at once in the workspace, with no preview', async () => {
     getHistory.mockResolvedValue([decision]);
     mount();
-    const buttons = await screen.findAllByRole('button', { name: /Cass\. civ\., n\. 99999\/2024/ });
-    expect(buttons[0]).toHaveAttribute('aria-haspopup', 'dialog');
-    await act(async () => { fireEvent.click(buttons[0]); });
-    expect(fetchDecisionCached).toHaveBeenCalledWith({ corte: 'cassazione', archivio: 'civile', numero: 99999, anno: 2024 });
-    expect(appStore.getState().practices).toEqual([]);
-    expect(screen.getByTestId('where').textContent).toBe('/history');
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Apri la sentenza' }));
+    await screen.findAllByText('Cass. civ., n. 99999/2024');
+    fireEvent.click(rowButton('Cass. civ., n. 99999/2024'));
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(appStore.getState().practices.flatMap((p) => p.decisions.map((d) => d.reference))).toEqual([
       { corte: 'cassazione', archivio: 'civile', numero: 99999, anno: 2024 },
     ]);
     expect(screen.getByTestId('where').textContent).toBe('/');
   });
 
-  it('names the page with one h1 in the sections\' frame, with one search field (W2)', async () => {
+  it('names the page with one h1, one filter of 16 px on a phone, and the three kinds', async () => {
     getHistory.mockResolvedValue([norm]);
     mount();
     await screen.findAllByText('art. 3 l. 241/1990');
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent?.trim())).toEqual(['Cronologia']);
-    expect(screen.getAllByRole('textbox', { name: 'Cerca nella cronologia' })).toHaveLength(1);
-    // At least 16 px on a phone, or Safari on an iPhone zooms the page into it (`FIELD_TEXT`).
     expect(screen.getByRole('textbox', { name: 'Cerca nella cronologia' })).toHaveClass('text-[length:max(1rem,16px)]', 'md:text-sm');
+    expect(screen.getAllByRole('radio').map((t) => t.textContent)).toEqual(['Tutto', 'Norme', 'Sentenze']);
   });
 
-  // LC120: the bin's place is held while the history is read, so the search field does not move when it comes.
-  it('holds the bin\'s place and the rows\' while the history is read', async () => {
+  it('holds the rows\' place while the history is read', async () => {
     let read: (rows: unknown[]) => void = () => {};
     getHistory.mockReturnValue(new Promise((resolve) => { read = resolve; }));
     mount();
     expect(screen.getByRole('status')).toHaveTextContent('Apro la cronologia…');
     expect(document.querySelectorAll('[data-skeleton-row]').length).toBeGreaterThan(0);
-    const bin = screen.getByTitle('Svuota cronologia');
-    expect(bin).toHaveClass('invisible');
     await act(async () => { read([norm]); });
-    expect(screen.getByRole('button', { name: 'Svuota cronologia' })).not.toHaveClass('invisible');
     expect(document.querySelector('[data-skeleton-row]')).toBeNull();
   });
 
-  // LC21 (B8): a norm row is titled as the norm is cited, the act's heading under it; rows of a list, no cards or dots.
-  it('titles a norm row as it is cited, with the act under it, beside a decision', async () => {
+  it('writes a row as the kind in words, the norm as it is cited, the act under it and the time; one list, no cards', async () => {
     getHistory.mockResolvedValue([norm, decision]);
     mount();
-    await screen.findAllByText(/Cass\. civ\., n\. 99999\/2024/);
-    expect(screen.getAllByText('art. 3 l. 241/1990').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('l. n. 241 del 1990').length).toBeGreaterThan(0);
-    expect(screen.queryByText(/^Art\. 3$/)).toBeNull();
-    // The desktop row (the second title): a ruled row, no bordered card, no timeline dot beside it.
-    const title = screen.getAllByRole('button', { name: (n) => n.includes('art. 3 l. 241/1990') && !n.startsWith('Altre azioni') })[1];
-    const card = title.parentElement!.parentElement!;
-    expect(card).toHaveClass('border-b');
-    expect(card).not.toHaveClass('border-2');
-    expect(card.parentElement!.querySelector('.bg-primary-500')).toBeNull();
+    await screen.findByText('art. 3 l. 241/1990');
+    expect(screen.getByText('l. n. 241 del 1990')).toBeInTheDocument();
+    expect(screen.getByText('Norma')).toBeInTheDocument();
+    expect(screen.getAllByText('Sentenza').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(new Date(at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }))).toHaveLength(2);
+    expect(document.querySelectorAll('[data-history-row]')).toHaveLength(2);
+    expect(screen.queryByText(/fa$/)).toBeNull();
+  });
+
+  it('filters by kind', async () => {
+    getHistory.mockResolvedValue([norm, decision]);
+    mount();
+    await screen.findByText('art. 3 l. 241/1990');
+    fireEvent.click(screen.getByRole('radio', { name: 'Sentenze' }));
+    expect(screen.queryByText('art. 3 l. 241/1990')).toBeNull();
+    expect(screen.getByText('Cass. civ., n. 99999/2024')).toBeInTheDocument();
   });
 
   it('writes a list of articles as «artt.», comma by comma', async () => {
     getHistory.mockResolvedValue([{ ...norm, act_type: 'codice civile', act_number: null, date: null, article: '2056,2057' }]);
     mount();
-    expect((await screen.findAllByText('artt. 2056, 2057 c.c.')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Codice civile').length).toBeGreaterThan(0);
+    expect(await screen.findByText('artt. 2056, 2057 c.c.')).toBeInTheDocument();
   });
 
-  it('heads each date group with a small uppercase h2, no calendar pill', async () => {
-    getHistory.mockResolvedValue([norm]);
+  it('reopens a norm in the version it was read in', async () => {
+    getHistory.mockResolvedValue([{ ...norm, version: 'originale' }]);
+    const triggerSearch = vi.fn();
+    appStore.setState({ triggerSearch } as never);
     mount();
-    await screen.findAllByText('art. 3 l. 241/1990');
-    const groups = screen.getAllByRole('heading', { level: 2 });
-    expect(groups.length).toBeGreaterThan(0);
-    for (const h of groups) expect(h).toHaveClass('uppercase', 'text-xs');
-    expect(document.querySelector('.lucide-calendar')).toBeNull();
+    await screen.findByText('art. 3 l. 241/1990');
+    fireEvent.click(rowButton('art. 3 l. 241/1990'));
+    expect(triggerSearch).toHaveBeenCalledWith(expect.objectContaining({ act_type: 'legge', article: '3', version: 'originale' }));
   });
 
-  it('shows an unreadable key as «Sentenza», not clickable, and logs it', async () => {
+  it('shows an unreadable key as «Sentenza», not clickable, and logs it once', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     getHistory.mockResolvedValue([broken]);
     mount();
     expect((await screen.findAllByText('Sentenza')).length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: 'Sentenza' })).toBeNull();
-    await waitFor(() => expect(error).toHaveBeenCalledWith('history: unreadable decision key', expect.objectContaining({ id: 'd2' })));
+    expect(screen.queryByRole('button', { name: /^Sentenza/ })).toBeNull();
     expect(error.mock.calls.filter((c) => c[0] === 'history: unreadable decision key')).toHaveLength(1);
     error.mockRestore();
   });
 
-  it('opens a norm from the keyboard: its title is a button, Tab reaches it, Enter opens it; the menu sits beside it (A6)', async () => {
-    getHistory.mockResolvedValue([norm]);
-    mount();
-    const titles = await screen.findAllByRole('button', { name: (n) => n.includes('art. 3 l. 241/1990') && !n.startsWith('Altre azioni') });
-    // One per layout (phone and desktop); none of them holds another control.
-    expect(titles).toHaveLength(2);
-    titles.forEach((title) => expect(title.querySelector('button')).toBeNull());
-    expect(titles[1].parentElement?.querySelector('button[title="Altre azioni"]')).not.toBeNull();
-    titles[1].focus();
-    expect(titles[1]).toHaveFocus();
-    // A native button: Enter is its click.
-    fireEvent.click(titles[1]);
-    expect(screen.getByTestId('where').textContent).toBe('/');
-  });
-
-  // LC103: the norm's «⋯» is a `MenuButton`, as every other menu, on the phone as on a computer.
-  it('closes a norm\'s «⋯» on Escape and gives the focus back to its button', async () => {
+  it('lists a norm\'s actions in its «⋯»', async () => {
     getHistory.mockResolvedValue([norm]);
     appStore.setState({ dossiers: [{ id: 'p1', title: 'Pratica Rossi' }] } as never);
     mount();
-    const triggers = await screen.findAllByRole('button', { name: 'Altre azioni su art. 3 l. 241/1990' });
-    // One per layout (phone and desktop).
-    expect(triggers).toHaveLength(2);
-    for (const trigger of triggers) {
-      fireEvent.click(trigger);
-      const menu = screen.getByRole('menu');
-      expect(within(menu).getAllByRole('menuitem').map((i) => i.getAttribute('aria-label') ?? i.textContent)).toEqual([
-        'Aggiungi a norme rapide', 'Aggiungi a Pratica Rossi', 'Aggiungi a una nuova pratica…', 'Rimuovi dalla cronologia',
-      ]);
-      expect(within(menu).getAllByRole('menuitem')[0]).toHaveFocus();
-      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
-      expect(within(menu).getByRole('menuitem', { name: 'Aggiungi a Pratica Rossi' })).toHaveFocus();
-      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
-      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-      expect(trigger).toHaveFocus();
-    }
+    fireEvent.click(await screen.findByRole('button', { name: 'Altre azioni su art. 3 l. 241/1990' }));
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.getAttribute('aria-label') ?? i.textContent)).toEqual([
+      'Aggiungi alle ricerche frequenti', 'Aggiungi a Pratica Rossi', 'Aggiungi a una nuova pratica…', 'Togli dalla cronologia',
+    ]);
   });
 
-  // Papiniano on #634: a «⋯» open, then «/» and a search, and the menu stood under another norm and removed it.
-  it('closes an open «⋯» on «/» and never leaves it under another norm when the filter changes', async () => {
-    const other = { ...norm, id: 'n2', act_type: 'codice civile', act_number: null, date: null, article: '2043' };
-    getHistory.mockResolvedValue([norm, other]);
+  it('asks a new practice\'s title under the row, not in a window', async () => {
+    getHistory.mockResolvedValue([norm]);
+    appStore.setState({ dossiers: [] } as never);
     mount();
-    const search = screen.getByRole('textbox', { name: 'Cerca nella cronologia' });
-    const desktop = async () => (await screen.findAllByRole('button', { name: 'Altre azioni su art. 3 l. 241/1990' }))[1];
-
-    // «/»: the menu closes, the search has the focus.
-    fireEvent.click(await desktop());
-    expect(screen.getByRole('menu')).toBeInTheDocument();
-    fireEvent.keyDown(document.activeElement!, { key: '/' });
-    expect(search).toHaveFocus();
-    expect(screen.queryByRole('menu')).toBeNull();
-
-    // The filter changing under an open menu: its row goes, and the menu with it; nothing moves under «art. 2043».
-    fireEvent.click(await desktop());
-    expect(screen.getByRole('menu')).toBeInTheDocument();
-    fireEvent.change(search, { target: { value: '2043' } });
-    await waitFor(() => expect(screen.queryAllByText('art. 3 l. 241/1990')).toHaveLength(0));
-    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Altre azioni su art. 3 l. 241/1990' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Aggiungi a una nuova pratica…' }));
+    const field = screen.getByRole('textbox', { name: 'Nome della nuova pratica' });
+    expect(field.closest('[data-history-row]')).not.toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('gives the phone\'s «⋯» a 44 px touch target, in the phone\'s list (it was only in the computer\'s, 0 wide at 390)', async () => {
+  it('takes a row off at once and sends the removal only when «Annulla» is gone (L-84)', async () => {
+    getHistory.mockResolvedValue([norm, decision]);
+    mount();
+    await screen.findByText('art. 3 l. 241/1990');
+    fireEvent.click(screen.getByRole('button', { name: 'Altre azioni su art. 3 l. 241/1990' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Togli dalla cronologia' }));
+    expect(screen.queryByText('art. 3 l. 241/1990')).toBeNull();
+    expect(toast?.message).toBe('Tolta dalla cronologia');
+    expect(deleteHistoryItem).not.toHaveBeenCalled();
+    act(() => toast?.onDismiss());
+    await waitFor(() => expect(deleteHistoryItem).toHaveBeenCalledWith('n1'));
+  });
+
+  it('puts a row back on «Annulla» and sends nothing', async () => {
     getHistory.mockResolvedValue([norm]);
     mount();
-    const [phone] = await screen.findAllByRole('button', { name: 'Altre azioni su art. 3 l. 241/1990' });
-    expect(phone.closest('.md\\:hidden')).not.toBeNull();
-    expect(phone).toHaveClass('min-h-[44px]', 'min-w-[44px]');
+    await screen.findByText('art. 3 l. 241/1990');
+    fireEvent.keyDown(rowButton('art. 3 l. 241/1990'), { key: 'Delete' });
+    expect(screen.queryByText('art. 3 l. 241/1990')).toBeNull();
+    await act(async () => { await toast?.onUndo(); });
+    expect(await screen.findByText('art. 3 l. 241/1990')).toBeInTheDocument();
+    expect(deleteHistoryItem).not.toHaveBeenCalled();
   });
 
-  it('writes the time of a visit at 4.5:1 or more, in light and dark (Pietra\'s secondary text)', async () => {
+  it('takes a whole day off behind one «Annulla»', async () => {
+    getHistory.mockResolvedValue([norm, decision]);
+    mount();
+    await screen.findByText('art. 3 l. 241/1990');
+    fireEvent.click(screen.getByRole('button', { name: /^Togli il giorno/ }));
+    expect(document.querySelectorAll('[data-history-row]')).toHaveLength(0);
+    expect(toast?.message).toMatch(/^Tolte 2 voci di /);
+    act(() => toast?.onDismiss());
+    await waitFor(() => expect(deleteHistoryItem).toHaveBeenCalledTimes(2));
+  });
+
+  it('empties the history with no question before, behind «Annulla», with one request', async () => {
     getHistory.mockResolvedValue([norm]);
     mount();
-    const times = await screen.findAllByTitle(new Date(at).toLocaleString('it-IT'));
-    times.forEach((time) => {
-      expect(time).not.toHaveClass('text-slate-400');
-      expect(time).not.toHaveClass('dark:text-slate-500');
-    });
+    await screen.findByText('art. 3 l. 241/1990');
+    fireEvent.click(screen.getByRole('button', { name: 'Svuota la cronologia' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Le norme e le sentenze che apri compaiono qui.')).toBeInTheDocument();
+    expect(toast?.message).toBe('Cronologia svuotata');
+    act(() => toast?.onDismiss());
+    await waitFor(() => expect(clearHistory).toHaveBeenCalledTimes(1));
   });
 });

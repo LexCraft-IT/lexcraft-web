@@ -25,7 +25,7 @@ vi.mock('../../../hooks/useForumNotifications', () => ({
 
 vi.mock('../../../store/useAppStore', () => ({
   useAppStore: (selector: (s: unknown) => unknown) =>
-    selector({ quickNorms: [] }),
+    selector({ quickNorms: [], practices: [] }),
 }));
 
 // The pages loaded with their route: what the entries ask to fetch ahead.

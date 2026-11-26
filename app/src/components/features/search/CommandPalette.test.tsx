@@ -988,3 +988,13 @@ describe('CommandPalette — «Gestisci» of the frequent searches (LC84)', () =
     expect(openSettings).toHaveBeenCalledWith('norme-rapide');
   });
 });
+
+// L-87: a way to the Cronologia from ⌘K, at rest and when «cronologia» is typed.
+describe('CommandPalette — Cronologia', () => {
+  it('offers the Cronologia and opens it', () => {
+    const onOpenHistory = vi.fn();
+    render(<CommandPalette isOpen onClose={vi.fn()} onSearch={vi.fn()} onOpenHistory={onOpenHistory} />);
+    fireEvent.click(screen.getByRole('option', { name: /Le norme e le sentenze che hai aperto/ }));
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
+  });
+});

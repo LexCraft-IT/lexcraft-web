@@ -26,6 +26,7 @@ export function GlobalSearch() {
         onBrowseStructure={(params) => void actions.browse(params)}
         onShowSearch={actions.goToSearch}
         onOpenRassegne={(passo) => navigate('/rassegne', passo ? { state: { passo } } : undefined)}
+        onOpenHistory={() => navigate('/history')}
       />
   );
 }

@@ -5,9 +5,7 @@ import { guardCommonControls } from '../../../test/commonControlsGuard';
 guardCommonControls({
   name: 'Cronologia',
   dir: 'components/features/history',
-  expected: ['HistoryView.tsx', 'DecisionHistoryRow.tsx', 'NormaChangesSection.tsx'],
-  windows: ['HistoryView.tsx'],
-  // A page: the clearing's question and «Crea nuova pratica» are its windows.
-  callsAWindow: ['HistoryView.tsx'],
+  expected: ['HistoryView.tsx', 'NormaChangesSection.tsx', 'RecentHistory.tsx', 'historyRows.ts'],
+  // L-87: no window left — the clearing has «Annulla» (L-84), «Nuova pratica» asks its title under the row.
   localLooks: ['FIELD', 'ACTION', 'LINK', 'ICON_BUTTON'],
 });

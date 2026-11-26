@@ -524,14 +524,18 @@ describe('Sidebar — Cronologia in the user menu (the owner, 13 Oct 2026)', () 
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('counts the saved norms that changed on the avatar and beside the entry, in words for a screen reader', () => {
+  // L-88: the saved norms that changed are listed on the Scrivania; their entry leads there, Cronologia counts nothing.
+  it('counts the saved norms that changed on the avatar and on their own entry, which leads to the Scrivania', () => {
     notices.normaChanges = 2;
-    renderSidebar();
+    renderSidebar('/pratiche');
     const avatar = screen.getByRole('button', { name: 'Menu utente, 2 norme salvate cambiate' });
     expect(within(avatar).getByText('2')).toBeInTheDocument();
     openUserMenu();
-    const entry = screen.getByRole('menuitem', { name: 'Cronologia, 2 norme salvate cambiate' });
+    const entry = screen.getByRole('menuitem', { name: 'Norme salvate aggiornate, 2 norme salvate cambiate' });
     expect(within(entry).getByText('2')).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Cronologia' }).textContent?.trim()).toBe('Cronologia');
+    fireEvent.click(entry);
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/);
   });
 
   it('says one norm in the singular', () => {
@@ -1191,5 +1195,18 @@ describe('Sidebar — the words', () => {
     cleanup();
     renderLayout('drawer', '/', toggle);
     expect(screen.queryByRole('button', { name: /la barra laterale/ })).toBeNull();
+  });
+});
+
+// L-89: with a practice open «/» is the reader, not the Scrivania: the entry leads to the Cronologia, which lists them too.
+describe('Sidebar — the saved norms that changed, with a practice open', () => {
+  afterEach(() => appStore.setState({ practices: [] }));
+  it('leads to the Cronologia', () => {
+    notices.normaChanges = 1;
+    appStore.setState({ practices: [{ id: 'p1' }] } as never);
+    renderSidebar('/pratiche');
+    openUserMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Norme salvate aggiornate/ }));
+    expect(screen.getByTestId('where')).toHaveTextContent('/history');
   });
 });

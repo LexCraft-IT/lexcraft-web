@@ -6,7 +6,6 @@ import { join, relative } from 'node:path';
 // cannot be undone, so an Enter pressed at once acts on nothing; on the action when it can be undone. A new confirmation
 // is classified here. Each entry: the file, then a piece of the title that tells its dialog apart.
 const CANCEL_FIRST: [string, string][] = [
-  ['components/features/history/HistoryView.tsx', 'Svuotare la cronologia?'],
   ['components/features/dossier/TrashEntryRow.tsx', 'Eliminare definitivamente?'],
   ['components/features/admin/CoursesSwitchAdmin.tsx', 'Spegnere i percorsi?'],
   ['components/features/bulletin/ArchivedEnvironmentsSection.tsx', "Eliminare l'ambiente"],

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, LayoutGroup, useReducedMotion } from 'framer-motion';
-import { Plug, Search, Folder, FolderOpen, CalendarCheck, MessagesSquare, Clock, Moon, Sun, Settings, LogOut, Shield, Keyboard, FileSearch, Library, Scale, Network, ScrollText, Bug, Repeat, ChartColumn, Layers, ClipboardCheck, PanelLeftClose, PanelLeftOpen, Route, EyeOff, type LucideIcon } from 'lucide-react';
+import { Plug, Search, BellRing, Folder, FolderOpen, CalendarCheck, MessagesSquare, Clock, Moon, Sun, Settings, LogOut, Shield, Keyboard, FileSearch, Library, Scale, Network, ScrollText, Bug, Repeat, ChartColumn, Layers, ClipboardCheck, PanelLeftClose, PanelLeftOpen, Route, EyeOff, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { isMerltEnabled } from '../../features/merlt/featureFlag';
 import { isMerltGraphEnabled } from '../../features/merlt/graph/featureFlag';
@@ -24,6 +24,8 @@ import { BookMark } from '../ui/BookMark';
 import { LexCraftLogo } from '../ui/LexCraftLogo';
 import type { SidebarLayout } from './sidebarWidth';
 import { plannerStore } from '../features/planner/plannerStore';
+import { useAppStore } from '../../store/useAppStore';
+import { corpusPractices } from '../../utils/practice';
 import { todayCountLabel } from '../features/planner/taskDates';
 import { useCoursesSwitch } from '../features/studia/corsi/coursesSwitch';
 
@@ -353,8 +355,9 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
   const todayCount = plannerStore((s) => s.todayCount?.work) ?? 0;
   const studyTodayCount = plannerStore((s) => s.todayCount?.learn) ?? 0;
   // Cronologia lives in the user menu (the owner, 13 Oct 2026); the saved norms that changed are
-  // counted on the avatar and beside the entry («ok come raccomandi»).
+  // counted on the avatar and on their own entry, which leads to the Scrivania where they are listed (L-88).
   const normaChanges = forumNotifications.normaChanges ?? 0;
+  const practiceOpen = useAppStore((s) => corpusPractices(s.practices).length > 0);
   // The services pill is gone (S1): a fault shows as a dot on the user button, and its name says it.
   const servicesNotice = serviceHealthNeedsNotice(serviceHealth.snapshot.overall);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -756,17 +759,25 @@ export function Sidebar({ theme, toggleTheme, isOpen, closeMobile, openSettings,
                   <Settings size={16} />
                   Impostazioni
                 </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  tabIndex={-1}
-                  onClick={fromMenu(() => navigate('/history'))}
-                  aria-label={normaChanges > 0 ? `Cronologia, ${normaChangesLabel(normaChanges)}` : undefined}
-                  className={menuItemClass}
-                >
+                {/* The saved norms that changed are listed on the Scrivania (L-88): the avatar's count leads there. With a practice
+                    open «/» is the reader, not the desk: then to the Cronologia, which lists them too (L-89, the owner's to choose). */}
+                {normaChanges > 0 && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    onClick={fromMenu(() => navigate(practiceOpen ? '/history' : '/'))}
+                    aria-label={`Norme salvate aggiornate, ${normaChangesLabel(normaChanges)}`}
+                    className={menuItemClass}
+                  >
+                    <BellRing size={16} />
+                    <span className="flex-1 text-left">Norme salvate aggiornate</span>
+                    <CountBadge count={normaChanges} />
+                  </button>
+                )}
+                <button type="button" role="menuitem" tabIndex={-1} onClick={fromMenu(() => navigate('/history'))} className={menuItemClass}>
                   <Clock size={16} />
-                  <span className="flex-1 text-left">Cronologia</span>
-                  {normaChanges > 0 && <CountBadge count={normaChanges} />}
+                  Cronologia
                 </button>
                 <button type="button" role="menuitem" tabIndex={-1} onClick={fromMenu(() => navigate('/collega-app'))} className={menuItemClass}>
                   <Plug size={16} />

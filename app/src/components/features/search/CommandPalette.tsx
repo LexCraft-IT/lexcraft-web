@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useState, useSyncExternalSt
 import { Command, useCommandState } from 'cmdk';
 import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
-import { BookOpen, ChevronDown, ChevronRight, Gavel, Library, List, Search, Settings2, SlidersHorizontal, Tag, X, Zap } from 'lucide-react';
+import { BookOpen, ChevronDown, Clock, ChevronRight, Gavel, Library, List, Search, Settings2, SlidersHorizontal, Tag, X, Zap } from 'lucide-react';
 import type { SearchParams, CustomAlias, SearchFilters } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { SEARCH_CLOSE, SEARCH_OPEN, dur, ease } from '../../../lib/motion';
@@ -48,6 +48,8 @@ interface CommandPaletteProps {
   onShowSearch?: () => void;
   /** Open the page «Rassegne» on the search just remembered (`rememberSearch`), with the passage chosen, if any, by id. */
   onOpenRassegne?: (passo?: string) => void;
+  /** Open the page «Cronologia» (L-87). */
+  onOpenHistory?: () => void;
 }
 
 type PaletteStep = 'select_act' | 'input_article' | 'input_details';
@@ -144,7 +146,7 @@ const viewportHeight = () => window.visualViewport?.height ?? null;
 const subscribeNothing = () => () => {};
 const noHeight = () => null;
 
-export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, onShowSearch, onOpenRassegne }: CommandPaletteProps) {
+export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, onShowSearch, onOpenRassegne, onOpenHistory }: CommandPaletteProps) {
   const {
     quickNorms, selectQuickNorm, settings,
     customAliases, trackAliasUsage, openDecision, openTopicSearch, takeCommandPaletteQuery, commandPaletteQuery
@@ -306,6 +308,8 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
     : [];
   // The door to the manager, found by typing «alias» too.
   const showAliasDoor = !typed || queryMatches(inputValue, 'alias gestisci crea scorciatoie');
+  // The way to the Cronologia (L-87), found by typing «cronologia» too.
+  const showHistoryDoor = !!onOpenHistory && (!typed || queryMatches(inputValue, 'cronologia letto di recente'));
 
   // Reset on close
   useEffect(() => {
@@ -374,6 +378,11 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
     done();
     openSettings('norme-rapide');
   }, [done, openSettings]);
+
+  const handleOpenHistory = useCallback(() => {
+    done();
+    onOpenHistory?.();
+  }, [done, onOpenHistory]);
 
   const handleOpenAliasManager = useCallback(() => {
     done();
@@ -1048,6 +1057,15 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
         </Command.Group>
       )}
 
+      {showHistoryDoor && (
+        <Command.Group heading="Cronologia" className={GROUP_WITH_HEADING}>
+          <PaletteRow value="cronologia letto di recente" onSelect={handleOpenHistory}>
+            <Clock size={14} aria-hidden className={ROW_ICON} />
+            <span className="min-w-0 flex-1 truncate">Le norme e le sentenze che hai aperto</span>
+          </PaletteRow>
+        </Command.Group>
+      )}
+
       {/* Presets — only while the user is typing, under their own heading. */}
       {visiblePresets.length > 0 && (
         <Command.Group heading="In dotazione · non devi crearli" className={GROUP_WITH_HEADING}>
@@ -1075,7 +1093,7 @@ export function CommandPalette({ isOpen, onClose, onSearch, onBrowseStructure, o
   const scrollColumn = isDesktop ? 'relative min-h-0 overflow-y-auto overscroll-contain custom-scrollbar pb-2' : 'relative pb-2';
   // «A portata di mano» has rows: something saved at rest, or a match while typing.
   const atHandHasRows = typed
-    ? visibleQuickNorms.length > 0 || visibleAliases.length > 0 || showAliasDoor || visiblePresets.length > 0
+    ? visibleQuickNorms.length > 0 || visibleAliases.length > 0 || showAliasDoor || showHistoryDoor || visiblePresets.length > 0
     : quickNorms.length > 0 || hasAliases;
   const selectBody = (
     <Command.List

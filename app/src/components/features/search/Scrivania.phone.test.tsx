@@ -1,13 +1,19 @@
 // The Scrivania on a phone (M1): no keyboard shortcut on a touch screen, the examples as pills in one sideways row,
 // the page's 16 px margin, the block centred when it is shorter than the window.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { appStore } from '../../../store/useAppStore';
 import { HIDDEN_SCROLLBAR } from '../../../constants/interactions';
+// The desk's blocks read the server: none here, but where a test gives rows.
+const getHistory = vi.fn();
+vi.mock('../../../services/historyService', () => ({ getHistory: (...a: unknown[]) => getHistory(...a) }));
+vi.mock('../../../services/authService', () => ({ isAuthenticated: () => true }));
+vi.mock('../../../services/notificationService', () => ({ notificationService: { getNormaChanges: () => Promise.resolve([]), markNormaChangesRead: vi.fn() } }));
 import { Scrivania } from './Scrivania';
 
 beforeEach(() => {
+  getHistory.mockReset().mockResolvedValue([]);
   appStore.setState({ dossiers: [], quickNorms: [] });
 });
 
@@ -68,5 +74,24 @@ describe('Scrivania — «Gestisci» of the frequent searches (LC84)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Gestisci/ }));
     expect(appStore.getState().settingsRequest).toEqual({ section: 'norme-rapide' });
     appStore.setState({ settingsRequest: null });
+  });
+});
+
+// L-87: the last five rows of the Cronologia, and the way to the whole page.
+describe('«Letto di recente» on the Scrivania', () => {
+  const row = (i: number) => ({ id: `n${i}`, act_type: 'codice civile', decision_key: null, article: String(2040 + i), created_at: '2026-11-26T10:00:00.000Z' });
+
+  it('lists the last five rows and links to the Cronologia', async () => {
+    getHistory.mockResolvedValue([1, 2, 3, 4, 5, 6].map(row));
+    renderPage();
+    const block = (await screen.findByRole('heading', { name: 'Letto di recente' })).closest('section')!;
+    expect(within(block).getAllByRole('listitem')).toHaveLength(5);
+    expect(within(block).getByRole('link', { name: 'Tutta la cronologia' })).toHaveAttribute('href', '/history');
+  });
+
+  it('draws nothing when the history is empty', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Ricerche frequenti' });
+    expect(screen.queryByRole('heading', { name: 'Letto di recente' })).toBeNull();
   });
 });
