@@ -73,6 +73,31 @@ function anchorEnd(plain: string, start: number, text: string): number | null {
 }
 
 /**
+ * Where each UTF-16 unit of `plainLower` (`plain.toLowerCase()`) comes from in `plain`: `from[k]` and `to[k]` are the
+ * bounds of the character that lowered to unit `k`. Null when lowering kept the length, the usual case, where the
+ * offsets of the two texts coincide. They do not always: «İ» (U+0130) lowers to «i» and a combining dot (U+0069
+ * U+0307), two units, and an offset found in the lowered text after one would land a character too far in the text
+ * itself. No character lowers to fewer units, and lowering a text gives as many units as lowering its characters one by
+ * one (the final sigma changes a letter, never a length); should the two ever disagree, the lowered offsets are kept as
+ * they were.
+ */
+function loweredOrigins(plain: string, plainLower: string): { from: Int32Array; to: Int32Array } | null {
+  if (plainLower.length === plain.length) return null;
+  const from = new Int32Array(plainLower.length);
+  const to = new Int32Array(plainLower.length);
+  let p = 0;
+  let k = 0;
+  for (const ch of plain) {
+    const units = ch.toLowerCase().length;
+    from.fill(p, k, k + units);
+    to.fill(p + ch.length, k, k + units);
+    p += ch.length;
+    k += units;
+  }
+  return k === plainLower.length ? { from, to } : null;
+}
+
+/**
  * Every place a stored highlight or anchored note renders: highlights first,
  * then notes, each in input order. A highlight with an offset renders where
  * its text is, or nowhere; one saved before offsets existed renders on every
@@ -86,6 +111,7 @@ export function resolveAnchors(
 ): ResolvedAnchor[] {
   const out: ResolvedAnchor[] = [];
   const plainLower = plain.toLowerCase();
+  const origins = loweredOrigins(plain, plainLower);
   for (const h of highlights) {
     if (typeof h.startOffset === 'number' && h.startOffset >= 0) {
       const end = anchorEnd(plain, h.startOffset, h.text);
@@ -94,8 +120,11 @@ export function resolveAnchors(
     }
     const needle = h.text.toLowerCase();
     if (!needle) continue;
+    // Searched in the lowered text, placed in the text itself (`loweredOrigins`).
     for (let at = plainLower.indexOf(needle); at !== -1; at = plainLower.indexOf(needle, at + needle.length)) {
-      out.push({ kind: 'highlight', highlight: h, start: at, end: at + needle.length });
+      const start = origins ? origins.from[at] : at;
+      const end = origins ? origins.to[at + needle.length - 1] : at + needle.length;
+      out.push({ kind: 'highlight', highlight: h, start, end });
     }
   }
   for (const a of annotations) {

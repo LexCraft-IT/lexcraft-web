@@ -73,6 +73,29 @@ describe('resolveAnchors', () => {
       [...PLAIN.matchAll(/risoluzione/gi)].map((m) => m.index),
     );
   });
+
+  // «İ» (U+0130) lowers to two units, «i» and a combining dot (U+0069 U+0307): the lowered text is longer.
+  const TURKISH = 'Il sig. \u0130nan chiede la risoluzione; il sig. \u0130lhan si oppone alla risoluzione.';
+
+  it('places a legacy highlight on its own words after a letter that lowers to two units', () => {
+    const r = resolveAnchors(TURKISH, [hl('legacy', 'risoluzione', undefined)], []);
+    expect(r.map((x) => x.start)).toEqual([...TURKISH.matchAll(/risoluzione/g)].map((m) => m.index));
+    expect(r.map(({ start, end }) => TURKISH.slice(start, end))).toEqual(['risoluzione', 'risoluzione']);
+  });
+
+  it('gives a legacy highlight that holds such a letter the whole letter, however it was cased', () => {
+    const r = resolveAnchors(
+      TURKISH,
+      [hl('upper', '\u0130lhan', undefined), hl('lower', 'i\u0307lhan', undefined), hl('cut', 'sig. i', undefined)],
+      [],
+    );
+    expect(r.map((x) => [x.kind === 'highlight' ? x.highlight.id : x.kind, TURKISH.slice(x.start, x.end)])).toEqual([
+      ['upper', '\u0130lhan'],
+      ['lower', '\u0130lhan'],
+      ['cut', 'sig. \u0130'],
+      ['cut', 'sig. \u0130'],
+    ]);
+  });
 });
 
 describe('groupAnnotationsByBlock', () => {
